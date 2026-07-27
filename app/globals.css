@@ -1,0 +1,148 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * FortMark tokens — strict monochrome derived from the four brand primitives:
+ *   --fm-black #000000 · --fm-white #FFFFFF · --fm-gray #8C8C8C · --fm-surface #333333
+ * Status colors are the single permitted exception (desaturated, badge-size only).
+ */
+
+@layer base {
+  :root {
+    --fm-black: #000000;
+    --fm-white: #ffffff;
+    --fm-gray: #8c8c8c;
+    --fm-surface: #333333;
+
+    --background: 0 0% 96%;
+    --foreground: 0 0% 0%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 0%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 0%;
+    --primary: 0 0% 0%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 94%;
+    --secondary-foreground: 0 0% 0%;
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 0 0% 94%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 23% 44%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 92%;
+    --input: 0 0% 89%;
+    --ring: 0 0% 0%;
+    --track: 0 0% 92%;
+    --tint: 0 0% 96%;
+    --surface: 0 0% 20%;
+
+    --chart-active: 0 0% 0%;
+    --chart-2: 0 0% 33%;
+    --chart-3: 0 0% 55%;
+    --chart-4: 0 0% 78%;
+    --chart-5: 0 0% 89%;
+    --chart-grid: 0 0% 92%;
+
+    --status-good: 150 16% 35%;
+    --status-good-bg: 150 10% 94%;
+    --status-warn: 42 30% 38%;
+    --status-warn-bg: 42 22% 94%;
+    --status-bad: 0 23% 44%;
+    --status-bad-bg: 0 18% 95%;
+
+    --radius: 1rem;
+  }
+
+  .dark {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 7%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 7%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 0 0% 100%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 0 0% 12%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 25% 65%;
+    --destructive-foreground: 0 0% 0%;
+    --border: 0 0% 15%;
+    --input: 0 0% 18%;
+    --ring: 0 0% 100%;
+    --track: 0 0% 15%;
+    --tint: 0 0% 10%;
+    --surface: 0 0% 20%;
+
+    --chart-active: 0 0% 100%;
+    --chart-2: 0 0% 78%;
+    --chart-3: 0 0% 55%;
+    --chart-4: 0 0% 33%;
+    --chart-5: 0 0% 20%;
+    --chart-grid: 0 0% 15%;
+
+    --status-good: 150 14% 65%;
+    --status-good-bg: 150 12% 9%;
+    --status-warn: 42 25% 62%;
+    --status-warn-bg: 42 18% 9%;
+    --status-bad: 0 20% 66%;
+    --status-bad-bg: 0 16% 10%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+
+  ::selection {
+    @apply bg-foreground text-background;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+@layer utilities {
+  /* Uppercase micro-label — the gray structural caption used across the app */
+  .text-micro {
+    @apply text-[11px] font-semibold uppercase tracking-micro text-muted-foreground;
+  }
+
+  /* Archivo Black display treatment */
+  .text-display {
+    @apply font-display uppercase leading-[0.95] tracking-[-0.01em];
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hairline {
+    @apply border-t border-border;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--input)) transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
