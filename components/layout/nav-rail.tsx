@@ -19,9 +19,13 @@ import { cn } from "@/lib/utils";
  */
 export function NavRail() {
   const pathname = usePathname();
-  const railPinned = useUiStore((s) => s.railPinned);
+  const railPinnedStored = useUiStore((s) => s.railPinned);
   const setRailPinned = useUiStore((s) => s.setRailPinned);
   const [hovered, setHovered] = React.useState(false);
+  // Persisted pin state only applies after mount so SSR markup matches.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+  const railPinned = mounted && railPinnedStored;
   const expanded = railPinned || hovered;
 
   return (

@@ -6,8 +6,13 @@ import { CommandPalette } from "@/components/layout/command-palette";
 import { useUiStore } from "@/lib/stores/ui";
 import { cn } from "@/lib/utils";
 
+import * as React from "react";
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const railPinned = useUiStore((s) => s.railPinned);
+  const railPinnedStored = useUiStore((s) => s.railPinned);
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+  const railPinned = mounted && railPinnedStored;
 
   return (
     <div className="min-h-screen">
