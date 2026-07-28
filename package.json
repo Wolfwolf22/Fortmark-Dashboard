@@ -10,7 +10,7 @@
     "test:auth": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_dashboard_access.ts",
     "test": "npm run typecheck && npm run test:auth && npm run test:profile",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/migrate.ts",
     "db:check": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/db_check.ts",
     "test:profile": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_profile.ts"
   },

@@ -101,7 +101,7 @@ jobs:
           echo "migration will use: ${DATABASE_URL_UNPOOLED:+DATABASE_URL_UNPOOLED}${DATABASE_URL_UNPOOLED:-DATABASE_URL}"
 
           npm ci >/dev/null 2>&1
-          npx drizzle-kit migrate
+          npm run db:migrate
 
           echo "--- tables present in the preview database ---"
           node --experimental-strip-types --conditions=react-server --no-warnings -e '
