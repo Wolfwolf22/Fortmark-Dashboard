@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { ListingImage } from "@/components/listings/listing-image";
 
 /**
  * Detail-page gallery: one main image plus a thumbnail strip. Clicking a
@@ -29,11 +30,10 @@ export function ListingGallery({
   return (
     <div className="space-y-3">
       <div className="overflow-hidden rounded-card">
-        {/* eslint-disable-next-line @next/next/no-img-element -- local SVG plates, no optimization needed */}
-        <img
+        <ListingImage
           src={main}
           alt={`Photo ${safeIndex + 1} of ${photos.length} for ${address}`}
-          className="aspect-[16/10] w-full object-cover"
+          className="aspect-[16/10] w-full"
         />
       </div>
 
@@ -57,12 +57,7 @@ export function ListingGallery({
                   : "opacity-70 hover:opacity-100"
               )}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element -- local SVG plates, no optimization needed */}
-              <img
-                src={photo}
-                alt=""
-                className="aspect-[4/3] w-20 object-cover"
-              />
+              <ListingImage src={photo} alt="" className="aspect-[4/3] w-20" />
             </button>
           ))}
         </div>

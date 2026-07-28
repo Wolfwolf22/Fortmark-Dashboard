@@ -7,6 +7,7 @@ import { LISTING_STATUS_PILL, StatusPill } from "@/components/ui/status-pill";
 import type { Listing } from "@/lib/data/types";
 import { formatCurrency } from "@/lib/utils";
 import { specLine } from "./listing-meta";
+import { ListingImage } from "@/components/listings/listing-image";
 
 /** Responsive card grid — each card links to the listing detail page. */
 export function ListingGrid({ listings }: { listings: Listing[] }) {
@@ -33,11 +34,10 @@ function ListingCard({ listing }: { listing: Listing }) {
     >
       <Card className="flex h-full flex-col p-3 transition duration-200 hover:-translate-y-0.5 hover:shadow-card-hover">
         <div className="relative overflow-hidden rounded-panel">
-          {/* eslint-disable-next-line @next/next/no-img-element -- local SVG plates, no optimization needed */}
-          <img
+          <ListingImage
             src={listing.photos[0]}
             alt={listing.address}
-            className="aspect-[4/3] w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+            className="aspect-[4/3] w-full transition-transform duration-200 group-hover:scale-[1.02]"
           />
           <StatusPill
             tone={pill.tone}

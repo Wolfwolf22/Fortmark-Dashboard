@@ -14,7 +14,12 @@ import {
   parseAllowlist,
   userRef,
 } from "../lib/auth/dashboard-access.ts";
-import { isSafeReturnPath } from "../lib/routes.ts";
+import {
+  BASE_PATH,
+  FALLBACK_PLATE,
+  assetPath,
+  isSafeReturnPath,
+} from "../lib/routes.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -129,9 +134,21 @@ check("bare word rejected", !isSafeReturnPath("evil.com"));
 check("empty rejected", !isSafeReturnPath(""));
 check("null rejected", !isSafeReturnPath(null));
 
+// --- basePath asset resolution (Phase 13 regression) -----------------------
+// Raw <img src> is not rewritten by Next under a basePath, which 404'd every
+// listing plate in production. These lock the helper's behaviour.
+check("asset gains the basePath prefix", assetPath("/photos/plate-01.svg") === "/dashboard/photos/plate-01.svg");
+check("already-prefixed asset is untouched", assetPath("/dashboard/photos/p.svg") === "/dashboard/photos/p.svg");
+check("absolute https URL passes through", assetPath("https://cdn.example.com/a.jpg") === "https://cdn.example.com/a.jpg");
+check("protocol-relative URL passes through", assetPath("//cdn.example.com/a.jpg") === "//cdn.example.com/a.jpg");
+check("data URL passes through", assetPath("data:image/png;base64,AAAA") === "data:image/png;base64,AAAA");
+check("empty src stays empty", assetPath("") === "");
+check("fallback plate is basePath-resolvable", assetPath(FALLBACK_PLATE) === `${BASE_PATH}/photos/plate-01.svg`);
+check("relative (non-rooted) src is not mangled", assetPath("photos/p.svg") === "photos/p.svg");
+
 // --- Summary ---------------------------------------------------------------
 const total = passed + failures.length;
-console.log(`\n${passed}/${total} dashboard access checks passed`);
+console.log(`\n${passed}/${total} dashboard checks passed`);
 if (failures.length > 0) {
   console.log("Failures:");
   for (const f of failures) console.log(`  - ${f}`);
