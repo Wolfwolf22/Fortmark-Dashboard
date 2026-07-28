@@ -28,6 +28,14 @@ import {
   profileDatabaseEnabled,
 } from "../lib/flags.ts";
 import { resolveDbRole } from "../lib/profile/roles.ts";
+import {
+  licenseLabel,
+  resolveImageUrl,
+  toProfileDetail,
+  toProfileDisplay,
+} from "../lib/profile/display.ts";
+import { readFileSync } from "node:fs";
+import { syncCurrentUser, updateOwnProfile } from "../lib/profile/service.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -182,6 +190,276 @@ check("coordinator label maps", resolveDbRole("Transaction Coordinator") === "tr
 check("unknown role falls back to member", resolveDbRole("superuser") === "member");
 check("null role falls back to member", resolveDbRole(null) === "member");
 check("empty role falls back to member", resolveDbRole("") === "member");
+
+// --- Release 1 migration ---------------------------------------------------
+// The migration is applied by the Vercel preview build (the only context that
+// can read Vercel's write-only `sensitive` database variables). These checks
+// assert the committed SQL actually creates what the schema and service
+// expect, so a bad generate is caught here rather than at deploy time.
+{
+  const sql = readFileSync("lib/db/migrations/0000_foamy_redwing.sql", "utf8");
+  const journal = JSON.parse(readFileSync("lib/db/migrations/meta/_journal.json", "utf8"));
+
+  for (const table of [
+    "audit_events",
+    "dashboard_users",
+    "professional_profiles",
+    "profile_images",
+  ]) {
+    check(`migration creates ${table}`, sql.includes(`CREATE TABLE "${table}"`));
+  }
+  for (const type of [
+    "dashboard_user_role",
+    "dashboard_user_status",
+    "profile_image_status",
+  ]) {
+    check(`migration creates the ${type} enum`, sql.includes(`"public"."${type}" AS ENUM`));
+  }
+  check(
+    "migration is the only journal entry and matches the file",
+    journal.entries.length === 1 && journal.entries[0].tag === "0000_foamy_redwing"
+  );
+  // Release 1 is purely additive; a DROP here would mean a regenerate went wrong.
+  check("migration drops nothing", !/\bDROP\s+(TABLE|TYPE|COLUMN)\b/i.test(sql));
+  check(
+    "clerk id is unique so one Clerk user cannot hold two records",
+    // `[\s\S]` rather than the `s` flag, which the project's TS target rejects.
+    /unique[\s\S]*clerk_user_id|clerk_user_id[\s\S]*unique/i.test(sql)
+  );
+}
+
+// --- Compact display projection: the PII boundary --------------------------
+// Everything the shell renders globally comes from this projection. If a field
+// that should stay server-side ever reaches it, these fail.
+{
+  const session = { name: "Daniel Wolf", role: "Broker", imageUrl: "https://img.clerk.com/a.png" };
+  const profileRow = {
+    // Fields the projection is allowed to read.
+    preferredDisplayName: "D. Wolf",
+    licenseState: "FL",
+    licenseType: "Broker",
+    profileCompletionPercent: 70,
+    // Fields it must ignore even though they are present on a real row.
+    id: "11111111-1111-1111-1111-111111111111",
+    userId: "22222222-2222-2222-2222-222222222222",
+    clerkUserId: "user_2aaaaaaaaaaaaaaaaaaa",
+    phoneE164: "+19545550100",
+    legalFirstName: "Daniel",
+    legalLastName: "Wolf",
+    licenseNumber: "BK123456",
+    licenseExpiration: "2027-06-30",
+    nrdsNumber: "123456789",
+    primaryEmail: "daniel@example.com",
+    biography: "Broker.",
+  };
+  const display = toProfileDisplay(session, profileRow, null);
+  const serialized = JSON.stringify(display);
+
+  check("display prefers the preferred display name", display.displayName === "D. Wolf");
+  check("display role comes from the session", display.roleLabel === "Broker");
+  check("display licence label is state and type only", display.licenseLabel === "FL Broker");
+  check("display completion is carried", display.completion === 70);
+
+  for (const [label, value] of [
+    ["clerk id", "user_2aaaaaaaaaaaaaaaaaaa"],
+    ["phone", "+19545550100"],
+    ["licence number", "BK123456"],
+    ["licence expiration", "2027-06-30"],
+    ["NRDS number", "123456789"],
+    ["primary email", "daniel@example.com"],
+    ["legal first name", "Daniel"],
+    ["row id", "11111111-1111-1111-1111-111111111111"],
+    ["user id", "22222222-2222-2222-2222-222222222222"],
+    ["biography", "Broker."],
+  ] as const) {
+    check(`display projection never carries the ${label}`, !serialized.includes(value));
+  }
+  check(
+    "display projection has exactly the five permitted keys",
+    Object.keys(display).sort().join(",") ===
+      "completion,displayName,imageUrl,licenseLabel,roleLabel"
+  );
+
+  // Falls back to session identity with no row at all — the database-off shape.
+  const bare = toProfileDisplay(session);
+  check("display falls back to the session name", bare.displayName === "Daniel Wolf");
+  check("display falls back to the session image", bare.imageUrl === session.imageUrl);
+  check("display licence label is null without a profile", bare.licenseLabel === null);
+  check("display completion defaults to 0", bare.completion === 0);
+  check("display clamps an out-of-range completion",
+    toProfileDisplay(session, { profileCompletionPercent: 400 }).completion === 100);
+}
+
+// --- Licence label ---------------------------------------------------------
+check("licence label needs neither field", licenseLabel(null) === null);
+check("licence label with state only", licenseLabel({ licenseState: "FL" }) === "FL");
+check("licence label with type only", licenseLabel({ licenseType: "Broker" }) === "Broker");
+check("licence label ignores blank values", licenseLabel({ licenseState: "   " }) === null);
+
+// --- Top-bar image fallback chain ------------------------------------------
+// processed (only when ready) -> active -> Clerk -> null (initials).
+{
+  const session = { name: "D W", role: "Agent", imageUrl: "https://img.clerk.com/c.png" };
+  check(
+    "ready processed image wins",
+    resolveImageUrl(
+      { processedImageUrl: "https://cdn/p.png", activeImageUrl: "https://cdn/a.png", processingStatus: "ready" },
+      session
+    ) === "https://cdn/p.png"
+  );
+  check(
+    "processed image is ignored while still processing",
+    resolveImageUrl(
+      { processedImageUrl: "https://cdn/p.png", activeImageUrl: "https://cdn/a.png", processingStatus: "processing" },
+      session
+    ) === "https://cdn/a.png"
+  );
+  check(
+    "a failed processing run never blanks the active image",
+    resolveImageUrl(
+      { processedImageUrl: "https://cdn/p.png", activeImageUrl: "https://cdn/a.png", processingStatus: "failed" },
+      session
+    ) === "https://cdn/a.png"
+  );
+  check(
+    "clerk image is used when there is no active image",
+    resolveImageUrl({ clerkImageUrl: "https://cdn/k.png", processingStatus: "clerk_only" }, session) ===
+      "https://cdn/k.png"
+  );
+  check("session image is the last resort", resolveImageUrl(null, session) === session.imageUrl);
+  check(
+    "no image at all falls through to initials",
+    resolveImageUrl(null, { name: "D W", role: "Agent", imageUrl: null }) === null
+  );
+  // Stored values are treated as untrusted on the way out.
+  check(
+    "javascript: image url is rejected",
+    resolveImageUrl({ activeImageUrl: "javascript:alert(1)", processingStatus: "uploaded" }, {
+      name: "D W", role: "Agent", imageUrl: null,
+    }) === null
+  );
+  check(
+    "data: image url is rejected",
+    resolveImageUrl({ activeImageUrl: "data:image/svg+xml,<svg onload=alert(1)>", processingStatus: "uploaded" }, {
+      name: "D W", role: "Agent", imageUrl: null,
+    }) === null
+  );
+  check(
+    "protocol-relative image url is rejected",
+    resolveImageUrl({ activeImageUrl: "//evil.example.com/a.png", processingStatus: "uploaded" }, {
+      name: "D W", role: "Agent", imageUrl: null,
+    }) === null
+  );
+  check(
+    "plain http image url is rejected",
+    resolveImageUrl({ activeImageUrl: "http://insecure.example.com/a.png", processingStatus: "uploaded" }, {
+      name: "D W", role: "Agent", imageUrl: null,
+    }) === null
+  );
+}
+
+// --- Drawer detail projection ----------------------------------------------
+// Wider than the display projection by design — it is the caller's own record,
+// fetched on demand from a protected route — but still never a raw row.
+{
+  const detail = toProfileDetail({
+    preferredDisplayName: "D. Wolf",
+    phoneE164: "+19545550100",
+    licenseNumber: "BK123456",
+    languages: ["English", 42, "Spanish"],
+    profileCompletionPercent: 55,
+    // Must not survive the copy.
+    id: "11111111-1111-1111-1111-111111111111",
+    userId: "22222222-2222-2222-2222-222222222222",
+    role: "admin",
+    status: "active",
+    clerkUserId: "user_2aaaaaaaaaaaaaaaaaaa",
+    createdAt: new Date(0),
+  } as Record<string, unknown>);
+  const keys = Object.keys(detail);
+
+  check("detail carries the caller's own phone", detail.phoneE164 === "+19545550100");
+  check("detail carries the licence number", detail.licenseNumber === "BK123456");
+  check("detail drops non-string list entries", detail.languages.join(",") === "English,Spanish");
+  check("detail defaults absent lists to empty", detail.specialties.length === 0);
+  check("detail carries completion", detail.completion === 55);
+  for (const forbidden of ["id", "userId", "role", "status", "clerkUserId", "createdAt", "updatedAt"]) {
+    check(`detail projection omits ${forbidden}`, !keys.includes(forbidden));
+  }
+  check(
+    "detail projection never carries a clerk id",
+    !JSON.stringify(detail).includes("user_2aaaaaaaaaaaaaaaaaaa")
+  );
+}
+
+// --- The allowlist gate runs BEFORE any database access --------------------
+// This is the Release 1 invariant that stops an arbitrary signed-in Clerk user
+// from provisioning an active dashboard record for themselves.
+//
+// It is asserted by making the database deliberately unusable: DATABASE_URL is
+// set to a string the driver cannot parse, so any code path that reaches
+// `getDb()` throws. A caller who is turned away therefore returns null, while
+// an allowlisted caller throws — which is exactly what proves the gate is
+// ordered ahead of the connection rather than merely present somewhere.
+{
+  const previousUrl = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = "definitely not a connection string";
+
+  const ALLOWED = "user_2aaaaaaaaaaaaaaaaaaaa";
+  const OTHER = "user_2bbbbbbbbbbbbbbbbbbbb";
+  const env = {
+    PROFILE_DATABASE_ENABLED: "1",
+    FORTMARK_ALLOWED_CLERK_USER_IDS: ALLOWED,
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_placeholder",
+    CLERK_SECRET_KEY: "sk_test_placeholder",
+  };
+  const identity = (clerkUserId: string) => ({
+    clerkUserId,
+    email: null,
+    name: null,
+    imageUrl: null,
+    roleLabel: null,
+  });
+
+  const outcome = async (user: string): Promise<"returned" | "reached-db"> => {
+    try {
+      await syncCurrentUser(identity(user), env);
+      return "returned";
+    } catch {
+      return "reached-db";
+    }
+  };
+
+  check(
+    "a signed-in but non-allowlisted user cannot provision a record",
+    (await outcome(OTHER)) === "returned"
+  );
+  check(
+    "the non-allowlisted caller never reaches the database at all",
+    (await syncCurrentUser(identity(OTHER), env)) === null
+  );
+  check(
+    "an allowlisted caller does proceed to the database layer",
+    (await outcome(ALLOWED)) === "reached-db"
+  );
+  check(
+    "sync is refused outright when the feature flag is off",
+    (await syncCurrentUser(identity(ALLOWED), { ...env, PROFILE_DATABASE_ENABLED: "0" })) === null
+  );
+
+  // The flag is a hard gate on writes too, ahead of the connection.
+  const offResult = await updateOwnProfile(ALLOWED, { biography: "x" }, {
+    ...env,
+    PROFILE_DATABASE_ENABLED: "0",
+  });
+  check(
+    "updates are refused outright when the feature flag is off",
+    !offResult.ok && offResult.reason === "unavailable"
+  );
+
+  if (previousUrl === undefined) delete process.env.DATABASE_URL;
+  else process.env.DATABASE_URL = previousUrl;
+}
 
 // --- Summary ---------------------------------------------------------------
 const total = passed + failures.length;

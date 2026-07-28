@@ -13,13 +13,16 @@ import { CommandPalette } from "@/components/layout/command-palette";
 import { SessionUserProvider } from "@/components/layout/session-user";
 import { useUiStore } from "@/lib/stores/ui";
 import type { PublicSessionUser } from "@/lib/auth/session";
+import type { ShellProfile } from "@/lib/profile/display";
 import { cn } from "@/lib/utils";
 
 export function AppShell({
   user,
+  profile,
   children,
 }: {
   user: PublicSessionUser;
+  profile: ShellProfile;
   children: React.ReactNode;
 }) {
   const railPinnedStored = useUiStore((s) => s.railPinned);
@@ -37,7 +40,7 @@ export function AppShell({
             railPinned ? "pl-60" : "pl-16"
           )}
         >
-          <TopBar />
+          <TopBar profile={profile} />
           <main className="flex min-h-0 flex-1 flex-col p-6">{children}</main>
         </div>
         <CommandPalette />

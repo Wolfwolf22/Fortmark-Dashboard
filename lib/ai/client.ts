@@ -3,13 +3,15 @@
  * consumes the AsyncIterable and never knows which provider is behind it.
  * Swapping in the real model happens in `app/api/chat/route.ts` — one file.
  */
+import { apiPath } from "@/lib/routes";
 import { ChatMessage, SendMessageOptions } from "./types";
 
 export async function* sendMessage(
   messages: Pick<ChatMessage, "role" | "content">[],
   opts: SendMessageOptions = {}
 ): AsyncIterable<string> {
-  const response = await fetch("/api/chat", {
+  // basePath-aware: a bare "/api/chat" resolves to the portal zone and 404s.
+  const response = await fetch(apiPath("/api/chat"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
