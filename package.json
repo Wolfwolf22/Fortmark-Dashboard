@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:auth": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_dashboard_access.ts",
+    "test": "npm run typecheck && npm run test:auth"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.5.21",
