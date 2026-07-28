@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { LogOut, User, Users } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -13,14 +12,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useQuery } from "@/lib/data/hooks";
-import { getCurrentUser } from "@/lib/data/adapters/settings";
-import { signOut } from "@/lib/auth/session";
+import { useClerk } from "@clerk/nextjs";
+import { useSession } from "@/lib/auth/session-context";
+import { CANONICAL_DASHBOARD_URL } from "@/lib/auth/config";
 import { cn, initials } from "@/lib/utils";
 
 export function UserMenu({ expanded }: { expanded: boolean }) {
-  const router = useRouter();
-  const { data: user } = useQuery(() => getCurrentUser(), []);
+  // The REAL authenticated identity, handed down by the protected server
+  // layout. Previously this read a mock "Marcus Webb" record.
+  const { user } = useSession();
+  const { signOut } = useClerk();
 
   const trigger = (
     <DropdownMenuTrigger asChild>
@@ -33,15 +34,15 @@ export function UserMenu({ expanded }: { expanded: boolean }) {
         )}
       >
         <Avatar className="h-7 w-7">
-          <AvatarFallback>{user ? initials(user.name) : "·"}</AvatarFallback>
+          <AvatarFallback>{initials(user.name)}</AvatarFallback>
         </Avatar>
         {expanded && (
           <span className="min-w-0 text-left">
             <span className="block truncate text-[13px] font-semibold text-foreground">
-              {user?.name ?? "…"}
+              {user.name}
             </span>
             <span className="block text-[11px] text-muted-foreground">
-              {user?.role ?? ""}
+              {user.role}
             </span>
           </span>
         )}
@@ -56,14 +57,14 @@ export function UserMenu({ expanded }: { expanded: boolean }) {
       ) : (
         <Tooltip>
           <TooltipTrigger asChild>{trigger}</TooltipTrigger>
-          <TooltipContent side="right">{user?.name ?? "Account"}</TooltipContent>
+          <TooltipContent side="right">{user.name}</TooltipContent>
         </Tooltip>
       )}
       <DropdownMenuContent side="right" align="end" className="w-56">
         <DropdownMenuLabel className="normal-case tracking-normal">
-          <span className="block text-sm font-bold text-foreground">{user?.name}</span>
+          <span className="block text-sm font-bold text-foreground">{user.name}</span>
           <span className="block text-xs font-normal text-muted-foreground">
-            {user?.email}
+            {user.email}
           </span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
@@ -81,9 +82,13 @@ export function UserMenu({ expanded }: { expanded: boolean }) {
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          onSelect={async () => {
-            await signOut(); // stub — clears nothing yet
-            router.push("/login");
+          onSelect={() => {
+            // Real Clerk sign-out: revokes the session and clears its cookies,
+            // then lands on the canonical dashboard URL, which the middleware
+            // bounces to the sign-in page. `redirectUrl` is absolute so the
+            // user always returns to app.fortmark.net, never a raw
+            // deployment URL.
+            void signOut({ redirectUrl: CANONICAL_DASHBOARD_URL });
           }}
         >
           <LogOut />

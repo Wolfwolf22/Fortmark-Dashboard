@@ -4,12 +4,13 @@
  * Swapping in the real model happens in `app/api/chat/route.ts` — one file.
  */
 import { ChatMessage, SendMessageOptions } from "./types";
+import { apiPath } from "@/lib/base-path";
 
 export async function* sendMessage(
   messages: Pick<ChatMessage, "role" | "content">[],
   opts: SendMessageOptions = {}
 ): AsyncIterable<string> {
-  const response = await fetch("/api/chat", {
+  const response = await fetch(apiPath("/api/chat"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

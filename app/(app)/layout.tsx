@@ -1,32 +1,45 @@
-"use client";
+import { redirect } from "next/navigation";
+import { AppShell } from "./app-shell";
+import { SessionProvider } from "@/lib/auth/session-context";
+import { getSession, AccessDeniedError, AuthConfigurationError } from "@/lib/auth/session";
+import { signInUrlFor, DASHBOARD_BASE_PATH } from "@/lib/auth/config";
 
-import { NavRail } from "@/components/layout/nav-rail";
-import { TopBar } from "@/components/layout/top-bar";
-import { CommandPalette } from "@/components/layout/command-palette";
-import { useUiStore } from "@/lib/stores/ui";
-import { cn } from "@/lib/utils";
+/**
+ * PROTECTED SERVER LAYOUT — defense in depth.
+ *
+ * The edge middleware already rejects unauthenticated and non-approved callers,
+ * and the upstream fortmark-app rewrite is NOT relied on for security at all.
+ * This second, independent check runs in the Node runtime so that no page in
+ * this group can ever render without an approved Clerk identity, even if the
+ * middleware matcher were misconfigured.
+ *
+ * Rendering is dynamic by necessity: the session is per-request.
+ */
+export const dynamic = "force-dynamic";
 
-import * as React from "react";
+export default async function AppLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  let session;
+  try {
+    session = await getSession();
+  } catch (err) {
+    if (err instanceof AccessDeniedError) {
+      // Middleware normally returns a real 403 before we get here. Reaching
+      // this branch means the middleware was bypassed — fail closed anyway.
+      redirect(`${DASHBOARD_BASE_PATH}/access-denied`);
+    }
+    if (err instanceof AuthConfigurationError) throw err; // → 500, never a render
+    throw err;
+  }
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const railPinnedStored = useUiStore((s) => s.railPinned);
-  const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
-  const railPinned = mounted && railPinnedStored;
+  if (!session) redirect(signInUrlFor(DASHBOARD_BASE_PATH));
 
   return (
-    <div className="min-h-screen">
-      <NavRail />
-      <div
-        className={cn(
-          "flex min-h-screen flex-col transition-[padding] duration-200",
-          railPinned ? "pl-60" : "pl-16"
-        )}
-      >
-        <TopBar />
-        <main className="flex min-h-0 flex-1 flex-col p-6">{children}</main>
-      </div>
-      <CommandPalette />
-    </div>
+    <SessionProvider value={session}>
+      <AppShell>{children}</AppShell>
+    </SessionProvider>
   );
 }

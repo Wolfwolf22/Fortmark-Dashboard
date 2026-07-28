@@ -10,6 +10,7 @@ import { NotificationsBell } from "./notifications-bell";
 import { UserMenu } from "./user-menu";
 import { useUiStore } from "@/lib/stores/ui";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { assetPath } from "@/lib/base-path";
 import { cn } from "@/lib/utils";
 
 /**
@@ -46,7 +47,7 @@ export function NavRail() {
           aria-label="FortMark home"
         >
           <Image
-            src="/brand/fortmark-logomark-black.png"
+            src={assetPath("/brand/fortmark-logomark-black.png")}
             alt=""
             width={28}
             height={28}
@@ -54,7 +55,7 @@ export function NavRail() {
             priority
           />
           <Image
-            src="/brand/fortmark-logomark-white.png"
+            src={assetPath("/brand/fortmark-logomark-white.png")}
             alt=""
             width={28}
             height={28}

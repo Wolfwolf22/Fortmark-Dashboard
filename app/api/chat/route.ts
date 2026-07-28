@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { mockReplyFor } from "@/lib/ai/mock-response";
+import { guardApiRoute } from "@/lib/auth/api-guard";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,10 @@ interface ChatRequestBody {
  * stream, so nothing outside this file changes.
  */
 export async function POST(request: NextRequest) {
+  // Protected independently of the edge middleware and of the upstream rewrite.
+  const denied = await guardApiRoute();
+  if (denied) return denied;
+
   const body = (await request.json()) as ChatRequestBody;
   const lastUser = [...(body.messages ?? [])].reverse().find((m) => m.role === "user");
   const reply = mockReplyFor(lastUser?.content ?? "");
