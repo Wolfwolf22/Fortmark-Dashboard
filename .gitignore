@@ -18,8 +18,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# env files
+# env files — real values never get committed.
 .env*
+# ...but the template documents variable NAMES only, and must be tracked.
+!.env.example
 
 # typescript
 *.tsbuildinfo
