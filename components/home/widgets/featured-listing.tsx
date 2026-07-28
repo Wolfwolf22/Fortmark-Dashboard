@@ -12,6 +12,7 @@ import { getFeaturedListing } from "@/lib/data/adapters/listings";
 import { useQuery } from "@/lib/data/hooks";
 import type { Agent, Listing } from "@/lib/data/types";
 import { formatCurrency, initials } from "@/lib/utils";
+import { ListingImage } from "@/components/listings/listing-image";
 
 /**
  * The spotlight card on Home: the brokerage's featured listing with photo,
@@ -74,11 +75,10 @@ function FeaturedBody({
       className="group -m-2 flex flex-1 flex-col gap-4 rounded-panel p-2 transition-colors duration-150 hover:bg-tint"
     >
       <div className="relative overflow-hidden rounded-panel">
-        {/* eslint-disable-next-line @next/next/no-img-element -- local SVG plates, no optimization needed */}
-        <img
+        <ListingImage
           src={listing.photos[0]}
           alt={listing.address}
-          className="aspect-[4/3] w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+          className="aspect-[4/3] w-full transition-transform duration-200 group-hover:scale-[1.02]"
         />
         <StatusPill tone={pill.tone} className="absolute left-3 top-3 backdrop-blur-sm">
           {pill.label}

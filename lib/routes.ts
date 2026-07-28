@@ -88,3 +88,24 @@ export function dashboardUrl(): string {
 export function portalUrl(): string {
   return portalOrigin() || "/";
 }
+
+/**
+ * Prefixes a repo-root-relative public asset path with the zone `basePath`.
+ *
+ * Next rewrites `<Link href>`, `router.push()` and `next/image` automatically,
+ * but a raw `<img src="/photos/…">` is emitted verbatim and resolves against
+ * the origin root — which is the portal zone, not this one. Under
+ * `basePath: "/dashboard"` that produced a 404 for every listing plate.
+ *
+ * Pass any already-absolute or data URL through untouched so remote MLS media
+ * keeps working when the media adapter goes live.
+ */
+export function assetPath(src: string): string {
+  if (!src) return src;
+  if (/^(https?:)?\/\//.test(src) || src.startsWith("data:")) return src;
+  if (src.startsWith(`${BASE_PATH}/`)) return src;
+  return src.startsWith("/") ? `${BASE_PATH}${src}` : src;
+}
+
+/** Deterministic plate shown when listing media is missing or fails to load. */
+export const FALLBACK_PLATE = "/photos/plate-01.svg";
