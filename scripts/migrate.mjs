@@ -67,16 +67,28 @@ function bail(message) {
   process.exit(force ? 1 : 0);
 }
 
-if (!force && process.env.VERCEL_ENV !== "preview") {
-  console.log(
-    `[migrate] skipped — build guard allows preview only (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"})`
-  );
-  process.exit(0);
-}
-
 const unpooled = process.env.DATABASE_URL_UNPOOLED?.trim();
 const pooled = process.env.DATABASE_URL?.trim();
 const url = unpooled || pooled;
+
+// Reported on EVERY build, before the preview guard, so a Production build
+// prints which database it is attached to without running a single statement
+// of DDL. Isolation is a claim about two environments, so it cannot be proven
+// from the Preview side alone — this is the other half of the comparison.
+if (url && url !== "[SENSITIVE]") {
+  console.log(
+    `[migrate] database host fingerprint: ${hostFingerprint(url)} (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"})`
+  );
+}
+
+// Migrations themselves remain preview-only. Reporting is safe everywhere;
+// schema changes are not.
+if (!force && process.env.VERCEL_ENV !== "preview") {
+  console.log(
+    `[migrate] migrations skipped — build guard allows preview only (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"})`
+  );
+  process.exit(0);
+}
 
 // A pulled-but-unreadable sensitive variable arrives as this exact literal.
 // Catching it here turns a confusing driver crash into a clear message.
@@ -90,11 +102,6 @@ if (!url) {
 }
 
 console.log(`[migrate] using ${unpooled ? "DATABASE_URL_UNPOOLED" : "DATABASE_URL"}`);
-// Compare this line across a Preview and a Production build to prove the two
-// environments are (or are not) pointed at the same Neon branch.
-console.log(
-  `[migrate] database host fingerprint: ${hostFingerprint(url)} (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"})`
-);
 
 try {
   const sql = neon(url);
