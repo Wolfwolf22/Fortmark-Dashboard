@@ -23,6 +23,7 @@
  *
  * Prefers the unpooled URL for DDL. Never prints any part of either value.
  */
+import { createHash } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import { migrate } from "drizzle-orm/neon-http/migrator";
@@ -35,6 +36,30 @@ const RELEASE_1_TABLES = [
 ];
 
 const force = process.argv.includes("--force");
+
+/**
+ * A stable, non-reversible fingerprint of the database HOST — never the
+ * credentials, never the connection string.
+ *
+ * This exists to make database isolation provable rather than assumed. Neon
+ * encodes the compute endpoint id in the hostname, so a child branch and the
+ * main branch fingerprint differently. Comparing the value printed by a Preview
+ * build against the one printed by a Production build answers "are these the
+ * same database?" objectively, without anyone handling a secret.
+ *
+ * Only the host is hashed, the digest is truncated, and the input is a
+ * hostname rather than a credential — so the output cannot be reversed into
+ * anything that grants access.
+ */
+function hostFingerprint(connectionString) {
+  try {
+    const { hostname } = new URL(connectionString);
+    const digest = createHash("sha256").update(hostname).digest("hex").slice(0, 12);
+    return digest;
+  } catch {
+    return "unparseable";
+  }
+}
 
 /** Exit the way the caller expects: loud when forced, silent on a build. */
 function bail(message) {
@@ -65,6 +90,11 @@ if (!url) {
 }
 
 console.log(`[migrate] using ${unpooled ? "DATABASE_URL_UNPOOLED" : "DATABASE_URL"}`);
+// Compare this line across a Preview and a Production build to prove the two
+// environments are (or are not) pointed at the same Neon branch.
+console.log(
+  `[migrate] database host fingerprint: ${hostFingerprint(url)} (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"})`
+);
 
 try {
   const sql = neon(url);
