@@ -9,6 +9,15 @@ name: Provision profile database
 # env/printenv call. DATABASE_URL is only ever reported by NAME and TARGET.
 
 on:
+  # A workflow can only be dispatched by API once GitHub has registered it,
+  # which needs it on the default branch. This path-scoped push trigger
+  # registers it from the feature branch instead; it fires only when this file
+  # itself changes, and defaults to the read-only discover mode.
+  push:
+    branches:
+      - claude/professional-profile-onboarding
+    paths:
+      - .github/workflows/provision-profile-database.yml
   workflow_dispatch:
     inputs:
       mode:
@@ -26,6 +35,8 @@ env:
   TEAM: team_lrHGYzrhpDXRjeAepo6ezt7Q
   PRJ: prj_5KVjhWtseC2mnPMkMU35D9F40wQV
   SCOPE: daniels-projects-b97d8ae9
+  # Push events carry no inputs; default to the read-only mode.
+  MODE: ${{ inputs.mode || 'discover' }}
 
 jobs:
   database:
@@ -83,7 +94,7 @@ jobs:
           '
 
       - name: Discover Neon products and plans (read-only)
-        if: inputs.mode == 'discover'
+        if: env.MODE == 'discover'
         run: |
           set -euo pipefail
           echo "--- vercel integration add neon --help (plan/metadata keys) ---"
@@ -92,7 +103,7 @@ jobs:
 
       # ----------------------------------------------------------- provision
       - name: Provision or reuse the Neon database
-        if: inputs.mode == 'provision'
+        if: env.MODE == 'provision'
         run: |
           set -euo pipefail
           # Reuse before creating: never provision a second resource.
@@ -125,7 +136,7 @@ jobs:
           fi
 
       - name: Confirm DATABASE_URL by name and target only
-        if: inputs.mode == 'provision' || inputs.mode == 'migrate'
+        if: env.MODE == 'provision' || env.MODE == 'migrate'
         run: |
           set -euo pipefail
           curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
@@ -139,7 +150,7 @@ jobs:
 
       # ------------------------------------------------------------- migrate
       - name: Apply migrations to the Preview database
-        if: inputs.mode == 'migrate'
+        if: env.MODE == 'migrate'
         env:
           # Pulled from the project's Preview scope at run time; never printed.
           DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
@@ -159,7 +170,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Profile database — ${{ inputs.mode }}"
+            echo "## Profile database — ${{ env.MODE }}"
             echo ""
             echo "- project: fortmark-dashboard (\`$PRJ\`)"
             echo "- branch: \`${{ github.ref_name }}\`"
