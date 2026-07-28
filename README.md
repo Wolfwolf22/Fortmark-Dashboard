@@ -45,7 +45,14 @@ knows nothing about the provider. The streaming route handler in
 model is that one file.
 
 Conversation history persists to `localStorage` (`fm.ai.threads.v1`) via
-`lib/ai/store.ts`.
+`lib/ai/store.ts` — threads, per-message feedback, and the active thread id.
+Ids are counter-based (not random) so a server render and the first client
+render never disagree; the counter resumes past whatever rehydrates.
+
+`app/(app)/ai/page.tsx` owns the stream lifecycle: it appends an empty
+assistant turn, grows it token by token, and aborts through an
+`AbortController` when you press Stop. A stop before the first token removes
+the empty turn rather than leaving it in the transcript.
 
 ### 3. Auth — `app/(auth)/` + `middleware.ts` + `lib/auth/session.ts`
 
@@ -77,3 +84,9 @@ first-class, everything keyboard-navigable.
 - The top-bar period selector (Today / Week / Month / Quarter / Year) drives
   every widget through `lib/stores/date-range.ts`.
 - ⌘K opens global search across listings, transactions, and contacts.
+- AI (`/ai`): thread sidebar, streaming transcript with markdown (tables,
+  code, quotes), Stop mid-stream, copy and thumbs feedback per reply.
+  Enter sends, Shift+Enter inserts a newline.
+- Messages (`/messages`): two-pane inbox filtered by search, participant
+  role, and unread. Opening a thread marks it read; replies go through
+  `sendThreadMessage`, which bumps the data version and refetches both panes.
