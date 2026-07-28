@@ -756,14 +756,12 @@ export const notifications: AppNotification[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Current user + team + brokerage (Settings)
-
-export const currentUser = {
-  id: "agent-1",
-  name: "Marcus Webb",
-  email: "marcus.webb@fortmark.com",
-  role: "Broker" as const,
-};
+// Team + brokerage (Settings)
+//
+// The mock `currentUser` that used to live here was removed when Clerk
+// landed. The signed-in identity is real and comes from `getSession()`
+// (`lib/auth/session.ts`) — never from this file. `agents` below is roster
+// data and may legitimately contain the same names.
 
 export const brokerage = {
   name: "FortMark",

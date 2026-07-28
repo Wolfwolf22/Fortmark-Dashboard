@@ -3,14 +3,19 @@
  * service and the UI is untouched.
  */
 import { BrokerageProfile, IntegrationStatus, TeamMember } from "../types";
-import { agents, brokerage, currentUser } from "../mock/db";
+import { agents, brokerage } from "../mock/db";
 import { delay } from "./latency";
 
-export async function getCurrentUser() {
-  await delay(80);
-  return { ...currentUser };
-}
-
+/**
+ * There is deliberately no `getCurrentUser()` here.
+ *
+ * The signed-in identity comes from Clerk via `getSession()`
+ * (`lib/auth/session.ts`) and reaches client components through
+ * `useSessionUser()`. Re-adding a mock identity to this adapter would let
+ * placeholder account data render as the authenticated user again.
+ *
+ * `getTeam()` below is brokerage roster data, not identity.
+ */
 export async function getTeam(): Promise<TeamMember[]> {
   await delay();
   return agents.map((a) => ({
