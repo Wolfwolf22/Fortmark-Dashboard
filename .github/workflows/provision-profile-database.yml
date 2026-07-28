@@ -114,28 +114,59 @@ jobs:
             process.stdout.write(String((j.envs||[]).some(e=>e.key==="DATABASE_URL")));
           ')
           if [ "$HAVE" = "true" ]; then
-            echo "DATABASE_URL already present on fortmark-dashboard — reusing, nothing provisioned"
+            echo "DATABASE_URL already present — reusing, nothing provisioned"
             exit 0
           fi
 
-          echo "provisioning fortmark-dashboard-db on plan free_v3, Neon Auth disabled"
-          echo "(Clerk remains the only authentication provider)"
+          # `integration add` and `resource connect` both act on the CLI's
+          # "current project", which comes from .vercel/project.json. A bare CI
+          # checkout has none, which is why the previous run reported
+          # "Provisioning resource..." and then attached nothing. Link first.
+          vercel link --yes --project fortmark-dashboard \
+            --token "$VERCEL_TOKEN" --scope "$SCOPE" >/dev/null 2>&1
+          echo "linked CWD to fortmark-dashboard"
+
+          # The earlier run may already have created the resource. Adopt it
+          # rather than creating a duplicate.
           set +e
-          timeout 600 vercel integration add neon \
-            --name fortmark-dashboard-db \
-            --plan free_v3 \
-            -m auth=false \
-            --environment production --environment preview --environment development \
-            --no-claim \
-            --token "$VERCEL_TOKEN" --scope "$SCOPE" </dev/null 2>&1 \
-            | grep -viE "telemetry|roadmap|opt-out|learn more|^>" | tail -30
-          RC=${PIPESTATUS[0]}
+          vercel integration resource inspect fortmark-dashboard-db \
+            --token "$VERCEL_TOKEN" --scope "$SCOPE" </dev/null >/tmp/inspect.txt 2>&1
+          EXISTS=$?
           set -e
-          if [ "$RC" != "0" ]; then
-            echo "provisioning did not complete non-interactively (exit $RC)"
-            echo "this is a provider selection boundary, not a credential failure"
-            exit 1
+
+          if [ "$EXISTS" = "0" ]; then
+            echo "fortmark-dashboard-db already exists — connecting it to fortmark-dashboard"
+            vercel integration resource connect fortmark-dashboard-db fortmark-dashboard \
+              --environment production --environment preview --environment development \
+              --token "$VERCEL_TOKEN" --scope "$SCOPE" </dev/null 2>&1 \
+              | grep -viE "telemetry|roadmap|opt-out|learn more|^>" | tail -20
+          else
+            echo "provisioning fortmark-dashboard-db on plan free_v3, Neon Auth disabled"
+            echo "(Clerk remains the only authentication provider)"
+            vercel integration add neon \
+              --name fortmark-dashboard-db \
+              --plan free_v3 \
+              -m auth=false \
+              --environment production --environment preview --environment development \
+              --no-claim \
+              --token "$VERCEL_TOKEN" --scope "$SCOPE" </dev/null 2>&1 \
+              | grep -viE "telemetry|roadmap|opt-out|learn more|^>" | tail -30
           fi
+
+          # Attachment can lag the CLI returning; poll rather than assume.
+          for i in $(seq 1 12); do
+            curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+              "https://api.vercel.com/v9/projects/$PRJ/env?teamId=$TEAM" -o /tmp/poll.json
+            N=$(node -e '
+              const j=require("/tmp/poll.json");
+              process.stdout.write(String((j.envs||[]).filter(e=>/^(DATABASE_URL|POSTGRES_|PG)/.test(e.key)).length));
+            ')
+            echo "[$i] database-shaped vars on project: $N"
+            [ "$N" != "0" ] && exit 0
+            sleep 10
+          done
+          echo "resource did not attach a database variable within 120s"
+          exit 1
 
       - name: Confirm DATABASE_URL by name and target only
         if: env.MODE == 'provision' || env.MODE == 'migrate'
