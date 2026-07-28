@@ -118,11 +118,13 @@ jobs:
             exit 0
           fi
 
-          echo "provisioning fortmark-dashboard-db (free plan) and connecting to fortmark-dashboard only"
+          echo "provisioning fortmark-dashboard-db on plan free_v3, Neon Auth disabled"
+          echo "(Clerk remains the only authentication provider)"
           set +e
           timeout 600 vercel integration add neon \
             --name fortmark-dashboard-db \
-            --plan free \
+            --plan free_v3 \
+            -m auth=false \
             --environment production --environment preview --environment development \
             --no-claim \
             --token "$VERCEL_TOKEN" --scope "$SCOPE" </dev/null 2>&1 \
