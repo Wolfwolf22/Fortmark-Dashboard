@@ -31,7 +31,9 @@ export const WIDGETS: Record<WidgetId, WidgetDef> = {
   "featured-listing": {
     id: "featured-listing",
     component: FeaturedListingWidget,
-    spanClass: "md:col-span-3 xl:col-span-4 xl:row-span-2",
+    // Wide and short since Release 1.1: it sits below the commission chart
+    // rather than in the upper-left tile the identity card now owns.
+    spanClass: "md:col-span-6 xl:col-span-12",
   },
   "under-contract": {
     id: "under-contract",
