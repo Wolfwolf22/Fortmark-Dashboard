@@ -15,6 +15,7 @@
 import {
   cleanText,
   licenseDetailsChanged,
+  toProfileUrl,
   normalizeProfileUpdate,
   profileCompletion,
   toE164,
@@ -31,9 +32,26 @@ import { resolveDbRole } from "../lib/profile/roles.ts";
 import {
   licenseLabel,
   resolveImageUrl,
+  safeLinkUrl,
   toProfileDetail,
   toProfileDisplay,
 } from "../lib/profile/display.ts";
+import {
+  buildContactBlock,
+  buildContactLinks,
+  formatPhoneDisplay,
+  toMailto,
+  toTel,
+  toWhatsApp,
+} from "../lib/profile/links.ts";
+import {
+  credentialTrustFor,
+  formatJoinedAt,
+  greetingNameFor,
+  toHomeIdentityCard,
+} from "../lib/profile/home-card.ts";
+import { buildVCard, escapeValue, vCardFilename } from "../lib/profile/vcard.ts";
+import { DEFAULT_WIDGET_ORDER } from "../lib/stores/widget-order.ts";
 import { readFileSync } from "node:fs";
 import { syncCurrentUser, updateOwnProfile } from "../lib/profile/service.ts";
 
@@ -489,6 +507,314 @@ check("licence label ignores blank values", licenseLabel({ licenseState: "   " }
 
   if (previousUrl === undefined) delete process.env.DATABASE_URL;
   else process.env.DATABASE_URL = previousUrl;
+}
+
+
+// === Release 1.1: Home identity card ======================================
+
+const SESSION = {
+  name: "Daniel Wolf",
+  role: "Broker",
+  email: "daniel@example.com",
+  imageUrl: "https://img.clerk.com/a.png",
+};
+
+// --- Greeting name fallback chain ------------------------------------------
+check(
+  "greeting prefers the preferred display name's first token",
+  greetingNameFor({ preferredDisplayName: "D. Wolf", legalFirstName: "Daniel" }, SESSION) === "D."
+);
+check(
+  "greeting falls back to the legal first name",
+  greetingNameFor({ legalFirstName: "Daniel" }, SESSION) === "Daniel"
+);
+check(
+  "greeting falls back to the Clerk first name",
+  greetingNameFor({}, SESSION) === "Daniel"
+);
+check(
+  "greeting falls back to null for a nameless session",
+  greetingNameFor(null, { name: "", role: "Member" }) === null
+);
+check(
+  "greeting ignores a whitespace-only preferred name",
+  greetingNameFor({ preferredDisplayName: "   " }, SESSION) === "Daniel"
+);
+
+// --- Joined date -----------------------------------------------------------
+check(
+  "joined date formats as month and year",
+  formatJoinedAt("2026-07-15T12:00:00.000Z") === "July 2026"
+);
+check("joined date tolerates null", formatJoinedAt(null) === null);
+check("joined date rejects junk", formatJoinedAt("not-a-date") === null);
+
+// --- Credential trust ------------------------------------------------------
+check(
+  "credential defaults to self-reported, never a claimed verification",
+  credentialTrustFor({ licenseNumber: "BK1" }, { status: "active" }) === "self_reported"
+);
+check(
+  "pending_profile surfaces as pending review",
+  credentialTrustFor({}, { status: "pending_profile" }) === "pending_review"
+);
+check(
+  "a past expiration is reported expired",
+  credentialTrustFor(
+    { licenseExpiration: "2020-01-01" },
+    { status: "active" },
+    new Date("2026-07-30T00:00:00Z")
+  ) === "expired"
+);
+check(
+  "a future expiration is not expired",
+  credentialTrustFor(
+    { licenseExpiration: "2030-01-01" },
+    { status: "active" },
+    new Date("2026-07-30T00:00:00Z")
+  ) === "self_reported"
+);
+
+// --- Home card projection --------------------------------------------------
+{
+  const card = toHomeIdentityCard(
+    SESSION,
+    { createdAt: "2026-07-15T12:00:00.000Z", primaryEmail: "daniel@example.com", status: "active" },
+    {
+      preferredDisplayName: "Daniel Wolf",
+      professionalTitle: "Founder / Broker",
+      brokerageOffice: "Fort Lauderdale",
+      licenseState: "FL",
+      licenseType: "Broker",
+      licenseNumber: "BK123456",
+      nrdsNumber: "123456789",
+      phoneE164: "+19545550100",
+      linkedinUrl: "https://linkedin.com/in/daniel-wolf",
+      profileCompletionPercent: 82,
+    },
+    null,
+    new Date("2026-07-30T00:00:00Z")
+  );
+  check("card greeting name", card.greetingName === "Daniel");
+  check("card title", card.professionalTitle === "Founder / Broker");
+  check("card licence number is present on this surface", card.licenseNumber === "BK123456");
+  check("card completion carried", card.completion === 82);
+  check("card joined date carried", formatJoinedAt(card.joinedAt) === "July 2026");
+  check("card image falls back to the Clerk image", card.imageUrl === SESSION.imageUrl);
+  // Links: linkedin + email + phone, in the documented stable order.
+  check("card builds three links", card.links.length === 3);
+  check("linkedin is first", card.links[0].kind === "linkedin");
+  check("email link is a mailto", card.links[1].href.startsWith("mailto:"));
+  check("phone link is a tel", card.links[2].href.startsWith("tel:"));
+  check("external social link is marked external", card.links[0].external === true);
+  check("mailto is not marked external", card.links[1].external === false);
+  check(
+    "card never carries a clerk id",
+    !JSON.stringify(card).includes("user_")
+  );
+  const keys = Object.keys(card);
+  for (const forbidden of ["clerkUserId", "id", "userId", "primaryEmail", "biography"]) {
+    check(`card projection omits ${forbidden}`, !keys.includes(forbidden));
+  }
+}
+
+// --- Empty profile still yields a usable card ------------------------------
+{
+  const bare = toHomeIdentityCard(SESSION, null, null, null);
+  check("bare card uses the session name", bare.displayName === "Daniel Wolf");
+  // The session's verified email is a real, usable shortcut even with no
+  // profile row, so it is the only link a bare card should offer.
+  check(
+    "bare card offers only the session email shortcut",
+    bare.links.length === 1 && bare.links[0].kind === "email"
+  );
+  const anonymousish = toHomeIdentityCard(
+    { name: "A B", role: "Member" },
+    null,
+    null,
+    null
+  );
+  check("card with no email at all has no links", anonymousish.links.length === 0);
+  check("bare card completion is 0", bare.completion === 0);
+  check("bare card licence is null", bare.licenseNumber === null);
+  check("bare card joined is null", bare.joinedAt === null);
+}
+
+// --- Contact link construction --------------------------------------------
+check("mailto built from a valid address", toMailto("a@b.co") === "mailto:a@b.co");
+check("mailto rejects a missing domain dot", toMailto("a@b") === null);
+check("mailto rejects an injected header", toMailto("a@b.co\nBcc: x@y.co") === null);
+check("mailto rejects angle brackets", toMailto("<a@b.co>") === null);
+check("tel built from E.164", toTel("+19545550100") === "tel:+19545550100");
+check("tel rejects a non-E.164 value", toTel("(954) 555-0100") === null);
+check("whatsapp strips the plus", toWhatsApp("+19545550100") === "https://wa.me/19545550100");
+check("whatsapp rejects a non-E.164 value", toWhatsApp("9545550100") === null);
+check("phone display formats US numbers", formatPhoneDisplay("+19545550100") === "(954) 555-0100");
+check("phone display passes through international", formatPhoneDisplay("+447700900123") === "+447700900123");
+
+// --- Unsafe URLs are rejected everywhere ----------------------------------
+for (const bad of [
+  "javascript:alert(1)",
+  "JaVaScRiPt:alert(1)",
+  "data:text/html,<script>alert(1)</script>",
+  "file:///etc/passwd",
+  "vbscript:msgbox",
+]) {
+  check(`toProfileUrl rejects ${bad.slice(0, 18)}`, toProfileUrl(bad) === null);
+  check(`safeLinkUrl rejects ${bad.slice(0, 18)}`, safeLinkUrl(bad) === null);
+}
+check("toProfileUrl rejects embedded credentials", toProfileUrl("https://u:p@evil.com") === null);
+check("toProfileUrl rejects a hostname without a dot", toProfileUrl("https://localhost") === null);
+check("safeLinkUrl rejects a relative path", safeLinkUrl("/dashboard") === null);
+check("safeLinkUrl rejects plain http", safeLinkUrl("http://example.com") === null);
+
+// --- URL normalisation ----------------------------------------------------
+check("https is preserved", toProfileUrl("https://fortmark.net") === "https://fortmark.net");
+check("bare host gains https", toProfileUrl("fortmark.net") === "https://fortmark.net");
+check("www host gains https", toProfileUrl("www.fortmark.net") === "https://www.fortmark.net");
+check("http is upgraded to https", toProfileUrl("http://fortmark.net/x") === "https://fortmark.net/x");
+check("hyphens survive normalisation", toProfileUrl("linkedin.com/in/daniel-wolf") === "https://linkedin.com/in/daniel-wolf");
+check("surrounding whitespace is trimmed", toProfileUrl("  fortmark.net  ") === "https://fortmark.net");
+check("internal whitespace is rejected", toProfileUrl("fortmark .net") === null);
+check("empty URL is null", toProfileUrl("") === null);
+
+// --- Links are hidden when empty -----------------------------------------
+{
+  const none = buildContactLinks({});
+  check("no source values yields no links", none.length === 0);
+  const partial = buildContactLinks({ linkedinUrl: "https://linkedin.com/in/x" });
+  check("only the populated link appears", partial.length === 1 && partial[0].kind === "linkedin");
+  const unsafeOnly = buildContactLinks({ linkedinUrl: "javascript:alert(1)" });
+  check("an unsafe stored link is dropped, not rendered", unsafeOnly.length === 0);
+}
+
+// --- Copy Contact block ---------------------------------------------------
+{
+  const block = buildContactBlock({
+    displayName: "Daniel Wolf",
+    professionalTitle: "Founder / Broker",
+    brokerageOffice: "Fort Lauderdale",
+    licenseState: "FL",
+    licenseType: "Broker",
+    licenseNumber: "BK123456",
+    email: "daniel@example.com",
+    phoneE164: "+19545550100",
+    professionalWebsiteUrl: "https://fortmark.net",
+  });
+  const lines = block.split("\n");
+  check("contact block leads with the name", lines[0] === "Daniel Wolf");
+  check("contact block includes the title", lines[1] === "Founder / Broker");
+  check("contact block brands FortMark", lines[2].startsWith("FortMark · Fort Lauderdale"));
+  check("contact block includes the licence", block.includes("License FL Broker BK123456"));
+  check("contact block includes the formatted phone", block.includes("(954) 555-0100"));
+  check("contact block includes the website", block.includes("https://fortmark.net"));
+  check("contact block has no empty lines", lines.every((l) => l.trim().length > 0));
+
+  const sparse = buildContactBlock({ displayName: "A B" });
+  check("sparse contact block omits absent fields", sparse.split("\n").length === 2);
+  check("sparse contact block still brands FortMark", sparse.includes("FortMark"));
+}
+
+// --- vCard ---------------------------------------------------------------
+{
+  const vcf = buildVCard({
+    displayName: "Daniel Wolf",
+    professionalTitle: "Founder / Broker",
+    brokerageOffice: "Fort Lauderdale",
+    email: "daniel@example.com",
+    phoneE164: "+19545550100",
+    licenseState: "FL",
+    licenseType: "Broker",
+    licenseNumber: "BK123456",
+    nrdsNumber: "123456789",
+  });
+  check("vcard begins correctly", vcf.startsWith("BEGIN:VCARD\r\nVERSION:3.0"));
+  check("vcard ends correctly", vcf.endsWith("END:VCARD"));
+  check("vcard uses CRLF line endings", vcf.includes("\r\n"));
+  check("vcard splits the name", vcf.includes("N:Wolf;Daniel;;;"));
+  check("vcard has a formatted name", vcf.includes("FN:Daniel Wolf"));
+  check("vcard carries the title", vcf.includes("TITLE:Founder / Broker"));
+  check("vcard carries email and phone", vcf.includes("EMAIL") && vcf.includes("TEL"));
+  check("vcard puts licence in NOTE", vcf.includes("NOTE:License FL Broker BK123456"));
+  const sparse = buildVCard({ displayName: "A B" });
+  check("vcard omits an empty TEL line", !sparse.includes("TEL"));
+  check("vcard omits an empty EMAIL line", !sparse.includes("EMAIL"));
+  check("vcard escapes commas so a name cannot split fields",
+    buildVCard({ displayName: "Wolf, Daniel" }).includes("FN:Wolf\\, Daniel"));
+  check("escapeValue escapes semicolons", escapeValue("a;b") === "a\\;b");
+  check("escapeValue strips carriage returns", !escapeValue("a\r\nb").includes("\r"));
+  check("vcard filename is slugged", vCardFilename("Daniel Wolf") === "daniel-wolf.vcf");
+  check("vcard filename falls back", vCardFilename("!!!") === "fortmark-contact.vcf");
+}
+
+// --- Home layout: the identity card is fixed, featured listing moved ------
+check(
+  "identity card is not a draggable widget id",
+  !(DEFAULT_WIDGET_ORDER as readonly string[]).some((id) =>
+    /identity|profile|my-fortmark/i.test(id)
+  )
+);
+check(
+  "featured listing is no longer the first widget",
+  (DEFAULT_WIDGET_ORDER as readonly string[])[0] !== "featured-listing"
+);
+check(
+  "featured listing sits directly after projected commission",
+  DEFAULT_WIDGET_ORDER.indexOf("featured-listing") ===
+    DEFAULT_WIDGET_ORDER.indexOf("projected-commission") + 1
+);
+check(
+  "featured listing sits directly before the transactions table",
+  DEFAULT_WIDGET_ORDER.indexOf("transactions-table") ===
+    DEFAULT_WIDGET_ORDER.indexOf("featured-listing") + 1
+);
+check(
+  "every widget id is still present after the move",
+  DEFAULT_WIDGET_ORDER.length === 11
+);
+
+// --- Presence fields are writable, protected fields still are not ---------
+{
+  const out = normalizeProfileUpdate({
+    professionalTitle: "  Founder / Broker  ",
+    locationDisplay: "Fort Lauderdale, FL",
+    linkedinUrl: "linkedin.com/in/daniel-wolf",
+    instagramUrl: "javascript:alert(1)",
+    whatsappPhoneE164: "(954) 555-0100",
+    // Still forbidden.
+    role: "admin",
+    status: "active",
+    clerkUserId: "user_2aaaaaaaaaaaaaaaaaaa",
+  });
+  check("presence title is normalised", out.professionalTitle === "Founder / Broker");
+  check("presence location survives", out.locationDisplay === "Fort Lauderdale, FL");
+  check("presence URL is normalised to https", out.linkedinUrl === "https://linkedin.com/in/daniel-wolf");
+  check("unsafe presence URL becomes null rather than blocking the save", out.instagramUrl === null);
+  check("whatsapp is normalised to E.164", out.whatsappPhoneE164 === "+19545550100");
+  const keys = Object.keys(out);
+  check("role still not writable alongside presence fields", !keys.includes("role"));
+  check("status still not writable alongside presence fields", !keys.includes("status"));
+  check("clerk id still not writable alongside presence fields", !keys.includes("clerkUserId"));
+}
+
+// --- Detail projection carries presence, still no ids --------------------
+{
+  const detail = toProfileDetail({
+    professionalTitle: "Founder / Broker",
+    linkedinUrl: "https://linkedin.com/in/x",
+    instagramUrl: "javascript:alert(1)",
+    whatsappPhoneE164: "+19545550100",
+    id: "11111111-1111-1111-1111-111111111111",
+    clerkUserId: "user_2aaaaaaaaaaaaaaaaaaa",
+  } as Record<string, unknown>);
+  check("detail carries the professional title", detail.professionalTitle === "Founder / Broker");
+  check("detail carries a safe social URL", detail.linkedinUrl === "https://linkedin.com/in/x");
+  check("detail drops an unsafe stored social URL", detail.instagramUrl === null);
+  check("detail carries the whatsapp number", detail.whatsappPhoneE164 === "+19545550100");
+  check(
+    "detail with presence fields still carries no clerk id",
+    !JSON.stringify(detail).includes("user_2aaaaaaaaaaaaaaaaaaa")
+  );
 }
 
 // --- Summary ---------------------------------------------------------------

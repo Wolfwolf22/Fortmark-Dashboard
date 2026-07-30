@@ -3,26 +3,12 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { DateRangePreset } from "@/lib/data/types";
+import { DEFAULT_WIDGET_ORDER, type WidgetId } from "./widget-order";
 
-/** Canonical widget order for the Home bento grid. */
-export const DEFAULT_WIDGET_ORDER = [
-  "under-contract",
-  "closed",
-  "pipeline-value",
-  "closed-volume",
-  "projected-commission",
-  // Release 1.1 moved the featured listing out of the upper-left slot, which
-  // the permanent identity card now occupies, to a wide card between the
-  // commission chart and the transactions table.
-  "featured-listing",
-  "transactions-table",
-  "lead-source",
-  "leaderboard",
-  "market-pulse",
-  "compliance",
-] as const;
-
-export type WidgetId = (typeof DEFAULT_WIDGET_ORDER)[number];
+// The order lives in a dependency-free module so tests can import it under
+// plain Node; re-exported here so existing consumers are unaffected.
+export { DEFAULT_WIDGET_ORDER } from "./widget-order";
+export type { WidgetId } from "./widget-order";
 
 interface LayoutState {
   widgetOrder: WidgetId[];
