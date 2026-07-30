@@ -12,6 +12,7 @@ import "server-only";
  */
 import { professionalProfileUiEnabled, type EnvLike } from "../flags.ts";
 import { toProfileDisplay, type ShellProfile } from "./display.ts";
+import { toHomeIdentityCard, type HomeIdentityCard } from "./home-card.ts";
 import { syncCurrentUser, type ClerkIdentity } from "./service.ts";
 import type { SessionUser } from "../auth/session.ts";
 
@@ -65,5 +66,45 @@ export async function getShellProfile(
     // Swallowed on purpose. A profile problem must never become an access
     // problem while the allowlist is the access authority.
     return fallbackShellProfile(user);
+  }
+}
+
+/**
+ * The Home identity card for the current request, or null.
+ *
+ * Null whenever the feature is off, the caller is not allowlisted, or the
+ * database is unavailable — the Home page then renders without the card rather
+ * than showing an error, matching the Release 1 rule that a profile problem is
+ * never an access problem.
+ *
+ * `syncCurrentUser` is reused rather than a second read path: it already
+ * re-checks the allowlist before touching the database and returns the user,
+ * profile and image rows this projection needs.
+ */
+export async function getHomeIdentityCard(
+  user: SessionUser,
+  env: EnvLike = process.env
+): Promise<HomeIdentityCard | null> {
+  if (!professionalProfileUiEnabled(env)) return null;
+
+  const identity: ClerkIdentity = {
+    clerkUserId: user.id,
+    email: user.email,
+    name: user.name,
+    imageUrl: user.imageUrl,
+    roleLabel: user.role,
+  };
+
+  try {
+    const synced = await syncCurrentUser(identity, env);
+    if (!synced) return null;
+    return toHomeIdentityCard(
+      { name: user.name, role: user.role, email: user.email, imageUrl: user.imageUrl },
+      synced.user,
+      synced.profile,
+      synced.image
+    );
+  } catch {
+    return null;
   }
 }

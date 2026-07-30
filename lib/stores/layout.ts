@@ -6,12 +6,15 @@ import { DateRangePreset } from "@/lib/data/types";
 
 /** Canonical widget order for the Home bento grid. */
 export const DEFAULT_WIDGET_ORDER = [
-  "featured-listing",
   "under-contract",
   "closed",
   "pipeline-value",
   "closed-volume",
   "projected-commission",
+  // Release 1.1 moved the featured listing out of the upper-left slot, which
+  // the permanent identity card now occupies, to a wide card between the
+  // commission chart and the transactions table.
+  "featured-listing",
   "transactions-table",
   "lead-source",
   "leaderboard",
@@ -42,7 +45,11 @@ export const useLayoutStore = create<LayoutState>()(
         set((s) => ({ widgetPeriods: { ...s.widgetPeriods, [id]: preset } })),
     }),
     {
-      name: "fm.dashboard.layout.v1",
+      // v2: the default order changed in Release 1.1. `merge` below appends
+      // unknown ids at the END, so a persisted v1 order would have kept
+      // featured-listing in first place forever for anyone who had already
+      // loaded the dashboard. A new key retires those saved orders.
+      name: "fm.dashboard.layout.v2",
       merge: (persisted, current) => {
         // Tolerate widget ids added/removed between versions.
         const p = persisted as Partial<LayoutState> | undefined;
