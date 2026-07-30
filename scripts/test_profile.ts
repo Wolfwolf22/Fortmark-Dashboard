@@ -141,6 +141,8 @@ check("empty profile is 0%", profileCompletion(normalizeProfileUpdate({})) === 0
     biography: "Broker.",
     languages: ["English"],
     specialties: ["Waterfront"],
+    professionalTitle: "Founder / Broker",
+    locationDisplay: "Fort Lauderdale, FL",
   });
   check("complete profile is 100%", profileCompletion(full) === 100);
   check("licence number is normalised upper", full.licenseNumber === "BK123456");
@@ -216,8 +218,36 @@ check("empty role falls back to member", resolveDbRole("") === "member");
     check(`migration creates the ${type} enum`, sql.includes(`"public"."${type}" AS ENUM`));
   }
   check(
-    "migration is the only journal entry and matches the file",
-    journal.entries.length === 1 && journal.entries[0].tag === "0000_foamy_redwing"
+    "baseline migration is journal entry 0",
+    journal.entries[0].tag === "0000_foamy_redwing"
+  );
+  check("journal has the Release 1.1 additive migration", journal.entries.length === 2);
+
+  // Release 1.1 adds the professional-presence columns. It must be purely
+  // additive: no DROP, no RENAME, no ALTER COLUMN, and every column nullable.
+  const presence = readFileSync("lib/db/migrations/0001_cool_puppet_master.sql", "utf8");
+  for (const col of [
+    "professional_title",
+    "location_display",
+    "linkedin_url",
+    "instagram_url",
+    "facebook_url",
+    "personal_website_url",
+    "professional_website_url",
+    "whatsapp_phone_e164",
+  ]) {
+    check(`presence migration adds ${col}`, presence.includes(`ADD COLUMN "${col}"`));
+  }
+  check(
+    "presence migration is additive only",
+    !/\b(DROP|TRUNCATE|RENAME|ALTER\s+COLUMN)\b/i.test(presence)
+  );
+  check("presence migration adds no NOT NULL column", !/NOT NULL/i.test(presence));
+  check(
+    "presence migration touches only professional_profiles",
+    (presence.match(/ALTER TABLE "([a-z_]+)"/g) ?? []).every(
+      (m) => m === 'ALTER TABLE "professional_profiles"'
+    )
   );
   // Release 1 is purely additive; a DROP here would mean a regenerate went wrong.
   check("migration drops nothing", !/\bDROP\s+(TABLE|TYPE|COLUMN)\b/i.test(sql));

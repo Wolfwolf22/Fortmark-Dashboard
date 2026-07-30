@@ -62,6 +62,14 @@ const EMPTY: ProfileDetail = {
   languages: [],
   specialties: [],
   serviceAreas: [],
+  professionalTitle: null,
+  locationDisplay: null,
+  linkedinUrl: null,
+  instagramUrl: null,
+  facebookUrl: null,
+  personalWebsiteUrl: null,
+  professionalWebsiteUrl: null,
+  whatsappPhoneE164: null,
   completion: 0,
 };
 

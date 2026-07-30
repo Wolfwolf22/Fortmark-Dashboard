@@ -96,6 +96,21 @@ export const professionalProfiles = pgTable(
     licenseExpiration: date("license_expiration"),
     nrdsNumber: text("nrds_number"),
     biography: text("biography"),
+    // --- Release 1.1: professional presence -------------------------------
+    // All nullable and additive. Titles and locations are display strings;
+    // the URL columns hold already-normalised absolute https URLs (the service
+    // rejects every other scheme before a write reaches here). Email and phone
+    // are deliberately NOT duplicated — `dashboard_users.primary_email` and
+    // `phone_e164` above remain the single source for those.
+    professionalTitle: text("professional_title"),
+    locationDisplay: text("location_display"),
+    linkedinUrl: text("linkedin_url"),
+    instagramUrl: text("instagram_url"),
+    facebookUrl: text("facebook_url"),
+    personalWebsiteUrl: text("personal_website_url"),
+    professionalWebsiteUrl: text("professional_website_url"),
+    /** Separate from `phoneE164` — many agents use a different WhatsApp line. */
+    whatsappPhoneE164: text("whatsapp_phone_e164"),
     /** Free-form lists stored as jsonb arrays of trimmed strings. */
     languages: jsonb("languages").$type<string[]>().notNull().default([]),
     specialties: jsonb("specialties").$type<string[]>().notNull().default([]),

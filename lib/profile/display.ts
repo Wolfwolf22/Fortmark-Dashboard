@@ -101,6 +101,29 @@ function safeImageUrl(v: unknown): string | null {
 }
 
 /**
+ * Only ever return an outbound link the browser may safely navigate to.
+ *
+ * The same defence as `safeImageUrl`, for anchors instead of images: these
+ * values round-trip through the database, so they are treated as untrusted on
+ * the way out no matter what validated them on the way in. Only absolute https
+ * URLs survive.
+ */
+export function safeLinkUrl(v: unknown): string | null {
+  const s = trimmed(v);
+  if (!s) return null;
+  if (!/^https:\/\//i.test(s)) return null;
+  try {
+    const url = new URL(s);
+    if (url.protocol !== "https:") return null;
+    if (url.username || url.password) return null;
+    if (!url.hostname.includes(".")) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Image fallback chain: processed → active → Clerk → null (initials).
  *
  * A processed image only wins when processing actually succeeded, so a failed
@@ -182,6 +205,14 @@ export interface ProfileDetail {
   languages: string[];
   specialties: string[];
   serviceAreas: string[];
+  professionalTitle: string | null;
+  locationDisplay: string | null;
+  linkedinUrl: string | null;
+  instagramUrl: string | null;
+  facebookUrl: string | null;
+  personalWebsiteUrl: string | null;
+  professionalWebsiteUrl: string | null;
+  whatsappPhoneE164: string | null;
   completion: number;
 }
 
@@ -218,6 +249,16 @@ export function toProfileDetail(profile: DetailSourceProfile | null | undefined)
     languages: list(profile?.languages),
     specialties: list(profile?.specialties),
     serviceAreas: list(profile?.serviceAreas),
+    professionalTitle: trimmed(profile?.professionalTitle),
+    locationDisplay: trimmed(profile?.locationDisplay),
+    // Re-validated on the way out: these round-trip through the database, and
+    // a row written before the scheme allowlist existed must not become an href.
+    linkedinUrl: safeLinkUrl(profile?.linkedinUrl),
+    instagramUrl: safeLinkUrl(profile?.instagramUrl),
+    facebookUrl: safeLinkUrl(profile?.facebookUrl),
+    personalWebsiteUrl: safeLinkUrl(profile?.personalWebsiteUrl),
+    professionalWebsiteUrl: safeLinkUrl(profile?.professionalWebsiteUrl),
+    whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164),
     completion:
       typeof completion === "number" && Number.isFinite(completion)
         ? Math.max(0, Math.min(100, Math.round(completion)))

@@ -23,6 +23,54 @@ export const LICENSE_TYPES = [
   "Other",
 ] as const;
 
+/**
+ * URL schemes a profile link may use. Anything else — `javascript:`, `data:`,
+ * `file:`, `vbscript:`, `blob:`, custom app schemes — is rejected outright
+ * rather than escaped, because these values are rendered as `href`s.
+ */
+const ALLOWED_URL_PROTOCOLS = new Set(["http:", "https:"]);
+
+/**
+ * Normalise a user-supplied profile URL, or return null.
+ *
+ * `https://` is added when a bare host was clearly intended (`fortmark.net`,
+ * `www.example.com/x`). A missing scheme is only inferred when the string has
+ * no scheme at all — `javascript:alert(1)` is never rescued into
+ * `https://javascript:alert(1)`, it is rejected.
+ *
+ * Plain `http://` input is upgraded to `https://`: every host we link to is a
+ * public social or business site, and an insecure outbound link from an
+ * institutional dashboard is not worth preserving.
+ */
+export function toProfileUrl(v: unknown): string | null {
+  const raw = typeof v === "string" ? v.trim() : "";
+  if (raw.length === 0 || raw.length > 400) return null;
+  // Reject control characters and whitespace outright — a URL containing them
+  // is either an injection attempt or a paste accident. Hyphens are fine:
+  // the class is whitespace plus C0/C1 control characters, nothing more.
+  if (/[\s\u0000-\u001f\u007f-\u009f]/.test(raw)) return null;
+
+  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw);
+  const candidate = hasScheme ? raw : `https://${raw}`;
+
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return null;
+  }
+  if (!ALLOWED_URL_PROTOCOLS.has(url.protocol)) return null;
+  // A hostname must contain a dot and no credentials; `https://localhost` and
+  // `https://user:pw@host` are not valid professional links.
+  if (!url.hostname.includes(".")) return null;
+  if (url.username || url.password) return null;
+
+  url.protocol = "https:";
+  // Drop a bare trailing slash so `example.com` and `example.com/` agree.
+  const out = url.toString();
+  return url.pathname === "/" && !url.search && !url.hash ? out.replace(/\/$/, "") : out;
+}
+
 /** Collapse internal runs of whitespace and trim; empty becomes null. */
 export function cleanText(v: unknown): string | null {
   if (typeof v !== "string") return null;
@@ -112,6 +160,15 @@ export const profileUpdateSchema = z
     languages: z.union([z.array(z.string()), z.string()]).optional(),
     specialties: z.union([z.array(z.string()), z.string()]).optional(),
     serviceAreas: z.union([z.array(z.string()), z.string()]).optional(),
+    // --- Release 1.1: professional presence -------------------------------
+    professionalTitle: z.string().max(120).optional(),
+    locationDisplay: z.string().max(120).optional(),
+    linkedinUrl: z.string().max(400).optional(),
+    instagramUrl: z.string().max(400).optional(),
+    facebookUrl: z.string().max(400).optional(),
+    personalWebsiteUrl: z.string().max(400).optional(),
+    professionalWebsiteUrl: z.string().max(400).optional(),
+    whatsappPhoneE164: z.string().max(40).optional(),
   })
   .strip();
 
@@ -132,6 +189,14 @@ export interface NormalizedProfileUpdate {
   languages: string[];
   specialties: string[];
   serviceAreas: string[];
+  professionalTitle: string | null;
+  locationDisplay: string | null;
+  linkedinUrl: string | null;
+  instagramUrl: string | null;
+  facebookUrl: string | null;
+  personalWebsiteUrl: string | null;
+  professionalWebsiteUrl: string | null;
+  whatsappPhoneE164: string | null;
 }
 
 /** Parse then normalise. Throws only on a schema violation, not on odd values. */
@@ -154,6 +219,16 @@ export function normalizeProfileUpdate(raw: unknown): NormalizedProfileUpdate {
     languages: toStringList(input.languages),
     specialties: toStringList(input.specialties),
     serviceAreas: toStringList(input.serviceAreas),
+    professionalTitle: cleanText(input.professionalTitle),
+    locationDisplay: cleanText(input.locationDisplay),
+    // Every URL goes through the scheme allowlist; an unsafe value becomes
+    // null rather than throwing, so one bad paste cannot block a whole save.
+    linkedinUrl: toProfileUrl(input.linkedinUrl),
+    instagramUrl: toProfileUrl(input.instagramUrl),
+    facebookUrl: toProfileUrl(input.facebookUrl),
+    personalWebsiteUrl: toProfileUrl(input.personalWebsiteUrl),
+    professionalWebsiteUrl: toProfileUrl(input.professionalWebsiteUrl),
+    whatsappPhoneE164: toE164(input.whatsappPhoneE164),
   };
 }
 
@@ -171,6 +246,8 @@ const COMPLETION_FIELDS: Array<[keyof NormalizedProfileUpdate, number]> = [
   ["biography", 10],
   ["languages", 5],
   ["specialties", 5],
+  ["professionalTitle", 10],
+  ["locationDisplay", 5],
 ];
 
 /** 0–100, rounded. Weights total 100 so a full profile reads exactly 100. */
