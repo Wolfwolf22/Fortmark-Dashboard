@@ -42,6 +42,15 @@ export const CREDENTIAL_TRUST_LABEL: Record<CredentialTrust, string> = {
 };
 
 export interface HomeIdentityCard {
+  /**
+   * Where this card's data came from.
+   *
+   * `session` means the database contributed nothing — flags off, unreachable,
+   * or no row yet. The card still renders in full; it just shows honest
+   * "not added" states instead of credentials it does not have. This is what
+   * makes the card permanent rather than conditional.
+   */
+  source: "database" | "session";
   /** First name for the greeting, or null for the generic form. */
   greetingName: string | null;
   displayName: string;
@@ -57,8 +66,15 @@ export interface HomeIdentityCard {
   licenseNumber: string | null;
   licenseExpiration: string | null;
   nrdsNumber: string | null;
-  credentialTrust: CredentialTrust;
-  completion: number;
+  credentialTrust: CredentialTrust | null;
+  /**
+   * 0-100, or null when no profile record exists.
+   *
+   * Null is rendered as "Profile setup required" rather than 0%. A fabricated
+   * percentage on a compliance surface is worse than an honest absence, and 0%
+   * would imply a real calculation ran against a real record.
+   */
+  completion: number | null;
   links: ContactLink[];
 }
 
@@ -153,6 +169,43 @@ export function credentialTrustFor(
 }
 
 /**
+ * The card every authenticated, allowlisted user gets — with no database at all.
+ *
+ * This is the floor, not an error state. Authentication and the allowlist have
+ * already approved this request, so the card is owed to the user regardless of
+ * whether the profile database is enabled, reachable, or populated. Nothing
+ * here is invented: every field comes from the Clerk session, and everything
+ * the session cannot supply is null so the UI can say "not added".
+ */
+export function fallbackHomeIdentityCard(session: HomeCardSession): HomeIdentityCard {
+  return {
+    source: "session",
+    greetingName: greetingNameFor(null, session),
+    displayName: session.name,
+    professionalTitle: null,
+    roleLabel: session.role,
+    brokerageOffice: null,
+    locationDisplay: null,
+    imageUrl: resolveImageUrl(null, session),
+    // No dashboard_users row means no real join date, and a made-up one would
+    // misrepresent tenure.
+    joinedAt: null,
+    licenseState: null,
+    licenseType: null,
+    licenseNumber: null,
+    licenseExpiration: null,
+    nrdsNumber: null,
+    // No record has been reviewed, so no trust level applies. Not even
+    // "self-reported" — nothing has been reported.
+    credentialTrust: null,
+    completion: null,
+    // The verified session email is a genuine, usable shortcut, so it is the
+    // one link a session-only card can honestly offer.
+    links: buildContactLinks({ email: session.email ?? null }),
+  };
+}
+
+/**
  * Build the card projection.
  *
  * Field-by-field, like the other two projections, so a new schema column can
@@ -175,6 +228,7 @@ export function toHomeIdentityCard(
         : null;
 
   return {
+    source: "database",
     greetingName: greetingNameFor(profile, session),
     displayName: trimmed(profile?.preferredDisplayName) ?? session.name,
     professionalTitle: trimmed(profile?.professionalTitle),

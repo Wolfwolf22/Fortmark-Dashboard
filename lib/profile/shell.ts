@@ -12,7 +12,11 @@ import "server-only";
  */
 import { professionalProfileUiEnabled, type EnvLike } from "../flags.ts";
 import { toProfileDisplay, type ShellProfile } from "./display.ts";
-import { toHomeIdentityCard, type HomeIdentityCard } from "./home-card.ts";
+import {
+  fallbackHomeIdentityCard,
+  toHomeIdentityCard,
+  type HomeIdentityCard,
+} from "./home-card.ts";
 import { syncCurrentUser, type ClerkIdentity } from "./service.ts";
 import type { SessionUser } from "../auth/session.ts";
 
@@ -70,12 +74,27 @@ export async function getShellProfile(
 }
 
 /**
- * The Home identity card for the current request, or null.
+ * Categories a Home-card build can end in.
  *
- * Null whenever the feature is off, the caller is not allowlisted, or the
- * database is unavailable — the Home page then renders without the card rather
- * than showing an error, matching the Release 1 rule that a profile problem is
- * never an access problem.
+ * Deliberately coarse and value-free so it is safe to log: no identifier, no
+ * email, no licence, no hostname, no row contents. Temporary — this exists to
+ * locate a sync failure in Preview and is removed once the cause is fixed.
+ */
+export type HomeCardOutcome =
+  | "enriched"
+  | "flags_disabled"
+  | "sync_returned_null"
+  | "sync_threw";
+
+/**
+ * The Home identity card for the current request. Never null.
+ *
+ * Authentication and the allowlist have already approved this request before
+ * this function is reached, so the card is owed to the user unconditionally.
+ * The database *enriches* the card; it does not gate it. Every failure path
+ * returns the session-only projection instead of nothing, because a profile
+ * problem must never remove a surface the user is entitled to — the same rule
+ * that keeps a database outage from becoming an access outage.
  *
  * `syncCurrentUser` is reused rather than a second read path: it already
  * re-checks the allowlist before touching the database and returns the user,
@@ -84,8 +103,19 @@ export async function getShellProfile(
 export async function getHomeIdentityCard(
   user: SessionUser,
   env: EnvLike = process.env
-): Promise<HomeIdentityCard | null> {
-  if (!professionalProfileUiEnabled(env)) return null;
+): Promise<HomeIdentityCard> {
+  const session = {
+    name: user.name,
+    role: user.role,
+    email: user.email,
+    imageUrl: user.imageUrl,
+  };
+  const fallback = fallbackHomeIdentityCard(session);
+
+  if (!professionalProfileUiEnabled(env)) {
+    reportHomeCardOutcome("flags_disabled");
+    return fallback;
+  }
 
   const identity: ClerkIdentity = {
     clerkUserId: user.id,
@@ -97,14 +127,29 @@ export async function getHomeIdentityCard(
 
   try {
     const synced = await syncCurrentUser(identity, env);
-    if (!synced) return null;
-    return toHomeIdentityCard(
-      { name: user.name, role: user.role, email: user.email, imageUrl: user.imageUrl },
-      synced.user,
-      synced.profile,
-      synced.image
-    );
-  } catch {
-    return null;
+    if (!synced) {
+      reportHomeCardOutcome("sync_returned_null");
+      return fallback;
+    }
+    reportHomeCardOutcome("enriched");
+    return toHomeIdentityCard(session, synced.user, synced.profile, synced.image);
+  } catch (error) {
+    // Only the error's class name, never its message: a driver error can carry
+    // the host and user portion of a connection string.
+    reportHomeCardOutcome("sync_threw", (error as Error)?.constructor?.name);
+    return fallback;
   }
+}
+
+/**
+ * TEMPORARY diagnostic. Emits a single category, nothing else.
+ *
+ * Removed once the Preview sync failure is understood. Silent outside Preview
+ * so Production logs are untouched.
+ */
+function reportHomeCardOutcome(outcome: HomeCardOutcome, errorClass?: string): void {
+  if (process.env.VERCEL_ENV !== "preview") return;
+  console.log(
+    `[home-card] outcome=${outcome}${errorClass ? ` error_class=${errorClass}` : ""}`
+  );
 }

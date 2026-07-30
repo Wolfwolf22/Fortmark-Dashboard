@@ -46,6 +46,7 @@ import {
 } from "../lib/profile/links.ts";
 import {
   credentialTrustFor,
+  fallbackHomeIdentityCard,
   formatJoinedAt,
   greetingNameFor,
   toHomeIdentityCard,
@@ -54,6 +55,7 @@ import { buildVCard, escapeValue, vCardFilename } from "../lib/profile/vcard.ts"
 import { DEFAULT_WIDGET_ORDER } from "../lib/stores/widget-order.ts";
 import { readFileSync } from "node:fs";
 import { syncCurrentUser, updateOwnProfile } from "../lib/profile/service.ts";
+import { getHomeIdentityCard } from "../lib/profile/shell.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -814,6 +816,135 @@ check(
   check(
     "detail with presence fields still carries no clerk id",
     !JSON.stringify(detail).includes("user_2aaaaaaaaaaaaaaaaaaa")
+  );
+}
+
+
+// === The card is PERMANENT: it survives every database failure =============
+// The regression this guards: the card was originally rendered only when
+// getHomeIdentityCard returned non-null, so flags-off or any profile failure
+// silently removed a surface the user is entitled to.
+
+const ALLOWED_ID = "user_2aaaaaaaaaaaaaaaaaaaa";
+const SESSION_USER = {
+  id: ALLOWED_ID,
+  name: "Daniel Wolf",
+  email: "daniel@example.com",
+  imageUrl: "https://img.clerk.com/a.png",
+  role: "Broker" as const,
+};
+const ALLOWED_ENV = {
+  FORTMARK_ALLOWED_CLERK_USER_IDS: ALLOWED_ID,
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_placeholder",
+  CLERK_SECRET_KEY: "sk_test_placeholder",
+};
+
+// --- Session-only projection is complete and invents nothing ---------------
+{
+  const fb = fallbackHomeIdentityCard({
+    name: "Daniel Wolf",
+    role: "Broker",
+    email: "daniel@example.com",
+    imageUrl: "https://img.clerk.com/a.png",
+  });
+  check("fallback is marked as session-sourced", fb.source === "session");
+  check("fallback greets by first name", fb.greetingName === "Daniel");
+  check("fallback shows the session name", fb.displayName === "Daniel Wolf");
+  check("fallback shows the resolved role", fb.roleLabel === "Broker");
+  check("fallback keeps the session image", fb.imageUrl === "https://img.clerk.com/a.png");
+  // Nothing fabricated.
+  check("fallback invents no professional title", fb.professionalTitle === null);
+  check("fallback invents no licence number", fb.licenseNumber === null);
+  check("fallback invents no licence state", fb.licenseState === null);
+  check("fallback invents no NRDS id", fb.nrdsNumber === null);
+  check("fallback invents no join date", fb.joinedAt === null);
+  check("fallback invents no verification status", fb.credentialTrust === null);
+  check("fallback reports no completion percentage", fb.completion === null);
+  check("fallback offers only the verified session email", fb.links.length === 1);
+  check("fallback email link is a mailto", fb.links[0].kind === "email");
+  const fbNoEmail = fallbackHomeIdentityCard({ name: "A B", role: "Member" });
+  check("fallback with no email has no links", fbNoEmail.links.length === 0);
+  check("fallback with no image falls through to initials", fbNoEmail.imageUrl === null);
+}
+
+// --- getHomeIdentityCard never returns null on an approved request ---------
+{
+  // 1. Flags off.
+  const flagsOff = await getHomeIdentityCard(SESSION_USER, { ...ALLOWED_ENV });
+  check("flags off still returns a card", flagsOff !== null);
+  check("flags off returns the session projection", flagsOff.source === "session");
+  check("flags off card still shows the real name", flagsOff.displayName === "Daniel Wolf");
+
+  // 2. Flags on, database unconfigured -> sync returns null.
+  const previousUrl = process.env.DATABASE_URL;
+  delete process.env.DATABASE_URL;
+  const noDb = await getHomeIdentityCard(SESSION_USER, {
+    ...ALLOWED_ENV,
+    PROFILE_DATABASE_ENABLED: "1",
+    PROFESSIONAL_PROFILE_UI_ENABLED: "1",
+  });
+  check("database unavailable still returns a card", noDb !== null);
+  check("database unavailable returns the session projection", noDb.source === "session");
+  check("database unavailable card keeps the greeting", noDb.greetingName === "Daniel");
+  check("database unavailable card invents no licence", noDb.licenseNumber === null);
+
+  // 3. Flags on, caller NOT allowlisted -> sync returns null.
+  const notAllowed = await getHomeIdentityCard(
+    { ...SESSION_USER, id: "user_2bbbbbbbbbbbbbbbbbbbb" },
+    { ...ALLOWED_ENV, PROFILE_DATABASE_ENABLED: "1", PROFESSIONAL_PROFILE_UI_ENABLED: "1" }
+  );
+  check("non-allowlisted sync failure still returns a card", notAllowed !== null);
+  check("non-allowlisted returns the session projection", notAllowed.source === "session");
+
+  // 4. Flags on, database configured but unparseable -> sync THROWS.
+  process.env.DATABASE_URL = "definitely not a connection string";
+  const threw = await getHomeIdentityCard(SESSION_USER, {
+    ...ALLOWED_ENV,
+    PROFILE_DATABASE_ENABLED: "1",
+    PROFESSIONAL_PROFILE_UI_ENABLED: "1",
+  });
+  check("a thrown sync still returns a card", threw !== null);
+  check("a thrown sync returns the session projection", threw.source === "session");
+  check("a thrown sync card still shows the role", threw.roleLabel === "Broker");
+
+  if (previousUrl === undefined) delete process.env.DATABASE_URL;
+  else process.env.DATABASE_URL = previousUrl;
+}
+
+// --- A database-backed card enriches rather than replaces -----------------
+{
+  const enriched = toHomeIdentityCard(
+    { name: "Daniel Wolf", role: "Broker", email: "daniel@example.com" },
+    { createdAt: "2026-07-15T00:00:00.000Z", status: "active" },
+    { preferredDisplayName: "D. Wolf", licenseNumber: "BK1", profileCompletionPercent: 40 },
+    null,
+    new Date("2026-07-30T00:00:00Z")
+  );
+  check("enriched card is marked database-sourced", enriched.source === "database");
+  check("enriched card prefers the stored display name", enriched.displayName === "D. Wolf");
+  check("enriched card carries the licence", enriched.licenseNumber === "BK1");
+  check("enriched card reports a real completion", enriched.completion === 40);
+  check("enriched card has a trust level", enriched.credentialTrust === "self_reported");
+}
+
+// --- Missing optional credentials never hide the card --------------------
+{
+  const sparse = toHomeIdentityCard(
+    { name: "Daniel Wolf", role: "Member" },
+    { createdAt: "2026-07-15T00:00:00.000Z", status: "active" },
+    { profileCompletionPercent: 0 },
+    null
+  );
+  check("a row with no NRDS still yields a card", sparse.nrdsNumber === null);
+  check("a row with no licence still yields a card", sparse.licenseNumber === null);
+  check("a row with no title still yields a card", sparse.professionalTitle === null);
+  check("a sparse row is still database-sourced", sparse.source === "database");
+  check("a sparse row reports its real 0% completion", sparse.completion === 0);
+  // 0% and "no record" are distinguishable, so the UI can tell them apart.
+  check(
+    "no-record and zero-percent are distinguishable",
+    fallbackHomeIdentityCard({ name: "A B", role: "Member" }).completion === null &&
+      sparse.completion === 0
   );
 }
 

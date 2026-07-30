@@ -78,7 +78,7 @@ function CredentialCell({
     <div className="min-w-0">
       <MetaLabel>{label}</MetaLabel>
       <p className="mt-0.5 truncate text-[13px] font-semibold tabular-nums">
-        {value ?? <span className="font-normal text-muted-foreground">—</span>}
+        {value ?? <span className="font-normal text-muted-foreground">Not added</span>}
       </p>
     </div>
   );
@@ -97,8 +97,13 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
   }, []);
 
   const joined = formatJoinedAt(data.joinedAt);
-  const trustLabel = CREDENTIAL_TRUST_LABEL[data.credentialTrust];
+  // No trust level at all on a session-only card: nothing has been reported, so
+  // there is nothing to characterise. "Not added" is the honest label.
+  const trustLabel = data.credentialTrust
+    ? CREDENTIAL_TRUST_LABEL[data.credentialTrust]
+    : "Not added";
   const trustIsWarning = data.credentialTrust === "expired";
+  const setupRequired = data.completion === null;
 
   const licence =
     [data.licenseState, data.licenseType].filter(Boolean).join(" ") || null;
@@ -162,6 +167,11 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
           <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
             {data.professionalTitle ?? data.roleLabel}
           </p>
+          {!data.professionalTitle && (
+            <p className="mt-0.5 truncate text-micro">
+              Complete your professional profile
+            </p>
+          )}
           <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
             {["FortMark", data.brokerageOffice ?? data.locationDisplay]
               .filter(Boolean)
@@ -230,23 +240,29 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
       >
         <span className="flex items-baseline justify-between text-[13px]">
           <span className="text-muted-foreground group-hover:text-foreground">
-            Profile {data.completion}% complete
+            {setupRequired ? "Profile setup required" : `Profile ${data.completion}% complete`}
           </span>
-          <span className="text-micro underline-offset-2 group-hover:underline">Complete</span>
+          <span className="text-micro underline-offset-2 group-hover:underline">
+            {setupRequired ? "Set up" : "Complete"}
+          </span>
         </span>
-        <span
-          className="mt-1.5 block h-1 overflow-hidden rounded-full bg-muted"
-          role="progressbar"
-          aria-valuenow={data.completion}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label={`Profile ${data.completion}% complete`}
-        >
+        {/* The bar is omitted entirely when there is no record: an empty track
+            would read as a real 0% measurement. */}
+        {!setupRequired && (
           <span
-            className="block h-full rounded-full bg-primary transition-[width] duration-300"
-            style={{ width: `${data.completion}%` }}
-          />
-        </span>
+            className="mt-1.5 block h-1 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuenow={data.completion ?? 0}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Profile ${data.completion}% complete`}
+          >
+            <span
+              className="block h-full rounded-full bg-primary transition-[width] duration-300"
+              style={{ width: `${data.completion}%` }}
+            />
+          </span>
+        )}
       </Link>
 
       {/* ACTIONS ---------------------------------------------------------- */}
@@ -261,7 +277,14 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
           <Plus />
           New transaction
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => setCardOpen(true)}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setCardOpen(true)}
+          // Nothing to put on a business card until a profile record exists.
+          disabled={setupRequired}
+          title={setupRequired ? "Add your profile details first" : undefined}
+        >
           <IdCard />
           Digital card
         </Button>

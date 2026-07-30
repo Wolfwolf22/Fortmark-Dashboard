@@ -13,15 +13,19 @@ import { getHomeIdentityCard } from "@/lib/profile/shell";
  * payload, for the user who requested it.
  *
  * The layout enclosing this route already enforced authentication and the
- * allowlist, so reaching here means the caller is approved.
- * `getHomeIdentityCard` still re-checks independently and returns null on any
- * failure, in which case the grid renders without the card rather than erroring.
+ * allowlist, so reaching here means the caller is approved — and therefore the
+ * card is owed unconditionally. `getHomeIdentityCard` never returns null; on any
+ * database or flag failure it returns a session-only projection, so the card is
+ * always the first grid cell and can never silently disappear.
  */
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function HomePage() {
   const session = await getSession();
+  // `session` is non-null here in practice: the enclosing layout redirects an
+  // anonymous visitor before this renders. The guard is belt-and-braces, and it
+  // is the ONLY branch that can omit the card.
   const card = session ? await getHomeIdentityCard(session.user) : null;
 
   return <BentoGrid fixedLead={card ? <HomeIdentityCard data={card} /> : undefined} />;

@@ -169,7 +169,12 @@ export function DigitalBusinessCard({
               <Row label="Phone" value={formatPhoneDisplay(phone)} />
               <Row label="Website" value={website} />
               <Row label="Joined" value={joined} />
-              <Row label="Status" value={CREDENTIAL_TRUST_LABEL[data.credentialTrust]} />
+              <Row
+                label="Status"
+                value={
+                  data.credentialTrust ? CREDENTIAL_TRUST_LABEL[data.credentialTrust] : null
+                }
+              />
             </div>
           </div>
         </ScrollArea>
