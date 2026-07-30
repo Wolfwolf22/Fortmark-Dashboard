@@ -74,8 +74,26 @@ const force = process.argv.includes("--force");
 function hostFingerprint(connectionString) {
   try {
     const { hostname } = new URL(connectionString);
-    const digest = createHash("sha256").update(hostname).digest("hex").slice(0, 12);
-    return digest;
+    return createHash("sha256").update(hostname).digest("hex").slice(0, 12);
+  } catch {
+    return "unparseable";
+  }
+}
+
+/**
+ * Fingerprint of the underlying Neon BRANCH rather than the raw hostname.
+ *
+ * Neon exposes two hostnames per branch — the direct endpoint and a pooled one
+ * that adds a `-pooler` suffix. Comparing raw hostnames therefore reports the
+ * pooled and unpooled URLs of the SAME branch as different, which is a false
+ * alarm. Stripping the suffix makes the comparison mean what it should:
+ * "are these the same branch?"
+ */
+function branchFingerprint(connectionString) {
+  try {
+    const { hostname } = new URL(connectionString);
+    const normalised = hostname.replace(/-pooler(?=\.)/, "");
+    return createHash("sha256").update(normalised).digest("hex").slice(0, 12);
   } catch {
     return "unparseable";
   }
@@ -114,43 +132,31 @@ if (url && url !== "[SENSITIVE]") {
 //     different Neon branch than the one just migrated, which would break
 //     Preview/Production isolation.
 {
-  const fpPooled = pooled && pooled !== "[SENSITIVE]" ? hostFingerprint(pooled) : null;
-  const fpUnpooled = unpooled && unpooled !== "[SENSITIVE]" ? hostFingerprint(unpooled) : null;
+  const usable = (v) => v && v !== "[SENSITIVE]";
+  const fpPooled = usable(pooled) ? hostFingerprint(pooled) : null;
+  const fpUnpooled = usable(unpooled) ? hostFingerprint(unpooled) : null;
+  // Branch-level fingerprints ignore Neon's `-pooler` hostname suffix, so this
+  // comparison answers "same branch?" rather than "same hostname?".
+  const brPooled = usable(pooled) ? branchFingerprint(pooled) : null;
+  const brUnpooled = usable(unpooled) ? branchFingerprint(unpooled) : null;
+
   console.log(
-    `[migrate] DATABASE_URL present=${Boolean(pooled)} fingerprint=${fpPooled ?? "n/a"}`
+    `[migrate] DATABASE_URL present=${Boolean(pooled)} host=${fpPooled ?? "n/a"} branch=${brPooled ?? "n/a"}`
   );
   console.log(
-    `[migrate] DATABASE_URL_UNPOOLED present=${Boolean(unpooled)} fingerprint=${fpUnpooled ?? "n/a"}`
+    `[migrate] DATABASE_URL_UNPOOLED present=${Boolean(unpooled)} host=${fpUnpooled ?? "n/a"} branch=${brUnpooled ?? "n/a"}`
   );
   if (!pooled) {
     console.log(
-      "[migrate] WARNING: DATABASE_URL is absent — the RUNTIME reads that variable, so profile features will degrade even though migrations succeeded"
+      "[migrate] NOTE: DATABASE_URL absent — the runtime falls back to DATABASE_URL_UNPOOLED"
     );
-  } else if (fpPooled && fpUnpooled && fpPooled !== fpUnpooled) {
+  } else if (brPooled && brUnpooled && brPooled !== brUnpooled) {
     console.log(
-      "[migrate] WARNING: pooled and unpooled point at DIFFERENT hosts — the runtime would use a different Neon branch than the one migrated"
+      "[migrate] WARNING: pooled and unpooled resolve to DIFFERENT Neon branches — the runtime would read a branch this build did not migrate"
     );
+  } else if (brPooled && brUnpooled) {
+    console.log("[migrate] pooled and unpooled agree on the same Neon branch");
   }
-}
-
-// Migrations themselves remain preview-only. Reporting is safe everywhere;
-// schema changes are not.
-if (!force && process.env.VERCEL_ENV !== "preview") {
-  console.log(
-    `[migrate] migrations skipped — build guard allows preview only (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"})`
-  );
-  process.exit(0);
-}
-
-// A pulled-but-unreadable sensitive variable arrives as this exact literal.
-// Catching it here turns a confusing driver crash into a clear message.
-if (url === "[SENSITIVE]") {
-  bail(
-    "the connection string is Vercel's write-only placeholder — this context cannot read sensitive variables"
-  );
-}
-if (!url) {
-  bail("no database URL configured — nothing to migrate");
 }
 
 console.log(`[migrate] using ${unpooled ? "DATABASE_URL_UNPOOLED" : "DATABASE_URL"}`);

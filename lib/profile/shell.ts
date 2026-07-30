@@ -10,7 +10,11 @@ import "server-only";
  * already showed before Release 1 — never to an error page and never to a
  * denied request.
  */
-import { professionalProfileUiEnabled, type EnvLike } from "../flags.ts";
+import {
+  professionalProfileUiEnabled,
+  profileDatabaseEnabled,
+  type EnvLike,
+} from "../flags.ts";
 import { toProfileDisplay, type ShellProfile } from "./display.ts";
 import {
   fallbackHomeIdentityCard,
@@ -113,7 +117,13 @@ export async function getHomeIdentityCard(
   const fallback = fallbackHomeIdentityCard(session);
 
   if (!professionalProfileUiEnabled(env)) {
-    reportHomeCardOutcome("flags_disabled");
+    // Report WHICH flag is off. Booleans only — never a value — so the
+    // configuration gap is actionable without a Vercel token to read env with.
+    reportHomeCardOutcome(
+      "flags_disabled",
+      undefined,
+      `db_flag=${profileDatabaseEnabled(env)} ui_flag=${rawUiFlag(env)}`
+    );
     return fallback;
   }
 
@@ -147,9 +157,29 @@ export async function getHomeIdentityCard(
  * Removed once the Preview sync failure is understood. Silent outside Preview
  * so Production logs are untouched.
  */
-function reportHomeCardOutcome(outcome: HomeCardOutcome, errorClass?: string): void {
+function reportHomeCardOutcome(
+  outcome: HomeCardOutcome,
+  errorClass?: string,
+  detail?: string
+): void {
   if (process.env.VERCEL_ENV !== "preview") return;
   console.log(
-    `[home-card] outcome=${outcome}${errorClass ? ` error_class=${errorClass}` : ""}`
+    `[home-card] outcome=${outcome}` +
+      (errorClass ? ` error_class=${errorClass}` : "") +
+      (detail ? ` ${detail}` : "")
   );
+}
+
+/**
+ * Whether PROFESSIONAL_PROFILE_UI_ENABLED is truthy on its own.
+ *
+ * `professionalProfileUiEnabled` deliberately ANDs the two flags, so it cannot
+ * distinguish "UI flag missing" from "database flag missing". This reads the
+ * raw value for diagnostics only — it is never an authorization input.
+ */
+function rawUiFlag(env: EnvLike): boolean {
+  const v = env.PROFESSIONAL_PROFILE_UI_ENABLED;
+  if (typeof v !== "string") return false;
+  const s = v.trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes" || s === "on";
 }
