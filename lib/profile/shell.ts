@@ -78,19 +78,6 @@ export async function getShellProfile(
 }
 
 /**
- * Categories a Home-card build can end in.
- *
- * Deliberately coarse and value-free so it is safe to log: no identifier, no
- * email, no licence, no hostname, no row contents. Temporary — this exists to
- * locate a sync failure in Preview and is removed once the cause is fixed.
- */
-export type HomeCardOutcome =
-  | "enriched"
-  | "flags_disabled"
-  | "sync_returned_null"
-  | "sync_threw";
-
-/**
  * The Home identity card for the current request. Never null.
  *
  * Authentication and the allowlist have already approved this request before
@@ -99,6 +86,15 @@ export type HomeCardOutcome =
  * returns the session-only projection instead of nothing, because a profile
  * problem must never remove a surface the user is entitled to — the same rule
  * that keeps a database outage from becoming an access outage.
+ *
+ * Enrichment is gated on `profileDatabaseEnabled` alone, NOT on
+ * `professionalProfileUiEnabled`. The UI flag governs optional chrome — the
+ * drawer and the profile editor — which genuinely has nothing to show without
+ * profile rows, so it ANDs both flags. The card is not optional chrome: it
+ * renders either way, and the only question this gate has to answer is the
+ * narrower "may we read profile rows?". Gating it on the compound flag made a
+ * permanent surface depend on two variables where one is meaningful, and a
+ * missing UI flag silently stripped the card back to session data.
  *
  * `syncCurrentUser` is reused rather than a second read path: it already
  * re-checks the allowlist before touching the database and returns the user,
@@ -116,16 +112,7 @@ export async function getHomeIdentityCard(
   };
   const fallback = fallbackHomeIdentityCard(session);
 
-  if (!professionalProfileUiEnabled(env)) {
-    // Report WHICH flag is off. Booleans only — never a value — so the
-    // configuration gap is actionable without a Vercel token to read env with.
-    reportHomeCardOutcome(
-      "flags_disabled",
-      undefined,
-      `db_flag=${profileDatabaseEnabled(env)} ui_flag=${rawUiFlag(env)}`
-    );
-    return fallback;
-  }
+  if (!profileDatabaseEnabled(env)) return fallback;
 
   const identity: ClerkIdentity = {
     clerkUserId: user.id,
@@ -137,49 +124,12 @@ export async function getHomeIdentityCard(
 
   try {
     const synced = await syncCurrentUser(identity, env);
-    if (!synced) {
-      reportHomeCardOutcome("sync_returned_null");
-      return fallback;
-    }
-    reportHomeCardOutcome("enriched");
+    if (!synced) return fallback;
     return toHomeIdentityCard(session, synced.user, synced.profile, synced.image);
-  } catch (error) {
-    // Only the error's class name, never its message: a driver error can carry
-    // the host and user portion of a connection string.
-    reportHomeCardOutcome("sync_threw", (error as Error)?.constructor?.name);
+  } catch {
+    // Swallowed on purpose, and without inspecting the error: a driver error
+    // can carry the host and user portion of a connection string, and the card
+    // is owed to the user whatever went wrong underneath it.
     return fallback;
   }
-}
-
-/**
- * TEMPORARY diagnostic. Emits a single category, nothing else.
- *
- * Removed once the Preview sync failure is understood. Silent outside Preview
- * so Production logs are untouched.
- */
-function reportHomeCardOutcome(
-  outcome: HomeCardOutcome,
-  errorClass?: string,
-  detail?: string
-): void {
-  if (process.env.VERCEL_ENV !== "preview") return;
-  console.log(
-    `[home-card] outcome=${outcome}` +
-      (errorClass ? ` error_class=${errorClass}` : "") +
-      (detail ? ` ${detail}` : "")
-  );
-}
-
-/**
- * Whether PROFESSIONAL_PROFILE_UI_ENABLED is truthy on its own.
- *
- * `professionalProfileUiEnabled` deliberately ANDs the two flags, so it cannot
- * distinguish "UI flag missing" from "database flag missing". This reads the
- * raw value for diagnostics only — it is never an authorization input.
- */
-function rawUiFlag(env: EnvLike): boolean {
-  const v = env.PROFESSIONAL_PROFILE_UI_ENABLED;
-  if (typeof v !== "string") return false;
-  const s = v.trim().toLowerCase();
-  return s === "1" || s === "true" || s === "yes" || s === "on";
 }

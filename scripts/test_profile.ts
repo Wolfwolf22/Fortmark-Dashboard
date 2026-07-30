@@ -875,6 +875,24 @@ const ALLOWED_ENV = {
   check("flags off returns the session projection", flagsOff.source === "session");
   check("flags off card still shows the real name", flagsOff.displayName === "Daniel Wolf");
 
+  // 1b. The UI flag does not gate the card. `professionalProfileUiEnabled`
+  // governs the drawer and editor and ANDs both flags; the card is permanent,
+  // so its enrichment asks only "may we read profile rows?". A Preview scope
+  // carrying the database flag without the UI flag must still get a card.
+  const dbFlagOnly = { ...ALLOWED_ENV, PROFILE_DATABASE_ENABLED: "1" };
+  check("database flag alone is enough to attempt enrichment", profileDatabaseEnabled(dbFlagOnly));
+  check("the UI flag remains off in that scope", !professionalProfileUiEnabled(dbFlagOnly));
+  const uiFlagMissing = await getHomeIdentityCard(SESSION_USER, dbFlagOnly);
+  check("a missing UI flag still returns a card", uiFlagMissing !== null);
+  check("a missing UI flag still shows the real name", uiFlagMissing.displayName === "Daniel Wolf");
+
+  // 1c. The mirror case: the UI flag set without the database flag must not
+  // reach the database at all, and must still render.
+  const uiFlagOnly = { ...ALLOWED_ENV, PROFESSIONAL_PROFILE_UI_ENABLED: "1" };
+  const dbFlagMissing = await getHomeIdentityCard(SESSION_USER, uiFlagOnly);
+  check("a missing database flag still returns a card", dbFlagMissing !== null);
+  check("a missing database flag returns the session projection", dbFlagMissing.source === "session");
+
   // 2. Flags on, database unconfigured -> sync returns null.
   const previousUrl = process.env.DATABASE_URL;
   delete process.env.DATABASE_URL;
