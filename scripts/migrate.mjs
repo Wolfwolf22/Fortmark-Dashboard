@@ -101,6 +101,38 @@ if (url && url !== "[SENSITIVE]") {
   );
 }
 
+// Both variables are reported by PRESENCE and FINGERPRINT, never by value.
+//
+// This matters because the build and the runtime read different variables:
+// migrations prefer DATABASE_URL_UNPOOLED (DDL wants a direct connection),
+// while lib/db/client.ts connects over DATABASE_URL. Two failure modes hide in
+// that gap, and neither is visible from a table check:
+//
+//   - DATABASE_URL absent for this scope  -> getDb() returns null at runtime,
+//     so every profile read silently degrades even though migrations succeeded.
+//   - the two fingerprints DIFFER         -> the runtime is talking to a
+//     different Neon branch than the one just migrated, which would break
+//     Preview/Production isolation.
+{
+  const fpPooled = pooled && pooled !== "[SENSITIVE]" ? hostFingerprint(pooled) : null;
+  const fpUnpooled = unpooled && unpooled !== "[SENSITIVE]" ? hostFingerprint(unpooled) : null;
+  console.log(
+    `[migrate] DATABASE_URL present=${Boolean(pooled)} fingerprint=${fpPooled ?? "n/a"}`
+  );
+  console.log(
+    `[migrate] DATABASE_URL_UNPOOLED present=${Boolean(unpooled)} fingerprint=${fpUnpooled ?? "n/a"}`
+  );
+  if (!pooled) {
+    console.log(
+      "[migrate] WARNING: DATABASE_URL is absent — the RUNTIME reads that variable, so profile features will degrade even though migrations succeeded"
+    );
+  } else if (fpPooled && fpUnpooled && fpPooled !== fpUnpooled) {
+    console.log(
+      "[migrate] WARNING: pooled and unpooled point at DIFFERENT hosts — the runtime would use a different Neon branch than the one migrated"
+    );
+  }
+}
+
 // Migrations themselves remain preview-only. Reporting is safe everywhere;
 // schema changes are not.
 if (!force && process.env.VERCEL_ENV !== "preview") {

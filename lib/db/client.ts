@@ -11,6 +11,8 @@ import "server-only";
  *    `getDb()` therefore returns null rather than throwing.
  *
  * 2. Nothing here logs a connection string or any part of one.
+ *
+ * The pooled URL is preferred but not required — see `connectionString`.
  */
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
@@ -28,9 +30,24 @@ function create(url: string) {
 let cached: Db | null = null;
 let cachedFor: string | null = null;
 
+/**
+ * The connection string, preferring the pooled URL.
+ *
+ * Falls back to `DATABASE_URL_UNPOOLED` when the pooled variable is absent.
+ * Provisioning does not always create both for a given scope — a Neon preview
+ * branch can arrive with only the unpooled URL — and without this fallback the
+ * runtime returns null while migrations succeed, so every profile feature
+ * degrades silently and looks like a bug in the feature rather than in the
+ * configuration.
+ *
+ * Safe for this driver: neon-http issues each query as a stateless fetch, so
+ * there is no pool to exhaust and the unpooled endpoint behaves equivalently.
+ */
 function connectionString(): string | undefined {
-  const url = process.env.DATABASE_URL?.trim();
-  return url && url.length > 0 ? url : undefined;
+  const pooled = process.env.DATABASE_URL?.trim();
+  if (pooled && pooled.length > 0) return pooled;
+  const unpooled = process.env.DATABASE_URL_UNPOOLED?.trim();
+  return unpooled && unpooled.length > 0 ? unpooled : undefined;
 }
 
 /** True when a connection string is configured. Reveals nothing about it. */
