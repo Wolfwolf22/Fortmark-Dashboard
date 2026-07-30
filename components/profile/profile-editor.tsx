@@ -40,6 +40,24 @@ const TEXT_FIELDS = [
   { key: "nrdsNumber", label: "NRDS number" },
 ] as const;
 
+/**
+ * Release 1.1 "Professional Presence" fields.
+ *
+ * `type="url"` gives a sensible mobile keyboard, but validation is NOT the
+ * browser's job here: the server allowlists schemes and rejects anything it
+ * cannot prove safe, and the stored value is re-validated again on read.
+ */
+const PRESENCE_FIELDS = [
+  { key: "professionalTitle", label: "Professional title", placeholder: "Founder / Broker" },
+  { key: "locationDisplay", label: "Office / location", placeholder: "Fort Lauderdale, FL" },
+  { key: "linkedinUrl", label: "LinkedIn", placeholder: "linkedin.com/in/you", type: "url" },
+  { key: "instagramUrl", label: "Instagram", placeholder: "instagram.com/you", type: "url" },
+  { key: "facebookUrl", label: "Facebook", placeholder: "facebook.com/you", type: "url" },
+  { key: "professionalWebsiteUrl", label: "Professional website", placeholder: "fortmark.net", type: "url" },
+  { key: "personalWebsiteUrl", label: "Personal website", placeholder: "example.com", type: "url" },
+  { key: "whatsappPhoneE164", label: "WhatsApp", placeholder: "(954) 555-0100", type: "tel" },
+] as const;
+
 /** Comma-separated list fields. */
 const LIST_FIELDS = [
   { key: "languages", label: "Languages" },
@@ -80,6 +98,7 @@ function toForm(profile: ProfileDetail | null): FormState {
   const form: FormState = {};
   for (const { key } of TEXT_FIELDS) form[key] = p[key] ?? "";
   for (const { key } of LIST_FIELDS) form[key] = p[key].join(", ");
+  for (const { key } of PRESENCE_FIELDS) form[key] = p[key] ?? "";
   form.licenseState = p.licenseState ?? "";
   form.licenseType = p.licenseType ?? "";
   form.biography = p.biography ?? "";
@@ -236,6 +255,27 @@ export function ProfileEditor({
           />
         </div>
       ))}
+
+      <fieldset className="space-y-4 border-t border-border pt-5">
+        <legend className="text-sm font-semibold">Professional presence</legend>
+        <p className="text-[13px] text-muted-foreground">
+          Shown on your Home card and digital business card. Links are
+          normalised to https and anything unsafe is discarded on save. Leave a
+          field empty to hide it.
+        </p>
+        {PRESENCE_FIELDS.map(({ key, label, ...rest }) => (
+          <div key={key} className="space-y-1.5">
+            <Label htmlFor={`profile-${key}`}>{label}</Label>
+            <Input
+              id={`profile-${key}`}
+              value={form[key] ?? ""}
+              onChange={(e) => set(key, e.target.value)}
+              disabled={saving}
+              {...rest}
+            />
+          </div>
+        ))}
+      </fieldset>
 
       <div className="space-y-1.5">
         <Label htmlFor="profile-biography">Biography</Label>
