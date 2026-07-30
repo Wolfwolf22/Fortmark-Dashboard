@@ -35,6 +35,26 @@ const RELEASE_1_TABLES = [
   "profile_images",
 ];
 
+/**
+ * Release 1.1 presence columns on professional_profiles.
+ *
+ * Checked explicitly because verifying tables alone is not enough: Drizzle
+ * generates SELECTs naming every column in the schema, so a migration that
+ * created the tables but not these columns produces a runtime
+ * "column does not exist" on the first profile read — which the service
+ * swallows, making the whole feature silently degrade rather than fail loudly.
+ */
+const RELEASE_1_1_PROFILE_COLUMNS = [
+  "professional_title",
+  "location_display",
+  "linkedin_url",
+  "instagram_url",
+  "facebook_url",
+  "personal_website_url",
+  "professional_website_url",
+  "whatsapp_phone_e164",
+];
+
 const force = process.argv.includes("--force");
 
 /**
@@ -120,6 +140,25 @@ try {
     bail(`MISSING Release 1 tables: ${missing.join(", ")}`);
   }
   console.log("[migrate] all four Release 1 tables present");
+
+  // Column-level verification. Names only — never a value.
+  const colRows = await sql`
+    select column_name, is_nullable from information_schema.columns
+    where table_schema = 'public' and table_name = 'professional_profiles'
+    order by column_name`;
+  const cols = new Map(colRows.map((r) => [r.column_name, r.is_nullable]));
+  const missingCols = RELEASE_1_1_PROFILE_COLUMNS.filter((c) => !cols.has(c));
+  if (missingCols.length > 0) {
+    bail(`MISSING Release 1.1 columns: ${missingCols.join(", ")}`);
+  }
+  const notNullable = RELEASE_1_1_PROFILE_COLUMNS.filter((c) => cols.get(c) !== "YES");
+  if (notNullable.length > 0) {
+    bail(`Release 1.1 columns must stay nullable: ${notNullable.join(", ")}`);
+  }
+  console.log(
+    `[migrate] all ${RELEASE_1_1_PROFILE_COLUMNS.length} Release 1.1 presence columns present and nullable`
+  );
+  console.log(`[migrate] professional_profiles column count: ${cols.size}`);
 } catch (error) {
   // Deliberately narrow: a driver error can carry the host and user portion of
   // the connection string, so only the error's class name is ever printed.
