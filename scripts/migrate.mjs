@@ -159,6 +159,47 @@ if (url && url !== "[SENSITIVE]") {
   }
 }
 
+// Feature-flag presence, as booleans. These are plain on/off switches, not
+// secrets, and nothing here prints a value.
+//
+// This is the durable replacement for the temporary runtime diagnostic: the
+// build environment and the function environment are the same scope, so a flag
+// missing here is missing at runtime, and the Home card's enrichment gap is
+// visible at deploy time instead of only after someone loads the page.
+{
+  const on = (name) => {
+    const v = process.env[name];
+    if (typeof v !== "string") return "unset";
+    const s = v.trim().toLowerCase();
+    return s === "1" || s === "true" || s === "yes" || s === "on" ? "on" : "off";
+  };
+  console.log(
+    `[migrate] flags PROFILE_DATABASE_ENABLED=${on("PROFILE_DATABASE_ENABLED")} ` +
+      `PROFESSIONAL_PROFILE_UI_ENABLED=${on("PROFESSIONAL_PROFILE_UI_ENABLED")} ` +
+      `DATABASE_ACCESS_CONTROL_ENABLED=${on("DATABASE_ACCESS_CONTROL_ENABLED")}`
+  );
+}
+
+// Migrations themselves remain preview-only. Reporting is safe everywhere;
+// schema changes are not.
+if (!force && process.env.VERCEL_ENV !== "preview") {
+  console.log(
+    `[migrate] migrations skipped — build guard allows preview only (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"})`
+  );
+  process.exit(0);
+}
+
+// A pulled-but-unreadable sensitive variable arrives as this exact literal.
+// Catching it here turns a confusing driver crash into a clear message.
+if (url === "[SENSITIVE]") {
+  bail(
+    "the connection string is Vercel's write-only placeholder — this context cannot read sensitive variables"
+  );
+}
+if (!url) {
+  bail("no database URL configured — nothing to migrate");
+}
+
 console.log(`[migrate] using ${unpooled ? "DATABASE_URL_UNPOOLED" : "DATABASE_URL"}`);
 
 try {
