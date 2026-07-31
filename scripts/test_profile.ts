@@ -1228,6 +1228,96 @@ const ALLOWED_ENV = {
   }
 }
 
+// --- Preferred-name fallback chain behind the greeting --------------------
+//
+// The greeting is the one place a wrong name is most visible, so the whole
+// documented chain is asserted end to end:
+//   preferred display name -> legal first name -> session name
+//
+// There is no "no name" case to assert: `SessionUser.name` is typed `string`,
+// so an absent name cannot reach here without a compile error.
+{
+  const session = { name: "Daniel Wolf", role: "Broker" };
+
+  check(
+    "greeting prefers the profile's preferred display name",
+    greetingNameFor({ preferredDisplayName: "Dan Wolf" }, session) === "Dan"
+  );
+  check(
+    "greeting falls back to the legal first name",
+    greetingNameFor({ legalFirstName: "Danny" }, session) === "Danny"
+  );
+  check(
+    "preferred name outranks the legal first name",
+    greetingNameFor({ preferredDisplayName: "Dan", legalFirstName: "Danny" }, session) === "Dan"
+  );
+  check("greeting falls back to the session name", greetingNameFor(null, session) === "Daniel");
+  check(
+    "greeting ignores a blank preferred name",
+    greetingNameFor({ preferredDisplayName: "   " }, session) === "Daniel"
+  );
+  check(
+    "a single-word name still greets",
+    greetingNameFor(null, { name: "Cher", role: "Member" }) === "Cher"
+  );
+  check(
+    "the greeting name is a first name, not the full name",
+    fallbackHomeIdentityCard(session).greetingName === "Daniel" &&
+      fallbackHomeIdentityCard(session).displayName === "Daniel Wolf"
+  );
+}
+
+// --- Global client state stays narrow -------------------------------------
+//
+// Requirement: no private field may reach global client state. The card itself
+// takes its data as a prop, so the surface to police is the context projection
+// — and the strongest guarantee here is the INPUT type, which cannot even
+// accept a licence number, NRDS id, phone or biography.
+{
+  const shellDisplay = toProfileDisplay(
+    { name: "Daniel Wolf", role: "Broker", imageUrl: null },
+    {
+      preferredDisplayName: "D. Wolf",
+      licenseState: "FL",
+      licenseType: "Broker",
+      profileCompletionPercent: 40,
+    }
+  );
+  const keys = Object.keys(shellDisplay).sort();
+  check(
+    "client context carries exactly five keys",
+    keys.join(",") === "completion,displayName,imageUrl,licenseLabel,roleLabel"
+  );
+  check(
+    "client context carries only the coarse licence label",
+    shellDisplay.licenseLabel === "FL Broker"
+  );
+
+  // The projection's input type is the boundary, so widening it is a compile
+  // error rather than a silent leak. Asserted against the source so that
+  // adding a field to the interface fails here too.
+  const displaySrc = readFileSync("lib/profile/display.ts", "utf8");
+  const iface = displaySrc.slice(
+    displaySrc.indexOf("export interface DisplaySourceProfile"),
+    displaySrc.indexOf("/** The subset of an image row this projection may read. */")
+  );
+  for (const forbidden of [
+    "licenseNumber",
+    "nrdsNumber",
+    "phoneE164",
+    "biography",
+    "clerkUserId",
+    "role",
+    "status",
+  ]) {
+    check(`display source type cannot accept ${forbidden}`, !iface.includes(forbidden));
+  }
+  check(
+    "display source type declares only the four permitted fields",
+    (iface.match(/^\s{2}\w+\??:/gm) ?? []).length === 4
+  );
+}
+
 // --- Summary ---------------------------------------------------------------
 const total = passed + failures.length;
 console.log(`\n${passed}/${total} profile checks passed`);
