@@ -162,10 +162,10 @@ if (url && url !== "[SENSITIVE]") {
 // Feature-flag presence, as booleans. These are plain on/off switches, not
 // secrets, and nothing here prints a value.
 //
-// This is the durable replacement for the temporary runtime diagnostic: the
-// build environment and the function environment are the same scope, so a flag
-// missing here is missing at runtime, and the Home card's enrichment gap is
-// visible at deploy time instead of only after someone loads the page.
+// Reported here rather than from a request path because the build environment
+// and the function environment are the same scope: a flag missing here is
+// missing at runtime. That makes a configuration gap visible at deploy time,
+// so nothing has to be inferred from a user-facing surface later.
 {
   const on = (name) => {
     const v = process.env[name];
