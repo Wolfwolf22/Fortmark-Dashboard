@@ -1106,7 +1106,21 @@ const ALLOWED_ENV = {
   check("long values truncate", (card.match(/truncate/g) ?? []).length >= 5);
   check("social row wraps rather than overflowing", card.includes("flex flex-wrap items-center"));
   check("actions use a stable two-column grid", (actions.match(/grid grid-cols-2 gap-2/g) ?? []).length === 2);
-  check("tertiary actions keep a 40px touch target", actions.includes("h-10 px-3 text-[13px] text-foreground/70"));
+  check(
+    "tertiary actions keep a 40px touch target",
+    actions.includes("h-10 min-w-0 px-3 text-[13px] text-foreground/70")
+  );
+  // The button base sets `whitespace-nowrap`, so a label wider than its grid
+  // track would spill outside the card and scroll the page. Every action label
+  // must be able to clip.
+  check(
+    "every action button can shrink below its label",
+    (actions.match(/className="h-10 min-w-0 px-3/g) ?? []).length === 4
+  );
+  check(
+    "every action label truncates rather than overflowing",
+    (actions.match(/<span className="truncate">/g) ?? []).length === 4
+  );
 
   // 19. Nothing here reads or writes global client state beyond quick-create.
   check("card takes its data as a prop", card.includes("export function HomeIdentityCard({ data }"));

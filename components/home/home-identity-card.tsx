@@ -342,22 +342,28 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
       {/* ACTIONS ---------------------------------------------------------- */}
       <div className="mt-auto space-y-2 border-t border-border pt-5">
         {/* Primary row. `default` is the filled variant — white on black in
-            dark mode, black on white in light — so intent is unambiguous. */}
+            dark mode, black on white in light — so intent is unambiguous.
+
+            `min-w-0` + a truncating label are load-bearing, not cosmetic. The
+            grid track is `minmax(0, 1fr)`, but the button base sets
+            `whitespace-nowrap`, so a label wider than its share would spill
+            outside the card and scroll the page. The narrowest real case is the
+            pinned rail at 1280px, which leaves each of these about 130px. */}
         <div className="grid grid-cols-2 gap-2">
-          <Button asChild size="lg" className="h-10 px-3 text-[13px]">
+          <Button asChild size="lg" className="h-10 min-w-0 px-3 text-[13px]">
             <Link href={`${ROUTES.settings}?tab=profile`}>
               <SquarePen />
-              Edit profile
+              <span className="truncate">Edit profile</span>
             </Link>
           </Button>
           <Button
             size="lg"
             variant="outline"
-            className="h-10 px-3 text-[13px]"
+            className="h-10 min-w-0 px-3 text-[13px]"
             onClick={() => setQuickCreate("transaction")}
           >
             <Plus />
-            New transaction
+            <span className="truncate">New transaction</span>
           </Button>
         </div>
 
@@ -365,7 +371,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
         <div className="grid grid-cols-2 gap-2">
           <Button
             variant="ghost"
-            className="h-10 px-3 text-[13px] text-foreground/70 hover:text-foreground sm:h-9"
+            className="h-10 min-w-0 px-3 text-[13px] text-foreground/70 hover:text-foreground sm:h-9"
             onClick={() => setCardOpen(true)}
             // Nothing to put on a business card until a profile record exists.
             disabled={setupRequired}
@@ -373,15 +379,15 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
             aria-describedby={setupRequired ? "home-identity-card-disabled" : undefined}
           >
             <IdCard />
-            Digital card
+            <span className="truncate">Digital card</span>
           </Button>
           <Button
             variant="ghost"
-            className="h-10 px-3 text-[13px] text-foreground/70 hover:text-foreground sm:h-9"
+            className="h-10 min-w-0 px-3 text-[13px] text-foreground/70 hover:text-foreground sm:h-9"
             onClick={copyContact}
           >
             {copied ? <Check /> : <Copy />}
-            {copied ? "Copied" : "Copy contact"}
+            <span className="truncate">{copied ? "Copied" : "Copy contact"}</span>
           </Button>
         </div>
 
