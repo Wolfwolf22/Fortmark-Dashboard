@@ -171,7 +171,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
       // Border is lifted from the shared card border so the credential card
       // reads as its own object against the KPI tiles beside it, without a
       // glow, gradient or heavier shadow.
-      className="flex h-full flex-col gap-5 p-6 ring-1 ring-inset ring-foreground/[0.06]"
+      className="flex h-full min-w-0 flex-col gap-4 p-6 ring-1 ring-inset ring-foreground/[0.06]"
       aria-labelledby="home-identity-heading"
     >
       {/* GREETING ---------------------------------------------------------- */}
@@ -344,7 +344,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
         {/* Primary row. `default` is the filled variant — white on black in
             dark mode, black on white in light — so intent is unambiguous. */}
         <div className="grid grid-cols-2 gap-2">
-          <Button asChild size="lg" className="h-10 px-3">
+          <Button asChild size="lg" className="h-10 px-3 text-[13px]">
             <Link href={`${ROUTES.settings}?tab=profile`}>
               <SquarePen />
               Edit profile
@@ -353,7 +353,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
           <Button
             size="lg"
             variant="outline"
-            className="h-10 px-3"
+            className="h-10 px-3 text-[13px]"
             onClick={() => setQuickCreate("transaction")}
           >
             <Plus />

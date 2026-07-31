@@ -966,6 +966,254 @@ const ALLOWED_ENV = {
   );
 }
 
+// --- My FortMark visual states --------------------------------------------
+//
+// Asserted against the component SOURCE rather than a rendered tree: this
+// harness runs under plain Node with no DOM, and these are structural
+// guarantees about markup and classes rather than behaviour. That makes them
+// weaker than a render test but strong enough to catch the regressions that
+// actually happened here — an uppercase greeting, a 0% bar presented as a
+// measurement, and a primary action styled as a secondary one.
+{
+  const card = readFileSync("components/home/home-identity-card.tsx", "utf8");
+  const grid = readFileSync("components/home/bento-grid.tsx", "utf8");
+
+  // 1. The eyebrow renders, and is uppercased by CSS rather than by literal.
+  const eyebrow = card.slice(card.indexOf("GREETING ---"), card.indexOf("</h2>"));
+  check("eyebrow label renders My FortMark", eyebrow.includes(">\n          My FortMark\n"));
+  check("eyebrow is uppercased by class, not by literal", eyebrow.includes("uppercase"));
+  check(
+    "eyebrow is quieter than the greeting",
+    eyebrow.includes("text-[10px]") && eyebrow.includes("text-foreground/55")
+  );
+
+  // 2. The greeting is title-cased. `text-display` force-uppercases, which is
+  // exactly the regression being guarded against.
+  const greetingClass = card.slice(
+    card.indexOf('id="home-identity-heading"'),
+    card.indexOf("{data.greetingName ?")
+  );
+  check("greeting is not force-uppercased", !greetingClass.includes("text-display"));
+  check("greeting carries no uppercase class", !greetingClass.includes("uppercase"));
+  check(
+    "greeting literal is sentence case",
+    card.includes("`Welcome back, ${data.greetingName}`") && !card.includes("WELCOME BACK")
+  );
+  check(
+    "greeting sits in the 20-24px band",
+    eyebrow.includes("text-[20px]") && eyebrow.includes("lg:text-[22px]")
+  );
+  check("greeting is semibold, not display weight", eyebrow.includes("font-semibold"));
+
+  // 3. The greeting name is the real fallback chain, never a literal.
+  check(
+    "greeting name comes from data, not a hardcoded name",
+    !/Welcome back, (Daniel|Test)\b/.test(card)
+  );
+
+  // 4. A missing professional title offers the completion prompt in sentence
+  // case — never the uppercase micro-label treatment.
+  const identity = card.slice(card.indexOf("HEADSHOT + IDENTITY"), card.indexOf("CREDENTIAL GRID"));
+  check(
+    "missing title offers a completion prompt",
+    identity.includes("Complete your professional profile")
+  );
+  check("identity prompt is not uppercase micro type", !identity.includes("text-micro"));
+  check(
+    "identity prompt is a link to the editor",
+    identity.includes("ROUTES.settings}?tab=profile")
+  );
+
+  // 5 + 6. Completion states.
+  const completion = card.slice(card.indexOf("COMPLETION ---"), card.indexOf("ACTIONS ---"));
+  check(
+    "a zero or absent score renders no progress bar",
+    completion.includes("data.completion !== null && data.completion > 0") ||
+      card.includes("const hasMeasuredCompletion = data.completion !== null && data.completion > 0")
+  );
+  check("progressbar is gated on a measured score", completion.includes("hasMeasuredCompletion ?"));
+  check("state A renders a callout with supporting text", completion.includes("Add your title, credentials"));
+  check("state A offers no fabricated percentage", !/State A[\s\S]*0%/.test(completion));
+  check("state B renders the real percentage", completion.includes("Profile {data.completion}% complete"));
+  check("progress bar is 4px", completion.includes("h-1 "));
+  check(
+    "progress bar has no gradient utility",
+    !/bg-gradient|from-\[|via-\[|to-\[/.test(completion)
+  );
+  check(
+    "progress width is the real value",
+    completion.includes("width: `${data.completion}%`")
+  );
+
+  // 7. Edit Profile is the primary action: the filled variant is the Button
+  // default, so it must NOT carry an explicit variant override.
+  const actions = card.slice(card.indexOf("ACTIONS ---"));
+  const editBtn = actions.slice(actions.indexOf("Edit profile") - 400, actions.indexOf("Edit profile"));
+  check("edit profile uses the filled default variant", !editBtn.includes("variant="));
+  check("edit profile meets the 40px target", editBtn.includes("h-10"));
+
+  // 8. New Transaction stays secondary and keeps its creation flow.
+  const newTxn = actions.slice(actions.indexOf("New transaction") - 400, actions.indexOf("New transaction"));
+  check("new transaction is outlined, not filled", newTxn.includes('variant="outline"'));
+  check("new transaction keeps the quick-create flow", newTxn.includes('setQuickCreate("transaction")'));
+  check("new transaction meets the 40px target", newTxn.includes("h-10"));
+
+  // 9. Digital Card stays honestly disabled, with a reason a screen reader can
+  // reach — a disabled control cannot hold focus, so a title alone is not enough.
+  check("digital card disables without a record", actions.includes("disabled={setupRequired}"));
+  check(
+    "digital card explains why it is disabled",
+    actions.includes("Add your profile details first") &&
+      card.includes("Digital card is unavailable until your profile details are added.")
+  );
+
+  // Clipboard success is still reported only after the write resolves.
+  check("copy contact awaits the clipboard write", card.includes("await navigator.clipboard.writeText"));
+  check("copy success is announced politely", card.includes('aria-live="polite"'));
+
+  // 10. Links render only when present, and stay monochrome.
+  check("social row is gated on having links", card.includes("data.links.length > 0 &&"));
+  check("external links keep noopener noreferrer", card.includes('rel: "noopener noreferrer"'));
+  check("external links open in a new tab", card.includes('target: "_blank"'));
+  check(
+    "icon buttons are in the 32-36px band",
+    card.includes("flex h-9 w-9 items-center justify-center")
+  );
+  check("icons are in the 15-17px band", card.includes("h-[17px] w-[17px]"));
+  for (const brand of ["#0A66C2", "#1877F2", "#E4405F", "text-blue-", "bg-blue-"]) {
+    check(`no ${brand} brand colour on the social row`, !card.includes(brand));
+  }
+
+  // 11 + 12. The card is still a fixed, non-draggable lead cell.
+  check("card is rendered as the grid's fixed lead", grid.includes("fixedLead &&"));
+  check(
+    "fixed lead sits outside SortableContext",
+    grid.indexOf("{fixedLead}") < grid.indexOf("<SortableContext")
+  );
+  check("card exposes no drag handle", !card.includes("useSortable") && !card.includes("listeners"));
+  check("card exposes no remove control", !card.includes("removeWidget"));
+
+  // 14 + 15. Theme contrast. `--muted-foreground` is 0 0% 55% in BOTH themes,
+  // which is ~3.5:1 on a white card — under AA at label sizes. Metadata is
+  // derived from the foreground instead so both themes improve symmetrically.
+  check("credential labels do not use the low-contrast token", !card.includes("MetaLabel") || !/MetaLabel[\s\S]{0,220}text-muted-foreground/.test(card));
+  check("credential values use full foreground contrast", card.includes("font-medium tabular-nums text-foreground"));
+  check("no theme-specific layout rules were introduced", !card.includes("dark:") || !/dark:(flex|grid|block|hidden|w-|h-)/.test(card));
+
+  // 16. Mobile: nothing may overflow horizontally.
+  check("card body cannot be pushed wide", card.includes("flex h-full min-w-0 flex-col"));
+  check("credential cells clip rather than overflow", card.includes('<div className="min-w-0">'));
+  check("long values truncate", (card.match(/truncate/g) ?? []).length >= 5);
+  check("social row wraps rather than overflowing", card.includes("flex flex-wrap items-center"));
+  check("actions use a stable two-column grid", (actions.match(/grid grid-cols-2 gap-2/g) ?? []).length === 2);
+  check("tertiary actions keep a 40px touch target", actions.includes("h-10 px-3 text-[13px] text-foreground/70"));
+
+  // 19. Nothing here reads or writes global client state beyond quick-create.
+  check("card takes its data as a prop", card.includes("export function HomeIdentityCard({ data }"));
+  check(
+    "card touches no profile store",
+    !card.includes("useLayoutStore") && !card.includes("useProfile")
+  );
+}
+
+// --- Theme contrast, computed rather than asserted by class ---------------
+//
+// The card derives its metadata colours from `--foreground` at reduced opacity
+// instead of `--muted-foreground`. This checks that the choice actually pays:
+// ratios are computed from the committed CSS variables, for both themes, so a
+// future token edit that quietly drops a label under AA fails here.
+{
+  const css = readFileSync("app/globals.css", "utf8");
+
+  /**
+   * Lightness of a grayscale token, 0..1.
+   *
+   * Every colour in this palette is achromatic (`H 0% L%`), so lightness IS the
+   * sRGB channel value. Deliberately returns null rather than a default when a
+   * variable cannot be found — a silent fallback would let a broken parser
+   * report passing contrast.
+   */
+  const readVar = (scope: string, name: string): number | null => {
+    const scoped = css.slice(css.indexOf(scope));
+    const m = scoped
+      .slice(0, 1800)
+      .match(new RegExp("--" + name + ":\\s*\\d+\\s+\\d+%\\s+([\\d.]+)%"));
+    return m ? Number(m[1]) / 100 : null;
+  };
+
+  /** sRGB -> relative luminance, for an achromatic channel value. */
+  const luminance = (channel: number): number =>
+    channel <= 0.03928
+      ? channel / 12.92
+      : Math.pow((channel + 0.055) / 1.055, 2.4);
+
+  /**
+   * WCAG contrast of `fg` composited over `bg` at `alpha`, against `bg`.
+   *
+   * Alpha compositing happens in non-linear sRGB, the way a browser does it,
+   * and only the result is linearised.
+   */
+  const contrast = (fg: number, bg: number, alpha: number): number => {
+    const composited = fg * alpha + bg * (1 - alpha);
+    const a = luminance(composited);
+    const b = luminance(bg);
+    const [hi, lo] = a > b ? [a, b] : [b, a];
+    return (hi + 0.05) / (lo + 0.05);
+  };
+
+  const lightFg = readVar(":root", "foreground");
+  const lightCard = readVar(":root", "card");
+  const darkFg = readVar(".dark", "foreground");
+  const darkCard = readVar(".dark", "card");
+  const mutedLight = readVar(":root", "muted-foreground");
+
+  const parsed =
+    lightFg !== null && lightCard !== null && darkFg !== null &&
+    darkCard !== null && mutedLight !== null;
+  check("theme tokens parsed from globals.css", parsed);
+
+  if (parsed) {
+    check("light card is white, light text is black", lightFg === 0 && lightCard === 1);
+    check("dark card is near-black, dark text is white", darkFg === 1 && darkCard > 0 && darkCard < 0.2);
+
+    // The reason the change was needed: the shared muted token is identical in
+    // both themes and lands under AA on a white card.
+    check(
+      "muted-foreground really is below AA on a light card",
+      contrast(mutedLight, lightCard, 1) < 4.5
+    );
+    check(
+      "muted-foreground is the same value in both themes",
+      readVar(".dark", "muted-foreground") === mutedLight
+    );
+
+    // Light mode — labels at /70, honest-absence text at /55.
+    check("light: credential labels clear AA", contrast(lightFg, lightCard, 0.7) >= 4.5);
+    check('light: "Not added" clears AA', contrast(lightFg, lightCard, 0.55) >= 4.5);
+    check("light: credential values clear AAA", contrast(lightFg, lightCard, 1) >= 7);
+
+    // Dark mode — the same opacities over the dark card surface.
+    check("dark: credential labels clear AA", contrast(darkFg, darkCard, 0.7) >= 4.5);
+    check('dark: "Not added" clears AA', contrast(darkFg, darkCard, 0.55) >= 4.5);
+    check("dark: credential values clear AAA", contrast(darkFg, darkCard, 1) >= 7);
+
+    // Both themes improve, which is why the card needs no theme-specific rule.
+    check(
+      "both themes improve on the shared muted token",
+      contrast(lightFg, lightCard, 0.7) > contrast(mutedLight, lightCard, 1) &&
+        contrast(darkFg, darkCard, 0.7) > contrast(mutedLight, darkCard, 1)
+    );
+
+    // The filled primary action must stay unambiguous in both themes.
+    const lightPrimary = readVar(":root", "primary");
+    const darkPrimary = readVar(".dark", "primary");
+    if (lightPrimary !== null && darkPrimary !== null) {
+      check("light: primary button clears AAA", contrast(1, lightPrimary, 1) >= 7);
+      check("dark: primary button clears AAA", contrast(0, darkPrimary, 1) >= 7);
+    }
+  }
+}
+
 // --- Summary ---------------------------------------------------------------
 const total = passed + failures.length;
 console.log(`\n${passed}/${total} profile checks passed`);
