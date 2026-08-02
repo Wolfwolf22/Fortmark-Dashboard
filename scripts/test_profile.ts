@@ -79,6 +79,19 @@ import {
   isDeferred,
 } from "../lib/profile/deferral.ts";
 import { droppedValueErrors, toValidationFailure } from "../lib/profile/onboarding.ts";
+import {
+  ALLOWED_IMAGE_MIME,
+  IMAGE_ERROR_MESSAGE,
+  MAX_IMAGE_BYTES,
+  checkProfileImage,
+  detectImageFormat,
+} from "../lib/profile/image-format.ts";
+import {
+  PROFILE_IMAGE_ROOT,
+  ownsPathname,
+  profileImagePath,
+  userPrefix,
+} from "../lib/profile/image-storage.ts";
 import { z as zod } from "zod";
 import { toEmail } from "../lib/profile/normalize.ts";
 
@@ -1985,6 +1998,221 @@ const ALLOWED_ENV = {
     wizard.includes("fieldErrors[key]?.[0]") && editor.includes("fieldErrors[key]?.[0]"));
   check("neither surface returns a raw exception",
     !/error: *String\(/.test(route) && !/e\.message|error\.message/.test(route));
+}
+
+// --- Profile image: byte inspection ----------------------------------------
+{
+  const bytes = (...b: number[]) => new Uint8Array(b);
+  const pad = (head: number[], n = 32) =>
+    new Uint8Array([...head, ...new Array(n).fill(0)]);
+
+  const JPEG = pad([0xff, 0xd8, 0xff, 0xe0]);
+  const PNG = pad([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const WEBP = pad([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+  // "<svg", "GIF89a", "%PDF", and a WAV that shares WebP's RIFF container.
+  const SVG = pad([0x3c, 0x73, 0x76, 0x67]);
+  const GIF = pad([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
+  const PDF = pad([0x25, 0x50, 0x44, 0x46]);
+  const WAV = pad([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45]);
+
+  check("jpeg detected", detectImageFormat(JPEG) === "jpeg");
+  check("png detected", detectImageFormat(PNG) === "png");
+  check("webp detected", detectImageFormat(WEBP) === "webp");
+  check("svg is not an accepted format", detectImageFormat(SVG) === null);
+  check("gif is not an accepted format", detectImageFormat(GIF) === null);
+  check("pdf is not an accepted format", detectImageFormat(PDF) === null);
+  // RIFF alone must not pass: WAV and AVI share the container with WebP.
+  check("a RIFF file that is not WebP is rejected", detectImageFormat(WAV) === null);
+  check("empty input is not a format", detectImageFormat(bytes()) === null);
+  check("a truncated png header is rejected",
+    detectImageFormat(bytes(0x89, 0x50, 0x4e)) === null);
+
+  // Full check: size, declared type, bytes, and agreement between them.
+  const ok = checkProfileImage({ size: JPEG.length, declaredType: "image/jpeg", bytes: JPEG });
+  check("a real jpeg is accepted", ok.ok === true);
+  check("the extension comes from the detected format",
+    ok.ok && ok.extension === "jpg" && ok.format === "jpeg");
+  check("png accepted end to end",
+    checkProfileImage({ size: PNG.length, declaredType: "image/png", bytes: PNG }).ok);
+  check("webp accepted end to end",
+    checkProfileImage({ size: WEBP.length, declaredType: "image/webp", bytes: WEBP }).ok);
+
+  const tooBig = checkProfileImage({
+    size: MAX_IMAGE_BYTES + 1,
+    declaredType: "image/jpeg",
+    bytes: JPEG,
+  });
+  check("an oversized file is rejected", !tooBig.ok && tooBig.reason === "too_large");
+  check("the limit is 4 MB", MAX_IMAGE_BYTES === 4 * 1024 * 1024);
+
+  const missing = checkProfileImage({ size: 0, declaredType: "image/jpeg", bytes: bytes() });
+  check("a missing file is rejected", !missing.ok && missing.reason === "missing");
+
+  for (const [label, mime] of [
+    ["svg", "image/svg+xml"],
+    ["gif", "image/gif"],
+    ["pdf", "application/pdf"],
+    ["octet-stream", "application/octet-stream"],
+  ] as const) {
+    const r = checkProfileImage({ size: JPEG.length, declaredType: mime, bytes: JPEG });
+    check(`${label} is refused by declared type`, !r.ok && r.reason === "unsupported_mime");
+  }
+
+  // The whole point of byte inspection: a lie about the type is caught.
+  const spoofed = checkProfileImage({ size: SVG.length, declaredType: "image/jpeg", bytes: SVG });
+  check("svg bytes labelled image/jpeg are rejected",
+    !spoofed.ok && spoofed.reason === "unrecognised_format");
+  const gifAsPng = checkProfileImage({ size: GIF.length, declaredType: "image/png", bytes: GIF });
+  check("gif bytes labelled image/png are rejected", !gifAsPng.ok);
+  // Both formats allowed individually, but the label disagrees with the bytes.
+  const mismatch = checkProfileImage({ size: PNG.length, declaredType: "image/jpeg", bytes: PNG });
+  check("a png announced as a jpeg is rejected",
+    !mismatch.ok && mismatch.reason === "mime_mismatch");
+
+  check("only three mime types are allowed",
+    Object.values(ALLOWED_IMAGE_MIME).join() === "image/jpeg,image/png,image/webp");
+  check("the user-facing message names the rules",
+    /JPEG.*PNG.*WebP.*4 MB/.test(IMAGE_ERROR_MESSAGE));
+}
+
+// --- Profile image: path ownership -----------------------------------------
+{
+  const A = "11111111-1111-1111-1111-111111111111";
+  const B = "22222222-2222-2222-2222-222222222222";
+
+  const path = profileImagePath(A, "abc-123", "jpeg");
+  check("the path sits under the profile-images root", path.startsWith(`${PROFILE_IMAGE_ROOT}/`));
+  check("the path sits under the user prefix", path.startsWith(userPrefix(A)));
+  check("the extension comes from the format", path.endsWith(".jpg"));
+  check("webp keeps its own extension", profileImagePath(A, "x", "webp").endsWith(".webp"));
+  check("png keeps its own extension", profileImagePath(A, "x", "png").endsWith(".png"));
+
+  // The path must disclose nothing about the person.
+  check("the path contains no clerk id", !path.includes("user_"));
+  check("the path contains no email", !path.includes("@"));
+  check("the path is built only from the root, the uuid and the upload id",
+    path === `${PROFILE_IMAGE_ROOT}/${A}/abc-123.jpg`);
+
+  // Ownership: what stops a wrong pathname deleting someone else's photo.
+  check("a user owns their own prefix", ownsPathname(A, path));
+  check("a user does not own another prefix", !ownsPathname(B, path));
+  check("traversal is refused", !ownsPathname(A, `${userPrefix(A)}../${B}/x.jpg`));
+  check("a bare prefix match elsewhere is refused",
+    !ownsPathname(A, `other/${PROFILE_IMAGE_ROOT}/${A}/x.jpg`));
+  check("null is not owned", !ownsPathname(A, null));
+  check("empty is not owned", !ownsPathname(A, ""));
+  check("a clerk-hosted url is not owned", !ownsPathname(A, "https://img.clerk.com/a.png"));
+}
+
+// --- Profile image: route, service and component ---------------------------
+{
+  const route = readFileSync("app/api/profile/image/route.ts", "utf8");
+  const storage = readFileSync("lib/profile/image-storage.ts", "utf8");
+  const service = readFileSync("lib/profile/service.ts", "utf8");
+  const upload = readFileSync("components/profile/profile-image-upload.tsx", "utf8");
+  const wizard = readFileSync("components/profile/onboarding-wizard.tsx", "utf8");
+  const editor = readFileSync("components/profile/profile-editor.tsx", "utf8");
+  const config = readFileSync("next.config.ts", "utf8");
+
+  // Access -------------------------------------------------------------------
+  check("the upload route re-derives authorization", route.includes("decideAccess(userId)"));
+  check("anonymous uploads get 401", route.includes("? 401"));
+  check("a disabled feature 404s", route.includes('{ error: "Not found" }, { status: 404'));
+  check("every upload response is no-store", route.includes('"Cache-Control": "no-store"'));
+  check("the route runs on node for byte inspection",
+    route.includes('export const runtime = "nodejs"'));
+
+  // Nothing from the browser decides where bytes land.
+  check("the storage prefix comes from the session-resolved row",
+    route.includes("await ownDashboardUserId(caller.clerkUserId)"));
+  check("the object name is generated server-side", route.includes("randomUUID()"));
+  check("the extension comes from the detected format",
+    route.includes("profileImagePath(dashboardUserId, randomUUID(), check.format)"));
+  check("no pathname is read from the request",
+    !/form\.get\("pathname"\)|body\.pathname/.test(route));
+  check("no user id is read from the request",
+    !/form\.get\("(userId|clerkUserId|profileId)"\)/.test(route));
+  check("the size is re-derived from the buffer, not File.size",
+    route.includes("size: bytes.byteLength"));
+
+  // Failure safety -----------------------------------------------------------
+  check("a failed activation deletes the orphaned blob",
+    /if \(!activated\.ok\) \{[\s\S]{0,400}deleteProfileImage\(dashboardUserId, uploaded\.pathname\)/.test(route));
+  check("the superseded pathname is captured before the update",
+    service.indexOf("const superseded = current.image?.storagePathname") <
+      service.indexOf("activeImageUrl: uploaded.url"));
+  check("the old blob is deleted only after the row is updated",
+    service.indexOf("activeImageUrl: uploaded.url") <
+      service.indexOf("await deleteProfileImage(current.user.id, superseded)"));
+  check("deletion is gated on ownership", storage.includes("if (!ownsPathname(dashboardUserId, pathname)) return false;"));
+  check("deletion never throws", /catch \{\s*return false;\s*\}/.test(storage));
+  check("a provider failure returns a safe 503",
+    route.includes('{ error: "unavailable" }, { status: 503'));
+  check("no provider exception text is returned",
+    !/err\.message|error\.message|String\(e\)/.test(route));
+
+  // Honest lifecycle ---------------------------------------------------------
+  check("an accepted upload is marked uploaded, not ready",
+    service.includes('processingStatus: "uploaded"') &&
+      !/activateProfileImage[\s\S]{0,1200}processingStatus: "ready"/.test(service));
+  check("processedImageUrl is not fabricated",
+    !/activateProfileImage[\s\S]{0,1200}processedImageUrl:/.test(service));
+
+  // Token containment --------------------------------------------------------
+  check("the storage module is server-only", storage.includes('import "server-only"'));
+  check("the token is never public", !storage.includes("NEXT_PUBLIC_BLOB"));
+  check("no client component imports the storage module",
+    !upload.includes("image-storage") && !wizard.includes("image-storage") &&
+      !editor.includes("image-storage"));
+  check("the upload component never names the token",
+    !upload.includes("BLOB_READ_WRITE_TOKEN"));
+
+  // Shared component ---------------------------------------------------------
+  check("the wizard uses the shared upload component",
+    wizard.includes("<ProfileImageUpload"));
+  check("the editor uses the same component", editor.includes("<ProfileImageUpload"));
+  check("there is only one upload implementation",
+    !/fetch\([^)]*api\/profile\/image/.test(wizard) &&
+      !/fetch\([^)]*api\/profile\/image/.test(editor));
+
+  // Object URL hygiene, and no global state ----------------------------------
+  check("object urls are revoked when replaced",
+    upload.includes("URL.revokeObjectURL(objectUrlRef.current)"));
+  check("object urls are revoked on unmount",
+    /return \(\) => \{[\s\S]{0,200}revokeObjectURL/.test(upload));
+  check("image state is local, never global",
+    !/useUiStore|useLayoutStore|zustand/.test(upload));
+  check("the file is not held in a store", !/setFile\(|globalThis\./.test(upload));
+
+  // A failed upload must not look like it worked.
+  check("a failed upload drops the preview",
+    /setError\([\s\S]{0,120}\);\s*[\s\S]{0,200}setPreview\(null\)/.test(upload));
+  check("success is reported only after the server confirmed it",
+    upload.indexOf("if (!res.ok)") < upload.indexOf("onUploaded?.(url)"));
+
+  // Revalidation and image config -------------------------------------------
+  check("a successful upload revalidates home", route.includes('revalidatePath("/")'));
+  check("the blob host is allowed narrowly",
+    config.includes('hostname: "*.public.blob.vercel-storage.com"') &&
+      config.includes('pathname: "/profile-images/**"'));
+  check("no arbitrary remote host is allowed",
+    !/hostname: "\*\*"|hostname: "\*"/.test(config));
+}
+
+// --- Release A: storage migration ------------------------------------------
+{
+  const sql = readFileSync("lib/db/migrations/0003_bored_slyde.sql", "utf8");
+  check("the storage migration adds the pathname column",
+    sql.includes('ADD COLUMN "storage_pathname" text'));
+  check("it is the only statement", (sql.match(/ALTER TABLE/g) ?? []).length === 1);
+  for (const forbidden of ["DROP", "TRUNCATE", "DELETE", "RENAME", "NOT NULL"]) {
+    check(`the storage migration contains no ${forbidden}`, !sql.toUpperCase().includes(forbidden));
+  }
+  const schema = readFileSync("lib/db/schema.ts", "utf8");
+  check("the pathname column is nullable",
+    /storagePathname: text\("storage_pathname"\),/.test(schema));
+  check("no image bytes are stored in postgres",
+    !/bytea|blob\(|imageBytes/.test(schema));
 }
 
 // --- Summary ---------------------------------------------------------------
