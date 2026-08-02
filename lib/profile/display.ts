@@ -213,6 +213,12 @@ export interface ProfileDetail {
   personalWebsiteUrl: string | null;
   professionalWebsiteUrl: string | null;
   whatsappPhoneE164: string | null;
+  /**
+   * The address the user chose to publish. Distinct from the verified Clerk
+   * sign-in address, which is not part of this projection at all — it belongs
+   * to the account, not the profile, and is never editable from here.
+   */
+  businessEmail: string | null;
   completion: number;
 }
 
@@ -259,6 +265,7 @@ export function toProfileDetail(profile: DetailSourceProfile | null | undefined)
     personalWebsiteUrl: safeLinkUrl(profile?.personalWebsiteUrl),
     professionalWebsiteUrl: safeLinkUrl(profile?.professionalWebsiteUrl),
     whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164),
+    businessEmail: trimmed(profile?.businessEmail),
     completion:
       typeof completion === "number" && Number.isFinite(completion)
         ? Math.max(0, Math.min(100, Math.round(completion)))

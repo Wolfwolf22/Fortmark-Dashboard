@@ -18,13 +18,30 @@ import { cn } from "@/lib/utils";
 
 export interface ProfileFieldProps {
   name: ProfileFieldKey;
+  /** Uncontrolled use — the wizard reads values back with FormData. */
   defaultValue?: string | null;
+  /**
+   * Controlled use — the settings editor keeps form state itself.
+   *
+   * Supporting both is what lets one component serve both surfaces. Forking it
+   * into a controlled and an uncontrolled copy is how the two forms would
+   * start to drift again.
+   */
+  value?: string;
+  onValueChange?: (value: string) => void;
   /** Server-reported message for this field. Announced via aria-describedby. */
   error?: string | null;
   disabled?: boolean;
 }
 
-export function ProfileField({ name, defaultValue, error, disabled }: ProfileFieldProps) {
+export function ProfileField({
+  name,
+  defaultValue,
+  value,
+  onValueChange,
+  error,
+  disabled,
+}: ProfileFieldProps) {
   const meta = fieldMeta(name);
   const id = `field-${name}`;
   const hintId = meta.hint ? `${id}-hint` : undefined;
@@ -33,10 +50,13 @@ export function ProfileField({ name, defaultValue, error, disabled }: ProfileFie
   // rather than the error replacing the explanation of what was wanted.
   const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
 
+  const controlled = value !== undefined;
   const common = {
     id,
     name,
-    defaultValue: defaultValue ?? "",
+    ...(controlled
+      ? { value, onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onValueChange?.(e.target.value) }
+      : { defaultValue: defaultValue ?? "" }),
     maxLength: meta.maxLength,
     disabled,
     "aria-invalid": error ? (true as const) : undefined,
