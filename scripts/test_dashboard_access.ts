@@ -221,6 +221,41 @@ check("api path is basePath-consistent", apiPath("/api/x").startsWith(`${BASE_PA
     "the unavailable response is never cached",
     (mw.match(/"Cache-Control": "no-store"/g) ?? []).length >= 2
   );
+  // The 503 body must be plain text, never the app shell: rendering any part of
+  // the dashboard while auth cannot initialise would be the access grant this
+  // path exists to prevent.
+  check(
+    "the unavailable page body is plain text, not markup",
+    /Content-Type": "text\/plain/.test(mwCode) && !/<html|__NEXT_DATA__|<body/.test(mwCode)
+  );
+  check(
+    "the unavailable page carries no session or identity data",
+    !/userId|sessionClaims|emailAddress/.test(
+      mwCode.slice(mwCode.indexOf("function serviceUnavailable"), mwCode.indexOf("const clerkHandler"))
+    )
+  );
+
+  // A hostile return path must never survive into the sign-in redirect, in any
+  // of the forms an attacker can reach the middleware with.
+  for (const hostile of [
+    "//evil.com",
+    "https://evil.com",
+    "/\\evil.com",
+    "/x://evil.com",
+    "javascript:alert(1)",
+    "evil.com",
+  ]) {
+    const built = signInUrl(hostile);
+    check(
+      `hostile return path is not carried into the sign-in url: ${JSON.stringify(hostile)}`,
+      !built.includes("evil.com") && !built.includes("javascript:")
+    );
+  }
+  // The legitimate case still round-trips.
+  check(
+    "a safe return path is preserved",
+    signInUrl("/dashboard/leads").includes(encodeURIComponent("/dashboard/leads"))
+  );
 
   // Both keys are required. A publishable key alone must not look configured.
   check("both keys absent fails closed", !hasClerkKeys({}));
