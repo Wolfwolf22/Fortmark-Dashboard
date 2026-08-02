@@ -129,6 +129,10 @@ export function ProfileEditor({
   const [form, setForm] = React.useState<FormState>(() => toForm(initial));
   const [completion, setCompletion] = React.useState(initial?.completion ?? 0);
   const [save, setSave] = React.useState<SaveState>({ status: "idle" });
+  // Same contract the wizard consumes: field name -> messages.
+  const [fieldErrors, setFieldErrors] = React.useState<
+    Partial<Record<ProfileFieldKey, string[]>>
+  >({});
 
   const set = (key: string, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -146,15 +150,32 @@ export function ProfileEditor({
         body: JSON.stringify(form),
       });
       if (!response.ok) {
+        const detail = (await response.json().catch(() => null)) as
+          | { fieldErrors?: Partial<Record<ProfileFieldKey, string[]>>; formErrors?: string[] }
+          | null;
+        const fields = detail?.fieldErrors ?? {};
+        setFieldErrors(fields);
+        const invalid = Object.keys(fields) as ProfileFieldKey[];
         setSave({
           status: "error",
           message:
-            response.status === 400
-              ? "Some values could not be saved. Check the highlighted formats and try again."
-              : "Your profile could not be saved right now. Nothing else is affected.",
+            invalid.length > 0
+              ? `Check ${invalid.length === 1 ? "the highlighted field" : `${invalid.length} highlighted fields`} and try again.`
+              : (detail?.formErrors?.[0] ??
+                "Your profile could not be saved right now. Nothing else is affected."),
         });
+        // Focus the first rejected control, in render order.
+        const order = [...TEXT_FIELDS, ...PRESENCE_FIELDS];
+        const first = order.find((f) => invalid.includes(f));
+        if (first) {
+          requestAnimationFrame(() => {
+            const el = document.getElementById(`field-${first}`);
+            if (el instanceof HTMLElement) el.focus();
+          });
+        }
         return;
       }
+      setFieldErrors({});
       const body = (await response.json()) as {
         profile: ProfileDetail | null;
         completion: number;
@@ -203,6 +224,7 @@ export function ProfileEditor({
           name={key}
           value={form[key] ?? ""}
           onValueChange={(v: string) => set(key, v)}
+          error={fieldErrors[key]?.[0] ?? null}
           disabled={saving}
         />
       ))}
@@ -274,6 +296,7 @@ export function ProfileEditor({
             name={key}
             value={form[key] ?? ""}
             onValueChange={(v: string) => set(key, v)}
+            error={fieldErrors[key]?.[0] ?? null}
             disabled={saving}
           />
         ))}

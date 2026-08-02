@@ -30,9 +30,19 @@ import {
   licenseDetailsChanged,
   normalizeProfileUpdate,
   profileCompletion,
+  profileUpdateSchema,
   type NormalizedProfileUpdate,
 } from "./normalize.ts";
-import { LAST_STEP, normalizeStep, stepByNumber } from "./onboarding.ts";
+import {
+  LAST_STEP,
+  droppedValueErrors,
+  normalizeStep,
+  stepByNumber,
+  stepSchema,
+  toValidationFailure,
+  type ValidationFailure,
+} from "./onboarding.ts";
+import { z } from "zod";
 
 /** Keys that must never appear in audit metadata, whatever the caller passes. */
 const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
@@ -253,7 +263,12 @@ export async function getOwnProfile(
 
 export type UpdateResult =
   | { ok: true; completion: number; licenseReset: boolean }
-  | { ok: false; reason: "unavailable" | "no_record" | "invalid" };
+  | {
+      ok: false;
+      reason: "unavailable" | "no_record" | "invalid";
+      /** Same contract the onboarding API returns, so one client shape serves both. */
+      validation?: ValidationFailure;
+    };
 
 /**
  * Update the caller's own profile.
@@ -271,11 +286,28 @@ export async function updateOwnProfile(
   const db = getDb();
   if (!db) return { ok: false, reason: "unavailable" };
 
+  const submitted = (raw ?? {}) as Record<string, unknown>;
+  const editable = Object.keys(profileUpdateSchema.shape) as (keyof NormalizedProfileUpdate)[];
+
   let next: NormalizedProfileUpdate;
   try {
     next = normalizeProfileUpdate(raw);
-  } catch {
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return { ok: false, reason: "invalid", validation: toValidationFailure(error, editable) };
+    }
     return { ok: false, reason: "invalid" };
+  }
+
+  // Same reporting the wizard gets: a value that normalised away to null is
+  // told to the user rather than silently dropped from a "saved" profile.
+  const dropped = droppedValueErrors(submitted, next, editable);
+  if (Object.keys(dropped).length > 0) {
+    return {
+      ok: false,
+      reason: "invalid",
+      validation: { error: "validation_failed", fieldErrors: dropped, formErrors: [] },
+    };
   }
 
   try {
@@ -311,7 +343,12 @@ export async function updateOwnProfile(
 
 export type StepSaveResult =
   | { ok: true; completion: number; onboardingStep: number }
-  | { ok: false; reason: "unavailable" | "no_record" | "invalid" | "unknown_step" };
+  | {
+      ok: false;
+      reason: "unavailable" | "no_record" | "invalid" | "unknown_step";
+      /** Present only for `invalid`. Keyed by UI field name, never by column. */
+      validation?: ValidationFailure;
+    };
 
 /**
  * The fields completion is scored from, read off a stored row.
@@ -371,11 +408,30 @@ export async function saveOnboardingStep(
   const step = stepByNumber(stepNumber);
   if (!step) return { ok: false, reason: "unknown_step" };
 
+  const submitted = (raw ?? {}) as Record<string, unknown>;
+
   let fields: Partial<NormalizedProfileUpdate>;
   try {
     fields = normalizeStep(step, raw);
-  } catch {
+  } catch (error) {
+    // Schema violation — report it per field, using the step's own field list
+    // so the response cannot confirm a field outside this step.
+    if (error instanceof z.ZodError) {
+      return { ok: false, reason: "invalid", validation: toValidationFailure(error, step.fields) };
+    }
     return { ok: false, reason: "invalid" };
+  }
+
+  // Values that parsed but normalised away to null. The normalisers are
+  // forgiving by design, so without this the user would see a "saved" step
+  // with their input silently missing.
+  const dropped = droppedValueErrors(submitted, fields, step.fields);
+  if (Object.keys(dropped).length > 0) {
+    return {
+      ok: false,
+      reason: "invalid",
+      validation: { error: "validation_failed", fieldErrors: dropped, formErrors: [] },
+    };
   }
 
   try {
@@ -412,7 +468,11 @@ export async function saveOnboardingStep(
 
 export type CompleteResult =
   | { ok: true; completion: number; completedAt: string }
-  | { ok: false; reason: "unavailable" | "no_record" | "invalid" };
+  | {
+      ok: false;
+      reason: "unavailable" | "no_record" | "invalid";
+      validation?: ValidationFailure;
+    };
 
 /**
  * Finish onboarding.
@@ -440,7 +500,12 @@ export async function completeOnboarding(
   let next: NormalizedProfileUpdate;
   try {
     next = normalizeProfileUpdate(raw);
-  } catch {
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      // Full validation, so every editable field is in scope.
+      const all = Object.keys(profileUpdateSchema.shape) as (keyof NormalizedProfileUpdate)[];
+      return { ok: false, reason: "invalid", validation: toValidationFailure(error, all) };
+    }
     return { ok: false, reason: "invalid" };
   }
 
@@ -448,25 +513,49 @@ export async function completeOnboarding(
     const current = await getOwnProfile(clerkUserId, env);
     if (!current) return { ok: false, reason: "no_record" };
 
+    // Already finished. Return the EXISTING timestamp and write nothing —
+    // that is what makes a duplicate completion idempotent, and it is also
+    // what stops a retry from appending a second audit row.
+    if (current.user.onboardingComplete) {
+      return {
+        ok: true,
+        completion: current.profile.profileCompletionPercent ?? profileCompletion(
+          completionSourceFromRow(current.profile)
+        ),
+        completedAt: new Date(current.user.onboardingComplete).toISOString(),
+      };
+    }
+
     const merged = { ...completionSourceFromRow(current.profile), ...next };
     const completion = profileCompletion(merged);
     const completedAt = new Date();
 
-    await db
-      .update(professionalProfiles)
-      .set({
-        ...next,
-        profileCompletionPercent: completion,
-        onboardingStep: LAST_STEP,
-        updatedAt: completedAt,
-      })
-      .where(eq(professionalProfiles.userId, current.user.id));
+    // Both writes go out as ONE Neon HTTP batch, which the server applies in a
+    // single transaction. `db.transaction()` is not available on this driver —
+    // drizzle's neon-http adapter throws "No transactions support in neon-http
+    // driver" — so a batch is the strongest atomicity the execution model
+    // offers. It is enough for the invariant that matters: the completion
+    // timestamp can never be stamped while the profile write is lost, or the
+    // reverse.
+    await db.batch([
+      db
+        .update(professionalProfiles)
+        .set({
+          ...next,
+          profileCompletionPercent: completion,
+          onboardingStep: LAST_STEP,
+          updatedAt: completedAt,
+        })
+        .where(eq(professionalProfiles.userId, current.user.id)),
+      db
+        .update(dashboardUsers)
+        .set({ onboardingComplete: completedAt, updatedAt: completedAt })
+        .where(eq(dashboardUsers.id, current.user.id)),
+    ]);
 
-    await db
-      .update(dashboardUsers)
-      .set({ onboardingComplete: completedAt, updatedAt: completedAt })
-      .where(eq(dashboardUsers.id, current.user.id));
-
+    // Written only after both rows landed, and only on the transition — so it
+    // records the event once rather than once per retry. Outside the batch on
+    // purpose: auditing must never be able to fail the request it describes.
     await writeAuditEvent("profile_updated", {
       actorUserId: current.user.id,
       targetUserId: current.user.id,

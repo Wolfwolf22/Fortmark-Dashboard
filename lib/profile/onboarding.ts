@@ -187,6 +187,100 @@ export function normalizeStep(
 }
 
 /**
+ * Structured validation failures, keyed by the UI's field name.
+ *
+ * `fieldErrors` uses the same keys the form renders, so the client can attach
+ * a message to a control without a translation table. Database column names
+ * are never used — they differ from the field names in several places, and
+ * leaking them would tell a caller about the schema for no benefit.
+ */
+export interface ValidationFailure {
+  error: "validation_failed";
+  fieldErrors: Partial<Record<ProfileFieldKey, string[]>>;
+  formErrors: string[];
+}
+
+/**
+ * Human messages for the rules the shared schema enforces.
+ *
+ * Kept beside the field list rather than in the route so both the step API and
+ * the full-profile API produce identical wording, and adding a field cannot
+ * leave one surface without a message.
+ */
+const FIELD_MESSAGE: Partial<Record<ProfileFieldKey, string>> = {
+  businessEmail: "Enter a valid email address.",
+  phoneE164: "Enter a valid phone number.",
+  whatsappPhoneE164: "Enter a valid phone number.",
+  licenseExpiration: "Enter a date as YYYY-MM-DD.",
+  licenseState: "Enter a two-letter state code.",
+  linkedinUrl: "Enter a valid web address.",
+  instagramUrl: "Enter a valid web address.",
+  facebookUrl: "Enter a valid web address.",
+  personalWebsiteUrl: "Enter a valid web address.",
+  professionalWebsiteUrl: "Enter a valid web address.",
+};
+
+function messageFor(key: ProfileFieldKey, fallback: string): string {
+  return FIELD_MESSAGE[key] ?? fallback;
+}
+
+/**
+ * Turn a Zod error into the field-error contract.
+ *
+ * Only keys the caller was allowed to submit are returned. Anything else —
+ * including a key Zod complained about because the client sent something it
+ * should not have — becomes a form-level message, so the response never
+ * confirms the existence of a field outside the step.
+ */
+export function toValidationFailure(
+  error: z.ZodError,
+  allowed: readonly ProfileFieldKey[]
+): ValidationFailure {
+  const fieldErrors: Partial<Record<ProfileFieldKey, string[]>> = {};
+  const formErrors: string[] = [];
+  const permitted = new Set<string>(allowed);
+
+  for (const issue of error.issues) {
+    const key = issue.path[0];
+    if (typeof key === "string" && permitted.has(key)) {
+      const field = key as ProfileFieldKey;
+      const list = fieldErrors[field] ?? [];
+      list.push(messageFor(field, "That value could not be accepted."));
+      fieldErrors[field] = list;
+    } else {
+      formErrors.push("Some values could not be accepted.");
+    }
+  }
+
+  return { error: "validation_failed", fieldErrors, formErrors: [...new Set(formErrors)] };
+}
+
+/**
+ * Values that parsed but normalised away to null.
+ *
+ * The normalisers are deliberately forgiving — an unusable URL or phone number
+ * becomes null rather than throwing, so one bad paste cannot block a whole
+ * save. That is right for storage and wrong for feedback: silently dropping
+ * what someone typed looks like the field simply did not save. This reports
+ * those fields so the user is told, while the good values still persist.
+ */
+export function droppedValueErrors(
+  submitted: Record<string, unknown>,
+  normalised: Partial<Record<ProfileFieldKey, unknown>>,
+  allowed: readonly ProfileFieldKey[]
+): Partial<Record<ProfileFieldKey, string[]>> {
+  const out: Partial<Record<ProfileFieldKey, string[]>> = {};
+  for (const key of allowed) {
+    const raw = submitted[key];
+    const typed = typeof raw === "string" ? raw.trim() : "";
+    if (typed.length > 0 && normalised[key] === null) {
+      out[key] = [messageFor(key, "That value could not be accepted.")];
+    }
+  }
+  return out;
+}
+
+/**
  * Where the wizard should resume.
  *
  * `onboardingStep` is the last step that SAVED successfully, so the user
