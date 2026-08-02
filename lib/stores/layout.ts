@@ -3,23 +3,12 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { DateRangePreset } from "@/lib/data/types";
+import { DEFAULT_WIDGET_ORDER, type WidgetId } from "./widget-order";
 
-/** Canonical widget order for the Home bento grid. */
-export const DEFAULT_WIDGET_ORDER = [
-  "featured-listing",
-  "under-contract",
-  "closed",
-  "pipeline-value",
-  "closed-volume",
-  "projected-commission",
-  "transactions-table",
-  "lead-source",
-  "leaderboard",
-  "market-pulse",
-  "compliance",
-] as const;
-
-export type WidgetId = (typeof DEFAULT_WIDGET_ORDER)[number];
+// The order lives in a dependency-free module so tests can import it under
+// plain Node; re-exported here so existing consumers are unaffected.
+export { DEFAULT_WIDGET_ORDER } from "./widget-order";
+export type { WidgetId } from "./widget-order";
 
 interface LayoutState {
   widgetOrder: WidgetId[];
@@ -42,7 +31,11 @@ export const useLayoutStore = create<LayoutState>()(
         set((s) => ({ widgetPeriods: { ...s.widgetPeriods, [id]: preset } })),
     }),
     {
-      name: "fm.dashboard.layout.v1",
+      // v2: the default order changed in Release 1.1. `merge` below appends
+      // unknown ids at the END, so a persisted v1 order would have kept
+      // featured-listing in first place forever for anyone who had already
+      // loaded the dashboard. A new key retires those saved orders.
+      name: "fm.dashboard.layout.v2",
       merge: (persisted, current) => {
         // Tolerate widget ids added/removed between versions.
         const p = persisted as Partial<LayoutState> | undefined;

@@ -17,6 +17,7 @@ import {
 import {
   BASE_PATH,
   FALLBACK_PLATE,
+  apiPath,
   assetPath,
   isSafeReturnPath,
 } from "../lib/routes.ts";
@@ -145,6 +146,16 @@ check("data URL passes through", assetPath("data:image/png;base64,AAAA") === "da
 check("empty src stays empty", assetPath("") === "");
 check("fallback plate is basePath-resolvable", assetPath(FALLBACK_PLATE) === `${BASE_PATH}/photos/plate-01.svg`);
 check("relative (non-rooted) src is not mangled", assetPath("photos/p.svg") === "photos/p.svg");
+
+// --- basePath route-handler resolution -------------------------------------
+// Same trap one layer down: fetch() is not rewritten either, so a bare
+// "/api/chat" resolves to the portal zone. Verified against a running server —
+// /api/chat returns 404, /dashboard/api/chat returns 401.
+check("api path gains the basePath prefix", apiPath("/api/profile") === "/dashboard/api/profile");
+check("api chat path gains the basePath prefix", apiPath("/api/chat") === "/dashboard/api/chat");
+check("already-prefixed api path is untouched", apiPath("/dashboard/api/profile") === "/dashboard/api/profile");
+check("relative api path is not mangled", apiPath("api/profile") === "api/profile");
+check("api path is basePath-consistent", apiPath("/api/x").startsWith(`${BASE_PATH}/`));
 
 // --- Summary ---------------------------------------------------------------
 const total = passed + failures.length;

@@ -5,7 +5,13 @@
  * store and lets the user drag-reorder them (pointer or keyboard) via a grip
  * handle at the top center of each card. The card body itself is not
  * draggable, so inner controls stay clickable.
+ *
+ * `fixedLead` is rendered as the grid's first child but is deliberately NOT a
+ * `SortableContext` item and carries no grip, expand or remove control. That is
+ * what makes the Home identity card permanent: there is no id for dnd-kit to
+ * move, and no persisted order that can place anything ahead of it.
  */
+import * as React from "react";
 import { useEffect, useState } from "react";
 import {
   DndContext,
@@ -83,9 +89,16 @@ function SortableWidget({ id }: { id: WidgetId }) {
 }
 
 /** Pre-mount stand-in matching the default layout, so first paint is stable. */
-function GridSkeleton() {
+function GridSkeleton({
+  fixedLead,
+  fixedLeadSpanClass,
+}: {
+  fixedLead?: React.ReactNode;
+  fixedLeadSpanClass?: string;
+}) {
   return (
     <div className={GRID_CLASS}>
+      {fixedLead && <div className={fixedLeadSpanClass}>{fixedLead}</div>}
       {DEFAULT_WIDGET_ORDER.map((id) => (
         <Card
           key={id}
@@ -106,7 +119,14 @@ function GridSkeleton() {
   );
 }
 
-export function BentoGrid() {
+export function BentoGrid({
+  fixedLead,
+  fixedLeadSpanClass = "md:col-span-3 xl:col-span-4 md:row-span-2",
+}: {
+  /** Permanent, non-sortable first cell. Omitted when the feature is off. */
+  fixedLead?: React.ReactNode;
+  fixedLeadSpanClass?: string;
+} = {}) {
   const widgetOrder = useLayoutStore((s) => s.widgetOrder);
   const setWidgetOrder = useLayoutStore((s) => s.setWidgetOrder);
   const resetLayout = useLayoutStore((s) => s.resetLayout);
@@ -129,7 +149,10 @@ export function BentoGrid() {
     setWidgetOrder(arrayMove(widgetOrder, oldIndex, newIndex));
   }
 
-  if (!mounted) return <GridSkeleton />;
+  if (!mounted)
+    return (
+      <GridSkeleton fixedLead={fixedLead} fixedLeadSpanClass={fixedLeadSpanClass} />
+    );
 
   const orderChanged = widgetOrder.join("|") !== DEFAULT_WIDGET_ORDER.join("|");
 
@@ -142,6 +165,7 @@ export function BentoGrid() {
       >
         <SortableContext items={widgetOrder} strategy={rectSortingStrategy}>
           <div className={GRID_CLASS}>
+            {fixedLead && <div className={fixedLeadSpanClass}>{fixedLead}</div>}
             {widgetOrder.map((id) => (
               <SortableWidget key={id} id={id} />
             ))}

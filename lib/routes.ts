@@ -107,5 +107,22 @@ export function assetPath(src: string): string {
   return src.startsWith("/") ? `${BASE_PATH}${src}` : src;
 }
 
+/**
+ * Absolute path of a route handler, for use from the browser.
+ *
+ * The same basePath trap as `assetPath`, one layer down: route handlers are
+ * served under `/dashboard`, but `fetch()` is not rewritten by Next the way
+ * `<Link>` and `router.push()` are. A bare `fetch("/api/…")` resolves against
+ * the origin root — the portal zone — and 404s. Verified against a running
+ * server: `/api/chat` → 404, `/dashboard/api/chat` → 401.
+ *
+ * Every client-side fetch of a dashboard route handler must go through here.
+ */
+export function apiPath(path: string): string {
+  if (!path.startsWith("/")) return path;
+  if (path.startsWith(`${BASE_PATH}/`)) return path;
+  return `${BASE_PATH}${path}`;
+}
+
 /** Deterministic plate shown when listing media is missing or fails to load. */
 export const FALLBACK_PLATE = "/photos/plate-01.svg";

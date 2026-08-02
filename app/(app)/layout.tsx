@@ -13,6 +13,7 @@ import { AccessDenied } from "@/components/layout/access-denied";
 import { AppShell } from "@/components/layout/app-shell";
 import { decideAccess, isConfigFailure } from "@/lib/auth/dashboard-access";
 import { getSession, toPublicUser } from "@/lib/auth/session";
+import { getShellProfile } from "@/lib/profile/shell";
 import { BASE_PATH, isSafeReturnPath, signInUrl } from "@/lib/routes";
 
 /**
@@ -56,5 +57,14 @@ export default async function AppLayout({
     );
   }
 
-  return <AppShell user={toPublicUser(session.user)}>{children}</AppShell>;
+  // Resolved after the access decision, never before: a visitor who is turned
+  // away must not cause a database round trip. Every failure inside returns the
+  // session-only projection, so the shell is identical when the feature is off.
+  const profile = await getShellProfile(session.user);
+
+  return (
+    <AppShell user={toPublicUser(session.user)} profile={profile}>
+      {children}
+    </AppShell>
+  );
 }

@@ -78,7 +78,16 @@ export default clerkMiddleware(
     // `nextUrl.pathname` excludes the basePath, so rebuild the full path the
     // browser actually requested for the return trip.
     const returnPath = `${req.nextUrl.basePath}${req.nextUrl.pathname}${req.nextUrl.search}`;
-    return NextResponse.redirect(signInUrl(returnPath));
+
+    // `signInUrl` falls back to a relative path when NEXT_PUBLIC_APP_URL is
+    // unset, and `NextResponse.redirect` rejects relative URLs — which turned
+    // "send this visitor to sign in" into a 500 on every dashboard page.
+    // Resolving against the request's own origin keeps a misconfigured
+    // environment merely degraded rather than unavailable. It never widens
+    // access: the destination is still the sign-in route, and the URL is built
+    // from the request origin, not from any user-supplied value.
+    const destination = new URL(signInUrl(returnPath), req.nextUrl.origin);
+    return NextResponse.redirect(destination);
   },
   { authorizedParties: getAuthorizedParties() }
 );

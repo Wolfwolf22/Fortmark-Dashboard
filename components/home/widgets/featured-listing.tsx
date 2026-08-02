@@ -15,9 +15,13 @@ import { formatCurrency, initials } from "@/lib/utils";
 import { ListingImage } from "@/components/listings/listing-image";
 
 /**
- * The spotlight card on Home: the brokerage's featured listing with photo,
- * price, and listing agent. Period-independent; the whole body links to the
- * listing detail page.
+ * The featured listing on Home. Since Release 1.1 this is a wide, short card
+ * sitting between the commission chart and the transactions table — the
+ * upper-left tile it used to occupy now belongs to the permanent identity card.
+ *
+ * The layout is horizontal from `sm` up: image on the left at a fixed ratio,
+ * details beside it. It stacks on the narrowest screens so nothing overflows.
+ * Period-independent; the whole body links to the listing detail page.
  */
 export default function FeaturedListingWidget() {
   const { data, loading, error } = useQuery<{
@@ -72,50 +76,46 @@ function FeaturedBody({
     <Link
       href={`/listings/${listing.id}`}
       aria-label={`Open listing ${listing.address}`}
-      className="group -m-2 flex flex-1 flex-col gap-4 rounded-panel p-2 transition-colors duration-150 hover:bg-tint"
+      className="group -m-2 flex flex-col gap-4 rounded-panel p-2 transition-colors duration-150 hover:bg-tint sm:flex-row sm:items-center sm:gap-5"
     >
-      <div className="relative overflow-hidden rounded-panel">
+      <div className="relative shrink-0 overflow-hidden rounded-panel sm:w-56 lg:w-64">
         <ListingImage
           src={listing.photos[0]}
           alt={listing.address}
-          className="aspect-[4/3] w-full transition-transform duration-200 group-hover:scale-[1.02]"
+          className="aspect-[16/10] w-full transition-transform duration-200 group-hover:scale-[1.02]"
         />
         <StatusPill tone={pill.tone} className="absolute left-3 top-3 backdrop-blur-sm">
           {pill.label}
         </StatusPill>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3">
-        <div>
-          <p className="text-lg font-bold leading-snug">{listing.address}</p>
-          <p className="mt-0.5 text-[13px] text-muted-foreground">
-            {listing.city} · {listing.neighborhood}
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+          <div className="min-w-0">
+            <p className="truncate text-[15px] font-bold leading-snug">{listing.address}</p>
+            <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
+              {listing.city} · {listing.neighborhood}
+            </p>
+          </div>
+          <p className="font-display text-2xl leading-none tabular">
+            {formatCurrency(listing.listPrice)}
           </p>
         </div>
 
-        <p className="font-display text-3xl leading-none tabular">
-          {formatCurrency(listing.listPrice)}
-        </p>
-
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span className="text-micro tabular">MLS {listing.mlsNumber}</span>
-          <span className="text-micro tabular">Folio {listing.folioNumber}</span>
           <span className="text-micro tabular">
             {listing.daysOnMarket} {listing.daysOnMarket === 1 ? "day" : "days"} on market
           </span>
+          {agent && (
+            <span className="flex items-center gap-1.5">
+              <Avatar className="h-5 w-5">
+                <AvatarFallback className="text-[9px]">{initials(agent.name)}</AvatarFallback>
+              </Avatar>
+              <span className="text-micro">{agent.name} · Listing agent</span>
+            </span>
+          )}
         </div>
-
-        {agent && (
-          <div className="mt-auto flex items-center gap-2.5 border-t border-border pt-3">
-            <Avatar className="h-7 w-7">
-              <AvatarFallback>{initials(agent.name)}</AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <p className="truncate text-[13px] font-semibold">{agent.name}</p>
-              <p className="text-micro">Listing agent</p>
-            </div>
-          </div>
-        )}
       </div>
     </Link>
   );
@@ -123,17 +123,12 @@ function FeaturedBody({
 
 function FeaturedSkeleton() {
   return (
-    <div className="flex flex-1 flex-col gap-4">
-      <Skeleton className="aspect-[4/3] w-full rounded-panel" />
-      <div className="space-y-3">
-        <Skeleton className="h-5 w-3/4" />
-        <Skeleton className="h-4 w-1/2" />
-        <Skeleton className="h-8 w-40" />
-        <Skeleton className="h-3 w-2/3" />
-      </div>
-      <div className="mt-auto flex items-center gap-2.5 border-t border-border pt-3">
-        <Skeleton className="h-7 w-7 rounded-full" />
-        <Skeleton className="h-4 w-32" />
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-5">
+      <Skeleton className="aspect-[16/10] w-full shrink-0 rounded-panel sm:w-56 lg:w-64" />
+      <div className="flex-1 space-y-3">
+        <Skeleton className="h-5 w-2/3" />
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-3 w-1/2" />
       </div>
     </div>
   );

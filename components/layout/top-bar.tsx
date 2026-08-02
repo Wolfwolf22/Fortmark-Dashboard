@@ -7,9 +7,11 @@ import { DateRangeSelector } from "./date-range-selector";
 import { NewMenu } from "./new-menu";
 import { ThemeToggle } from "./theme-toggle";
 import { Kbd } from "@/components/ui/kbd";
+import { ProfileIdentity } from "@/components/profile/profile-identity";
+import type { ShellProfile } from "@/lib/profile/display";
 import { useUiStore } from "@/lib/stores/ui";
 
-export function TopBar() {
+export function TopBar({ profile }: { profile: ShellProfile }) {
   const pathname = usePathname();
   const setCommandOpen = useUiStore((s) => s.setCommandOpen);
   const title = pageTitleFor(pathname);
@@ -44,6 +46,11 @@ export function TopBar() {
         <DateRangeSelector />
       </div>
       <ThemeToggle />
+
+      {/* Identity sits last so it reads as the account corner of the bar. */}
+      <div className="ml-1 flex items-center border-l border-border pl-2">
+        <ProfileIdentity display={profile.display} editable={profile.editable} />
+      </div>
     </header>
   );
 }
