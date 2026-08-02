@@ -138,6 +138,31 @@ export function toIsoDate(v: unknown): string | null {
 }
 
 /**
+ * A publishable email address, lowercased, or null.
+ *
+ * Deliberately conservative rather than RFC-complete: this value is rendered
+ * as a `mailto:` on the Home card and the digital card, so the bar is "safe to
+ * put in an href", not "provably deliverable". Anything with whitespace,
+ * control characters, more than one `@`, or a dotless domain is refused
+ * outright instead of being half-repaired.
+ *
+ * Never used for authentication. The verified sign-in address lives on
+ * `dashboard_users.primary_email` and is not writable from here.
+ */
+export function toEmail(v: unknown): string | null {
+  const s = cleanText(v);
+  if (!s) return null;
+  if (s.length > 254) return null;
+  if (/[\s<>()[\]\\,;:"]/.test(s)) return null;
+  const at = s.indexOf("@");
+  if (at <= 0 || at !== s.lastIndexOf("@")) return null;
+  const domain = s.slice(at + 1);
+  if (!domain.includes(".") || domain.startsWith(".") || domain.endsWith(".")) return null;
+  if (domain.includes("..")) return null;
+  return s.toLowerCase();
+}
+
+/**
  * The only fields a user may change about themselves.
  *
  * Role, status, access authority, Clerk id and the verified primary email are
@@ -169,6 +194,8 @@ export const profileUpdateSchema = z
     personalWebsiteUrl: z.string().max(400).optional(),
     professionalWebsiteUrl: z.string().max(400).optional(),
     whatsappPhoneE164: z.string().max(40).optional(),
+    // --- Release A: onboarding --------------------------------------------
+    businessEmail: z.string().max(254).optional(),
   })
   .strip();
 
@@ -197,6 +224,7 @@ export interface NormalizedProfileUpdate {
   personalWebsiteUrl: string | null;
   professionalWebsiteUrl: string | null;
   whatsappPhoneE164: string | null;
+  businessEmail: string | null;
 }
 
 /** Parse then normalise. Throws only on a schema violation, not on odd values. */
@@ -229,6 +257,9 @@ export function normalizeProfileUpdate(raw: unknown): NormalizedProfileUpdate {
     personalWebsiteUrl: toProfileUrl(input.personalWebsiteUrl),
     professionalWebsiteUrl: toProfileUrl(input.professionalWebsiteUrl),
     whatsappPhoneE164: toE164(input.whatsappPhoneE164),
+    // An unusable address becomes null rather than throwing, matching how the
+    // URL fields behave: one bad paste must not block an entire save.
+    businessEmail: toEmail(input.businessEmail),
   };
 }
 

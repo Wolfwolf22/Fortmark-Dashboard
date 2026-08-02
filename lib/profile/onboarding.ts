@@ -1,0 +1,254 @@
+/**
+ * The onboarding step contract.
+ *
+ * This module is the single place that says which profile fields belong to
+ * which step. The wizard renders from it, the draft API validates against it,
+ * and the settings editor reuses the same groups — so a field cannot exist in
+ * one surface with different rules in the other. Adding a field here adds it
+ * everywhere, or nowhere.
+ *
+ * It deliberately owns no validation logic of its own: every step schema is
+ * *derived* from `profileUpdateSchema`, so the allowlist that keeps role,
+ * status, Clerk id and the verified email unwritable applies to each step
+ * automatically rather than by being remembered.
+ */
+import { z } from "zod";
+import {
+  normalizeProfileUpdate,
+  profileUpdateSchema,
+  type NormalizedProfileUpdate,
+} from "./normalize.ts";
+
+/** Every field a step may write. Keys of the shared update contract only. */
+export type ProfileFieldKey = keyof NormalizedProfileUpdate;
+
+export type OnboardingStepId =
+  | "identity"
+  | "professional"
+  | "credentials"
+  | "contact"
+  | "mls"
+  | "review";
+
+export interface OnboardingStep {
+  id: OnboardingStepId;
+  /** 1-based, and the value persisted to `professional_profiles.onboarding_step`. */
+  step: number;
+  title: string;
+  /** Short sentence shown under the heading. */
+  description: string;
+  /** Fields this step persists. Empty for informational steps. */
+  fields: readonly ProfileFieldKey[];
+  /** Whether the user may move on without entering anything. */
+  skippable: boolean;
+  /**
+   * Steps that only apply to licensed roles. Non-licensed roles skip them
+   * entirely rather than being shown fields they can never fill in.
+   */
+  licensedOnly?: boolean;
+}
+
+/**
+ * The ordered steps.
+ *
+ * `mls` and `review` persist nothing. In Release A the MLS step is purely
+ * informational — there is no verified connection to store, and a column that
+ * could only hold an unverified typed claim would invite treating it as one.
+ */
+export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
+  {
+    id: "identity",
+    step: 1,
+    title: "Welcome to FortMark",
+    description: "Start with your photo and how you would like to be addressed.",
+    fields: ["preferredDisplayName", "legalFirstName", "legalLastName"],
+    skippable: true,
+  },
+  {
+    id: "professional",
+    step: 2,
+    title: "Professional identity",
+    description: "Your title, office and a short professional biography.",
+    fields: ["professionalTitle", "brokerageOffice", "locationDisplay", "biography"],
+    skippable: true,
+  },
+  {
+    id: "credentials",
+    step: 3,
+    title: "Credentials",
+    description: "Self-reported licence and association details.",
+    fields: [
+      "licenseState",
+      "licenseType",
+      "licenseNumber",
+      "licenseExpiration",
+      "nrdsNumber",
+    ],
+    skippable: true,
+    licensedOnly: true,
+  },
+  {
+    id: "contact",
+    step: 4,
+    title: "Contact information",
+    description: "How clients reach you, and what appears on your FortMark card.",
+    fields: [
+      "businessEmail",
+      "phoneE164",
+      "whatsappPhoneE164",
+      "personalWebsiteUrl",
+      "professionalWebsiteUrl",
+      "linkedinUrl",
+      "instagramUrl",
+      "facebookUrl",
+    ],
+    skippable: true,
+  },
+  {
+    id: "mls",
+    step: 5,
+    title: "Connect your MLS identity",
+    description: "Your MLS identity will be verified before listings are connected.",
+    fields: [],
+    skippable: true,
+  },
+  {
+    id: "review",
+    step: 6,
+    title: "Review and finish",
+    description: "Check everything over before you finish.",
+    fields: [],
+    skippable: false,
+  },
+] as const;
+
+export const FIRST_STEP = ONBOARDING_STEPS[0].step;
+export const LAST_STEP = ONBOARDING_STEPS[ONBOARDING_STEPS.length - 1].step;
+
+/** Roles that are asked for licence details. */
+const LICENSED_ROLES = new Set(["agent", "broker"]);
+
+/** Whether a role should be shown the credentials step at all. */
+export function stepAppliesToRole(step: OnboardingStep, role: string | null | undefined): boolean {
+  if (!step.licensedOnly) return true;
+  return LICENSED_ROLES.has((role ?? "").trim().toLowerCase());
+}
+
+/** The steps a given role actually walks through, in order. */
+export function stepsForRole(role: string | null | undefined): readonly OnboardingStep[] {
+  return ONBOARDING_STEPS.filter((s) => stepAppliesToRole(s, role));
+}
+
+export function stepById(id: OnboardingStepId): OnboardingStep | null {
+  return ONBOARDING_STEPS.find((s) => s.id === id) ?? null;
+}
+
+export function stepByNumber(step: unknown): OnboardingStep | null {
+  if (typeof step !== "number" || !Number.isInteger(step)) return null;
+  return ONBOARDING_STEPS.find((s) => s.step === step) ?? null;
+}
+
+/**
+ * The Zod schema for one step, derived from the shared update contract.
+ *
+ * `.pick()` rather than a hand-written object: a step can only ever accept
+ * fields that `profileUpdateSchema` already permits, so no step can widen the
+ * write surface. Informational steps get an empty schema that still strips
+ * unknown keys, so posting to them writes nothing.
+ */
+export function stepSchema(step: OnboardingStep) {
+  if (step.fields.length === 0) return z.object({}).strip();
+  const mask = Object.fromEntries(step.fields.map((f) => [f, true]));
+  return profileUpdateSchema.pick(mask as never).strip();
+}
+
+/**
+ * Parse and normalise a step's payload, returning ONLY that step's fields.
+ *
+ * The narrowing is the point: a draft save for step 2 cannot write a licence
+ * number even if the client sends one, because the key never survives the
+ * pick. Values are normalised by the same functions the full update uses.
+ */
+export function normalizeStep(
+  step: OnboardingStep,
+  raw: unknown
+): Partial<NormalizedProfileUpdate> {
+  const parsed = stepSchema(step).parse(raw ?? {}) as Record<string, unknown>;
+  if (step.fields.length === 0) return {};
+  // Normalise through the shared function, then keep only this step's keys.
+  const normalised = normalizeProfileUpdate(parsed);
+  const out: Partial<NormalizedProfileUpdate> = {};
+  for (const key of step.fields) {
+    // Each key is a literal key of the normalised shape, so this assignment is
+    // type-safe field by field even though the loop erases the specific one.
+    (out as Record<ProfileFieldKey, unknown>)[key] = normalised[key];
+  }
+  return out;
+}
+
+/**
+ * Where the wizard should resume.
+ *
+ * `onboardingStep` is the last step that SAVED successfully, so the user
+ * resumes on the one after it. Anything out of range — null, zero, a value
+ * from a future release, a hand-edited row — falls back to the first step
+ * rather than to a step that may not exist.
+ */
+export function resumeStep(
+  onboardingStep: number | null | undefined,
+  role?: string | null
+): OnboardingStep {
+  const applicable = stepsForRole(role);
+  const first = applicable[0] ?? ONBOARDING_STEPS[0];
+  if (typeof onboardingStep !== "number" || !Number.isInteger(onboardingStep)) return first;
+  const next = applicable.find((s) => s.step > onboardingStep);
+  // Past the end means every step was saved; land on review to finish.
+  return next ?? applicable[applicable.length - 1] ?? first;
+}
+
+/** The step after `step` for this role, or null when it is the last one. */
+export function nextStep(step: OnboardingStep, role?: string | null): OnboardingStep | null {
+  const applicable = stepsForRole(role);
+  return applicable.find((s) => s.step > step.step) ?? null;
+}
+
+/** The step before `step` for this role, or null when it is the first one. */
+export function previousStep(step: OnboardingStep, role?: string | null): OnboardingStep | null {
+  const applicable = stepsForRole(role).filter((s) => s.step < step.step);
+  return applicable[applicable.length - 1] ?? null;
+}
+
+/**
+ * Whether onboarding is finished.
+ *
+ * Reads `dashboard_users.onboarding_complete` and nothing else. There is
+ * deliberately no second status column: two records of the same fact can
+ * disagree, and then nothing says which one is right.
+ */
+export function onboardingComplete(user: { onboardingComplete?: Date | string | null } | null): boolean {
+  return Boolean(user?.onboardingComplete);
+}
+
+/**
+ * Whether the wizard should open on its own for this request.
+ *
+ * Every condition must hold. In particular a missing profile row is NOT
+ * treated as "show the wizard" on its own — the caller passes
+ * `databaseAvailable: false` when the profile store could not be reached, and
+ * an unreachable database must land on the ordinary session-only dashboard
+ * rather than trapping the user in onboarding they cannot save.
+ */
+export function shouldOpenOnboarding(input: {
+  uiEnabled: boolean;
+  databaseEnabled: boolean;
+  databaseAvailable: boolean;
+  user: { onboardingComplete?: Date | string | null } | null;
+  dismissedThisSession?: boolean;
+}): boolean {
+  if (!input.uiEnabled || !input.databaseEnabled) return false;
+  if (!input.databaseAvailable) return false;
+  if (!input.user) return false;
+  if (onboardingComplete(input.user)) return false;
+  if (input.dismissedThisSession) return false;
+  return true;
+}
