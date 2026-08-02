@@ -1,5 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { signInUrl } from "@/lib/routes";
 
 /**
@@ -59,7 +59,55 @@ function getAuthorizedParties(): string[] {
   return Array.from(parties);
 }
 
-export default clerkMiddleware(
+/**
+ * Whether both Clerk keys are present and non-empty.
+ *
+ * Deliberately duplicated here rather than imported from
+ * `lib/auth/dashboard-access`, which is the module that owns this rule for the
+ * request path. That module hashes identifiers with `node:crypto`, and pulling
+ * it into middleware breaks the build outright — the edge runtime cannot
+ * bundle `node:` schemes. Middleware has to stay dependency-free, so the rule
+ * is restated in the few lines it takes. `test_dashboard_access.ts` asserts
+ * both copies agree.
+ */
+function clerkIsConfigured(env: Record<string, string | undefined> = process.env): boolean {
+  const nonEmpty = (v: string | undefined) => typeof v === "string" && v.trim().length > 0;
+  return nonEmpty(env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) && nonEmpty(env.CLERK_SECRET_KEY);
+}
+
+/**
+ * The response when Clerk cannot start.
+ *
+ * `clerkMiddleware()` throws `Missing publishableKey` on EVERY request when a
+ * key is absent, and a throw from middleware becomes
+ * MIDDLEWARE_INVOCATION_FAILED — a 500 on every route in the zone, including
+ * the ones that should merely redirect. That is exactly what took the
+ * dashboard down: the key was absent from the Production scope, so the current
+ * build and the previous one failed identically, while Preview — which has the
+ * key — was healthy throughout.
+ *
+ * 503 for BOTH pages and API routes, deliberately, rather than the sign-in
+ * redirect used for an ordinary signed-out visitor. Without a publishable key
+ * no session can be verified, so "you are signed out" would be a claim this
+ * code cannot make — and the portal, which is healthy and already considers
+ * the visitor signed in, would redirect straight back and produce a loop.
+ * An honest, terminal 503 denies access without lying and without looping.
+ *
+ * It never returns `NextResponse.next()`: a configuration failure must not
+ * become an access grant.
+ */
+function serviceUnavailable(req: NextRequest): NextResponse {
+  const headers = { "Cache-Control": "no-store" };
+  if (req.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.json({ error: "Service unavailable" }, { status: 503, headers });
+  }
+  return new NextResponse(
+    "The FortMark dashboard is temporarily unavailable. Please try again shortly.",
+    { status: 503, headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" } }
+  );
+}
+
+const clerkHandler = clerkMiddleware(
   async (auth, req) => {
     if (isPublicRoute(req)) return;
 
@@ -91,6 +139,22 @@ export default clerkMiddleware(
   },
   { authorizedParties: getAuthorizedParties() }
 );
+
+/**
+ * Guards Clerk's handler rather than replacing it.
+ *
+ * The configuration check runs BEFORE the handler is invoked, because the throw
+ * happens inside Clerk itself and cannot be caught into a safe response from
+ * within the callback. Every other request takes the identical path it did
+ * before, so authentication behaviour is unchanged.
+ */
+export default function middleware(
+  req: NextRequest,
+  event: Parameters<typeof clerkHandler>[1]
+) {
+  if (!clerkIsConfigured()) return serviceUnavailable(req);
+  return clerkHandler(req, event);
+}
 
 export const config = {
   matcher: [
