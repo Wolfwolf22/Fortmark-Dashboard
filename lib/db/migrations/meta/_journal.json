@@ -15,6 +15,13 @@
       "when": 1785384367484,
       "tag": "0001_cool_puppet_master",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785709767872,
+      "tag": "0002_light_tomas",
+      "breakpoints": true
     }
   ]
 }

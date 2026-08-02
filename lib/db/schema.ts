@@ -111,6 +111,25 @@ export const professionalProfiles = pgTable(
     professionalWebsiteUrl: text("professional_website_url"),
     /** Separate from `phoneE164` — many agents use a different WhatsApp line. */
     whatsappPhoneE164: text("whatsapp_phone_e164"),
+  /**
+   * Public/business contact address, distinct from the Clerk sign-in address.
+   *
+   * `dashboard_users.primary_email` is the verified account email and is
+   * read-only here — the onboarding wizard shows it but must never change it.
+   * This is the address a professional chooses to publish, which is frequently
+   * not the one they log in with.
+   */
+  businessEmail: text("business_email"),
+  /**
+   * Last onboarding step the user completed, so the wizard can resume.
+   *
+   * Nullable and additive: null means "never started", which is also what
+   * every pre-existing row reads as. Whether onboarding is FINISHED is not
+   * stored here — `dashboard_users.onboarding_complete` already answers that,
+   * and duplicating it as a status column would create two sources of truth
+   * that can disagree.
+   */
+  onboardingStep: integer("onboarding_step"),
     /** Free-form lists stored as jsonb arrays of trimmed strings. */
     languages: jsonb("languages").$type<string[]>().notNull().default([]),
     specialties: jsonb("specialties").$type<string[]>().notNull().default([]),

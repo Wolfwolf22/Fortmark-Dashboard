@@ -241,7 +241,16 @@ check("empty role falls back to member", resolveDbRole("") === "member");
     "baseline migration is journal entry 0",
     journal.entries[0].tag === "0000_foamy_redwing"
   );
-  check("journal has the Release 1.1 additive migration", journal.entries.length === 2);
+  // Asserted by tag and order rather than by count: an exact length encodes
+  // "no migration has been added since", which is not the rule — it would fail
+  // on every future additive migration for no real reason.
+  const tags = journal.entries.map((e: { tag: string }) => e.tag);
+  check("journal has the Release 1.1 additive migration", tags.includes("0001_cool_puppet_master"));
+  check("journal has the Release A onboarding migration", tags.includes("0002_light_tomas"));
+  check(
+    "migrations are journalled in order",
+    journal.entries.every((e: { idx: number }, i: number) => e.idx === i)
+  );
 
   // Release 1.1 adds the professional-presence columns. It must be purely
   // additive: no DROP, no RENAME, no ALTER COLUMN, and every column nullable.
@@ -1469,6 +1478,56 @@ const ALLOWED_ENV = {
   check(
     "display source type declares only the four permitted fields",
     (iface.match(/^\s{2}\w+\??:/gm) ?? []).length === 4
+  );
+}
+
+// --- Release A: onboarding state is additive and non-duplicating ----------
+{
+  const sql = readFileSync("lib/db/migrations/0002_light_tomas.sql", "utf8");
+
+  for (const col of ["business_email", "onboarding_step"]) {
+    check(`onboarding migration adds ${col}`, sql.includes(`ADD COLUMN "${col}"`));
+  }
+  // Additive only: the same bar Release 1.1 had to clear.
+  for (const forbidden of ["DROP", "TRUNCATE", "DELETE", "RENAME", "ALTER COLUMN", "NOT NULL"]) {
+    check(`onboarding migration contains no ${forbidden}`, !sql.toUpperCase().includes(forbidden));
+  }
+  check(
+    "onboarding migration only alters professional_profiles",
+    (sql.match(/ALTER TABLE "professional_profiles"/g) ?? []).length ===
+      (sql.match(/ALTER TABLE/g) ?? []).length
+  );
+
+  const schema = readFileSync("lib/db/schema.ts", "utf8");
+  // `dashboard_users.onboarding_complete` already records completion. Storing a
+  // second status column would let the two disagree, so completion is derived
+  // rather than duplicated.
+  check(
+    "completion is not duplicated onto professional_profiles",
+    schema.includes('onboardingComplete: timestamp("onboarding_complete"') &&
+      !schema.includes('onboarding_completed_at') &&
+      !schema.includes('onboarding_status')
+  );
+  check(
+    "the business email is separate from the account email",
+    schema.includes('businessEmail: text("business_email")') &&
+      schema.includes('primaryEmail: text("primary_email").notNull()')
+  );
+  check(
+    "no MLS identity column is introduced in Release A",
+    !schema.includes("mls_member_key") && !schema.includes("mlsMemberKey")
+  );
+
+  // The build-time verifier must police the new columns the same way.
+  const mig = readFileSync("scripts/migrate.mjs", "utf8");
+  check(
+    "the build verifies the onboarding columns exist and are nullable",
+    mig.includes("RELEASE_A_ONBOARDING_COLUMNS") &&
+      /Release A onboarding columns must stay nullable/.test(mig)
+  );
+  check(
+    "the migration guard is still preview-only",
+    mig.includes('!force && process.env.VERCEL_ENV !== "preview"')
   );
 }
 
