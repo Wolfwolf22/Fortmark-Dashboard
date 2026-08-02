@@ -71,6 +71,15 @@ import {
   stepsForRole,
 } from "../lib/profile/onboarding.ts";
 import { PROFILE_FIELDS, PUBLIC_SURFACE_FIELDS, SELF_REPORTED_FIELDS } from "../lib/profile/fields.ts";
+import {
+  ONBOARDING_DEFERRAL_COOKIE,
+  ONBOARDING_DEFERRAL_PATH,
+  ONBOARDING_DEFERRAL_VALUE,
+  deferralCookieOptions,
+  isDeferred,
+} from "../lib/profile/deferral.ts";
+import { droppedValueErrors, toValidationFailure } from "../lib/profile/onboarding.ts";
+import { z as zod } from "zod";
 import { toEmail } from "../lib/profile/normalize.ts";
 
 let passed = 0;
@@ -1770,7 +1779,10 @@ const ALLOWED_ENV = {
     wizard.indexOf("if (!res.ok)") < wizard.indexOf("setStored((prev)") &&
       wizard.indexOf("return false;") < wizard.indexOf("setStored((prev)"));
   check("complete later defers rather than completing",
-    wizard.includes("?setup=later") && !/onCompleteLater[\s\S]{0,400}complete: true/.test(wizard));
+    /onCompleteLater[\s\S]{0,900}defer: true/.test(wizard) &&
+      !/onCompleteLater[\s\S]{0,900}complete: true/.test(wizard));
+  check("the deferral is requested before navigating",
+    wizard.indexOf("defer: true") < wizard.indexOf("router.push(ROUTES.home);"));
   check("the wizard writes to no global store",
     !/useLayoutStore|useUiStore|useProfileStore/.test(wizard));
   check("the account email is rendered read-only",
@@ -1779,7 +1791,7 @@ const ALLOWED_ENV = {
   // to `values` in the props list, so a proximity match hit the declaration
   // rather than a submission.
   const bodies = wizard.match(/body: JSON\.stringify\([^)]*\)/g) ?? [];
-  check("both requests send a body", bodies.length === 2);
+  check("the wizard sends three request bodies", bodies.length === 3);
   check("the account email is never submitted",
     bodies.every((b) => !b.includes("accountEmail")));
   check("the MLS step claims nothing",
@@ -1792,7 +1804,10 @@ const ALLOWED_ENV = {
     page.includes("!context.available || context.complete"));
   check("home opens onboarding server-side, not in middleware",
     home.includes("shouldRedirectToOnboarding"));
-  check("home honours the complete-later escape", home.includes('params?.setup === "later"'));
+  check("home honours the complete-later deferral",
+    home.includes("isDeferred(jar.get(ONBOARDING_DEFERRAL_COOKIE)?.value)"));
+  check("the deferral is read from a cookie, not a query parameter",
+    !home.includes('setup === "later"') && home.includes("await cookies()"));
 
   // Shared form architecture -----------------------------------------------
   check("the editor renders through the shared field component",
@@ -1807,6 +1822,169 @@ const ALLOWED_ENV = {
     page.includes("professionalProfileUiEnabled"));
   check("the onboarding API is gated on the compound UI flag",
     route.includes("professionalProfileUiEnabled()"));
+}
+
+// --- Complete later: session deferral --------------------------------------
+{
+  check("the deferral cookie carries a fixed version marker",
+    ONBOARDING_DEFERRAL_VALUE === "v1");
+  check("only the exact marker counts as deferred",
+    isDeferred(ONBOARDING_DEFERRAL_VALUE) &&
+      !isDeferred("v0") && !isDeferred("") && !isDeferred(null) && !isDeferred(undefined));
+
+  // No PII, by construction: the value is the same bytes for every user.
+  check("the cookie value contains no identifier",
+    !/user_|@|\d{7,}/.test(ONBOARDING_DEFERRAL_VALUE));
+  check("the cookie name contains no identifier",
+    !/user_|@/.test(ONBOARDING_DEFERRAL_COOKIE));
+
+  const prod = deferralCookieOptions({ NODE_ENV: "production", VERCEL_ENV: "production" });
+  check("the cookie is httpOnly", prod.httpOnly === true);
+  check("the cookie is SameSite=Lax", prod.sameSite === "lax");
+  check("the cookie is Secure in production", prod.secure === true);
+  check("the cookie is scoped to the dashboard zone",
+    prod.path === ONBOARDING_DEFERRAL_PATH && prod.path === "/dashboard");
+  // A session cookie: "later" means "not now", not "not for a week".
+  check("the cookie has no max-age", prod.maxAge === undefined);
+  check("the cookie is Secure on a preview deployment",
+    deferralCookieOptions({ NODE_ENV: "production", VERCEL_ENV: "preview" }).secure === true);
+  check("the cookie is not Secure only for local development",
+    deferralCookieOptions({ NODE_ENV: "development" }).secure === false);
+
+  // The deferral suppresses a redirect and nothing else. Every other condition
+  // is evaluated independently of it.
+  const deferredBase = {
+    uiEnabled: true,
+    databaseEnabled: true,
+    databaseAvailable: true,
+    user: { onboardingComplete: null },
+    dismissedThisSession: true,
+  };
+  check("a deferral cannot bypass the ui flag",
+    !shouldOpenOnboarding({ ...deferredBase, uiEnabled: false }));
+  check("a deferral cannot bypass the database flag",
+    !shouldOpenOnboarding({ ...deferredBase, databaseEnabled: false }));
+  check("a deferral cannot conjure a user",
+    !shouldOpenOnboarding({ ...deferredBase, user: null }));
+  check("a deferral does not mark onboarding complete",
+    onboardingComplete({ onboardingComplete: null }) === false);
+}
+
+// --- Field-level validation errors -----------------------------------------
+{
+  const step4 = stepByNumber(4)!;
+
+  // Schema violations are reported per field, using the step's own field list.
+  const err = new zod.ZodError([
+    { code: "too_big", path: ["businessEmail"], message: "too long" } as never,
+    { code: "too_big", path: ["phoneE164"], message: "too long" } as never,
+  ]);
+  const failure = toValidationFailure(err, step4.fields);
+  check("a schema violation returns the validation contract",
+    failure.error === "validation_failed");
+  check("field errors are keyed by the UI field name",
+    Array.isArray(failure.fieldErrors.businessEmail) &&
+      Array.isArray(failure.fieldErrors.phoneE164));
+  check("the email message is human", failure.fieldErrors.businessEmail?.[0] === "Enter a valid email address.");
+  check("the phone message is human", failure.fieldErrors.phoneE164?.[0] === "Enter a valid phone number.");
+
+  // A field outside the submitted step never appears in the response, so the
+  // reply cannot confirm what other fields exist.
+  const outside = toValidationFailure(
+    new zod.ZodError([{ code: "custom", path: ["licenseNumber"], message: "x" } as never]),
+    step4.fields
+  );
+  check("an out-of-step field is not echoed back",
+    !("licenseNumber" in outside.fieldErrors));
+  check("an out-of-step failure becomes a form error", outside.formErrors.length === 1);
+  check("form errors are de-duplicated",
+    toValidationFailure(
+      new zod.ZodError([
+        { code: "custom", path: ["a"], message: "x" } as never,
+        { code: "custom", path: ["b"], message: "y" } as never,
+      ]),
+      step4.fields
+    ).formErrors.length === 1);
+  check("no database column name appears in the contract",
+    !JSON.stringify(failure).includes("business_email") &&
+      !JSON.stringify(failure).includes("phone_e164"));
+
+  // Values that PARSE but normalise away to null are reported too — otherwise
+  // the step reads as saved with the input silently missing.
+  const dropped = droppedValueErrors(
+    { businessEmail: "not-an-email", phoneE164: "123", linkedinUrl: "" },
+    { businessEmail: null, phoneE164: null, linkedinUrl: null },
+    step4.fields
+  );
+  check("a dropped email is reported", dropped.businessEmail?.length === 1);
+  check("a dropped phone is reported", dropped.phoneE164?.length === 1);
+  check("an empty field is not reported as dropped", !("linkedinUrl" in dropped));
+  check("a field the user did not submit is not reported",
+    !("facebookUrl" in droppedValueErrors({}, {}, step4.fields)));
+  check("a value that survived normalisation is not reported",
+    !("businessEmail" in droppedValueErrors(
+      { businessEmail: "a@b.co" },
+      { businessEmail: "a@b.co" },
+      step4.fields
+    )));
+}
+
+// --- State machine: idempotency and atomicity ------------------------------
+{
+  const service = readFileSync("lib/profile/service.ts", "utf8");
+  const wizard = readFileSync("components/profile/onboarding-wizard.tsx", "utf8");
+  const editor = readFileSync("components/profile/profile-editor.tsx", "utf8");
+  const route = readFileSync("app/api/profile/onboarding/route.ts", "utf8");
+  const profileRoute = readFileSync("app/api/profile/route.ts", "utf8");
+
+  check("duplicate completion returns the existing timestamp",
+    service.includes("if (current.user.onboardingComplete) {"));
+  check("duplicate completion writes nothing",
+    /if \(current\.user\.onboardingComplete\) \{[\s\S]{0,400}return \{\s*ok: true/.test(service));
+  check("the audit event is written only on the transition",
+    service.indexOf("if (current.user.onboardingComplete) {") <
+      service.indexOf('metadata: { onboarding: "completed"'));
+  check("both completion writes go out atomically", service.includes("await db.batch(["));
+  {
+    const batchAt = service.indexOf("await db.batch([");
+    const batchEnd = service.indexOf("]);", batchAt);
+    const auditAt = service.indexOf("writeAuditEvent", batchEnd);
+    check("the audit write stays outside the batch",
+      batchAt >= 0 && batchEnd > batchAt && auditAt > batchEnd);
+  }
+  check("the driver limitation is documented, not hidden",
+    /No transactions support in neon-http/.test(service));
+
+  // Validation never advances the step: the failure returns before any write.
+  {
+    // Inside saveOnboardingStep only: the invalid return must precede the
+    // first write in that function.
+    const fn = service.slice(
+      service.indexOf("export async function saveOnboardingStep"),
+      service.indexOf("export type CompleteResult")
+    );
+    const invalidAt = fn.indexOf('reason: "invalid"');
+    const writeAt = fn.indexOf(".update(professionalProfiles)");
+    check("a validation failure returns before the row is touched",
+      invalidAt >= 0 && writeAt >= 0 && invalidAt < writeAt);
+  }
+  check("a draft is not reported saved unless the write succeeded",
+    /catch \{\s*return \{ ok: false, reason: "unavailable" \};\s*\}/.test(service));
+
+  // Both surfaces consume the identical contract.
+  check("the onboarding route returns the validation object",
+    route.includes("result.validation ?? { error: result.reason }"));
+  check("the profile route returns the same shape",
+    profileRoute.includes("result.validation ?? { error: result.reason }"));
+  check("the wizard reads fieldErrors", wizard.includes("detail?.fieldErrors"));
+  check("the editor reads fieldErrors", editor.includes("detail?.fieldErrors"));
+  check("both focus the first invalid control",
+    wizard.includes('document.getElementById(`field-${firstInvalid}`)') &&
+      editor.includes('document.getElementById(`field-${first}`)'));
+  check("both render the message beside the control",
+    wizard.includes("fieldErrors[key]?.[0]") && editor.includes("fieldErrors[key]?.[0]"));
+  check("neither surface returns a raw exception",
+    !/error: *String\(/.test(route) && !/e\.message|error\.message/.test(route));
 }
 
 // --- Summary ---------------------------------------------------------------
