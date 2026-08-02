@@ -47,6 +47,25 @@ import { ROUTES } from "@/lib/routes";
 import { useUiStore } from "@/lib/stores/ui";
 import { cn, initials } from "@/lib/utils";
 
+/**
+ * Short, action-shaped labels for the single-contact case.
+ *
+ * `ContactLink.label` is the accessible name and tooltip ("LinkedIn profile",
+ * "Send email") and stays exactly as it is. This is a presentation-only map for
+ * the visible text when there is one link and an unexplained icon would not say
+ * what it does — it adds no field and reads nothing new from the profile.
+ */
+const LINK_ACTION: Record<ContactLinkKind, string> = {
+  linkedin: "LinkedIn",
+  instagram: "Instagram",
+  facebook: "Facebook",
+  website: "Website",
+  professionalWebsite: "Professional site",
+  email: "Email",
+  phone: "Call",
+  whatsapp: "WhatsApp",
+};
+
 const LINK_ICON: Record<ContactLinkKind, React.ComponentType<{ className?: string }>> = {
   linkedin: Linkedin,
   instagram: Instagram,
@@ -176,7 +195,9 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
     >
       {/* GREETING ---------------------------------------------------------- */}
       <div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/55">
+        {/* /70 rather than /55: legible at 10px (8.52:1 light, 9.44:1 dark)
+            while staying well under the greeting, which is full foreground. */}
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/70">
           My FortMark
         </p>
         {/* Deliberately not `text-display`: that utility forces uppercase, and
@@ -261,9 +282,32 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
         </div>
       </div>
 
-      {/* SOCIAL ROW ------------------------------------------------------- */}
-      {data.links.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-5">
+      {/* CONTACT ---------------------------------------------------------
+          Grouped with the credentials above rather than separated by its own
+          rule: a lone bordered row under the grid read as a floating toolbar
+          with no stated purpose. Nothing renders at all when there are no
+          links, so no empty row is left behind. */}
+      {data.links.length === 1 &&
+        (() => {
+          // One link, so an icon alone would not say what it does. The visible
+          // text names the action; the accessible name stays the fuller label.
+          const link = data.links[0];
+          const Icon = LINK_ICON[link.kind];
+          return (
+            <a
+              href={link.href}
+              {...(link.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+              aria-label={link.external ? `${link.label} (opens in a new tab)` : link.label}
+              className="-mt-1 inline-flex h-9 w-fit min-w-0 items-center gap-2 rounded-lg border border-foreground/30 px-3 text-[13px] font-semibold text-foreground transition-colors hover:border-foreground/45 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Icon className="h-[17px] w-[17px] shrink-0" />
+              <span className="truncate">{LINK_ACTION[link.kind]}</span>
+            </a>
+          );
+        })()}
+
+      {data.links.length > 1 && (
+        <div className="-mt-1 flex flex-wrap items-center gap-2">
           {data.links.map((link) => {
             const Icon = LINK_ICON[link.kind];
             return (
@@ -279,7 +323,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
                     }
                     // Monochrome on purpose — no network brand colours, so the
                     // row reads as one control group rather than a logo strip.
-                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-foreground/70 transition-colors hover:border-foreground/25 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-foreground/30 text-foreground/70 transition-colors hover:border-foreground/45 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <Icon className="h-[17px] w-[17px]" />
                   </a>
@@ -356,10 +400,15 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
               <span className="truncate">Edit profile</span>
             </Link>
           </Button>
+          {/* `--input` is 0 0% 18% against a 0 0% 7% card, which measures
+              1.38:1 — the border was effectively invisible in dark mode.
+              `foreground/45` is the lowest value clearing the 3:1 non-text
+              threshold in BOTH themes (3.35:1 light, 4.53:1 dark) and still
+              reads as clearly secondary to the filled primary beside it. */}
           <Button
             size="lg"
             variant="outline"
-            className="h-10 min-w-0 px-3 text-[13px]"
+            className="h-10 min-w-0 border-foreground/45 px-3 text-[13px] hover:border-foreground/70 hover:bg-accent"
             onClick={() => setQuickCreate("transaction")}
           >
             <Plus />
@@ -367,11 +416,17 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
           </Button>
         </div>
 
-        {/* Tertiary row: 40px targets on touch, tightened from `sm` up. */}
+        {/* Tertiary row: bordered rather than ghost, so both read as controls
+            rather than as passive text. The border sits at /30 — deliberately
+            below New Transaction's /45 — and the label carries full foreground
+            contrast (21:1 light, 18.76:1 dark), which is what identifies the
+            control. 40px targets on touch, tightened from `sm` up.
+            `disabled:` drops the border too, so the disabled Digital Card stays
+            distinguishable from an enabled one and not merely dimmed. */}
         <div className="grid grid-cols-2 gap-2">
           <Button
-            variant="ghost"
-            className="h-10 min-w-0 px-3 text-[13px] text-foreground/70 hover:text-foreground sm:h-9"
+            variant="outline"
+            className="h-10 min-w-0 border-foreground/30 px-3 text-[13px] hover:border-foreground/45 hover:bg-accent disabled:border-foreground/10 sm:h-9"
             onClick={() => setCardOpen(true)}
             // Nothing to put on a business card until a profile record exists.
             disabled={setupRequired}
@@ -382,8 +437,8 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
             <span className="truncate">Digital card</span>
           </Button>
           <Button
-            variant="ghost"
-            className="h-10 min-w-0 px-3 text-[13px] text-foreground/70 hover:text-foreground sm:h-9"
+            variant="outline"
+            className="h-10 min-w-0 border-foreground/30 px-3 text-[13px] hover:border-foreground/45 hover:bg-accent sm:h-9"
             onClick={copyContact}
           >
             {copied ? <Check /> : <Copy />}

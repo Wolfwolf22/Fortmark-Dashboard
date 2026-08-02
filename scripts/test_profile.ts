@@ -977,14 +977,25 @@ const ALLOWED_ENV = {
 {
   const card = readFileSync("components/home/home-identity-card.tsx", "utf8");
   const grid = readFileSync("components/home/bento-grid.tsx", "utf8");
+  /** The greeting h2's own class list, excluding surrounding commentary. */
+  const greetingClassOf = (src: string) =>
+    src.slice(src.indexOf('id="home-identity-heading"'), src.indexOf("{data.greetingName ?"));
 
   // 1. The eyebrow renders, and is uppercased by CSS rather than by literal.
   const eyebrow = card.slice(card.indexOf("GREETING ---"), card.indexOf("</h2>"));
   check("eyebrow label renders My FortMark", eyebrow.includes(">\n          My FortMark\n"));
   check("eyebrow is uppercased by class, not by literal", eyebrow.includes("uppercase"));
   check(
-    "eyebrow is quieter than the greeting",
-    eyebrow.includes("text-[10px]") && eyebrow.includes("text-foreground/55")
+    "eyebrow stays at 10px",
+    eyebrow.includes('className="text-[10px] font-semibold uppercase')
+  );
+  check(
+    "eyebrow is legible but not pure white",
+    eyebrow.includes("tracking-[0.14em] text-foreground/70")
+  );
+  check(
+    "eyebrow stays quieter than the greeting",
+    !greetingClassOf(card).includes("text-foreground/")
   );
 
   // 2. The greeting is title-cased. `text-display` force-uppercases, which is
@@ -1072,7 +1083,40 @@ const ALLOWED_ENV = {
   check("copy success is announced politely", card.includes('aria-live="polite"'));
 
   // 10. Links render only when present, and stay monochrome.
-  check("social row is gated on having links", card.includes("data.links.length > 0 &&"));
+  check("no contact row is rendered when there are no links",
+    !card.includes("data.links.length > 0 &&") &&
+      card.includes("data.links.length === 1 &&") &&
+      card.includes("data.links.length > 1 &&"));
+  check(
+    "a single contact renders a visible action label",
+    card.includes("{LINK_ACTION[link.kind]}")
+  );
+  check(
+    "a single contact is not an unexplained icon-only button",
+    !/data\.links\.length === 1[\s\S]{0,1400}<\/a>/.test(card) ||
+      /data\.links\.length === 1[\s\S]{0,1400}LINK_ACTION\[link\.kind\][\s\S]{0,200}<\/a>/.test(card)
+  );
+  check(
+    "every contact kind has a short action label",
+    ["linkedin:", "instagram:", "facebook:", "website:", "professionalWebsite:", "email:", "phone:", "whatsapp:"]
+      .every((k) => card.slice(card.indexOf("const LINK_ACTION"), card.indexOf("const LINK_ICON")).includes(k))
+  );
+  check(
+    "the multi-link branch still renders tooltips",
+    card.slice(card.indexOf("data.links.length > 1 &&")).includes("<TooltipContent>{link.label}</TooltipContent>")
+  );
+  check(
+    "both contact branches expose an accessible name",
+    (card.match(/aria-label=\{[\s\S]{0,120}link\.label/g) ?? []).length === 2
+  );
+  check(
+    "the accessible name is the fuller label, never the short action word",
+    !/aria-label=\{[^}]*LINK_ACTION/.test(card)
+  );
+  check(
+    "external contacts announce the new tab in both branches",
+    (card.match(/\(opens in a new tab\)/g) ?? []).length === 2
+  );
   check("external links keep noopener noreferrer", card.includes('rel: "noopener noreferrer"'));
   check("external links open in a new tab", card.includes('target: "_blank"'));
   check(
@@ -1108,14 +1152,39 @@ const ALLOWED_ENV = {
   check("actions use a stable two-column grid", (actions.match(/grid grid-cols-2 gap-2/g) ?? []).length === 2);
   check(
     "tertiary actions keep a 40px touch target",
-    actions.includes("h-10 min-w-0 px-3 text-[13px] text-foreground/70")
+    (actions.match(/h-10 min-w-0 border-foreground\/30 px-3 text-\[13px\]/g) ?? []).length === 2
+  );
+  check(
+    "tertiary actions are bordered, not ghost",
+    !actions.includes('variant="ghost"') &&
+      (actions.match(/variant="outline"/g) ?? []).length === 3
+  );
+  // Anchored to the base class, not a bare substring: `hover:border-foreground/45`
+  // appears on the tertiary buttons too, and matching that made this pass
+  // vacuously when the New Transaction border was reverted.
+  check(
+    "new transaction border clears the non-text threshold",
+    /className="h-10 min-w-0 border-foreground\/45 px-3/.test(actions)
+  );
+  check(
+    "the secondary border outranks the tertiary one",
+    actions.indexOf("border-foreground/45 px-3") <
+      actions.indexOf("border-foreground/30 px-3")
+  );
+  check(
+    "new transaction stays below the filled primary",
+    actions.includes('variant="outline"') && !actions.includes('variant="default"')
+  );
+  check(
+    "disabled digital card loses its border rather than only dimming",
+    actions.includes("disabled:border-foreground/10")
   );
   // The button base sets `whitespace-nowrap`, so a label wider than its grid
   // track would spill outside the card and scroll the page. Every action label
   // must be able to clip.
   check(
     "every action button can shrink below its label",
-    (actions.match(/className="h-10 min-w-0 px-3/g) ?? []).length === 4
+    (actions.match(/className="h-10 min-w-0 (border-foreground\/(30|45) )?px-3/g) ?? []).length === 4
   );
   check(
     "every action label truncates rather than overflowing",
@@ -1217,6 +1286,41 @@ const ALLOWED_ENV = {
       contrast(lightFg, lightCard, 0.7) > contrast(mutedLight, lightCard, 1) &&
         contrast(darkFg, darkCard, 0.7) > contrast(mutedLight, darkCard, 1)
     );
+
+    // Non-text contrast for control boundaries. `--input` measures 1.28:1 on a
+    // white card and 1.38:1 on the dark one, which is why the outlined button
+    // vanished; `foreground/45` is the lowest value clearing 3:1 in both.
+    const inputLight = readVar(":root", "input");
+    const inputDark = readVar(".dark", "input");
+    if (inputLight !== null && inputDark !== null) {
+      check(
+        "the previous --input border really was below the 3:1 threshold",
+        contrast(inputLight, lightCard, 1) < 3 && contrast(inputDark, darkCard, 1) < 3
+      );
+    }
+    check("light: secondary button border clears 3:1", contrast(lightFg, lightCard, 0.45) >= 3);
+    check("dark: secondary button border clears 3:1", contrast(darkFg, darkCard, 0.45) >= 3);
+    check(
+      "/40 would NOT have been enough in light mode",
+      contrast(lightFg, lightCard, 0.4) < 3
+    );
+
+    // Tertiary sits deliberately below secondary, so its boundary does not
+    // carry 3:1 on its own — the label does the identifying instead, at full
+    // foreground contrast. Both facts are asserted so the trade-off is explicit.
+    check(
+      "tertiary border is visible but ranks below secondary",
+      contrast(lightFg, lightCard, 0.3) > contrast(inputLight ?? 1, lightCard, 1) &&
+        contrast(lightFg, lightCard, 0.3) < contrast(lightFg, lightCard, 0.45)
+    );
+    check(
+      "tertiary label carries the identification instead",
+      contrast(lightFg, lightCard, 1) >= 4.5 && contrast(darkFg, darkCard, 1) >= 4.5
+    );
+
+    // The eyebrow at /70.
+    check("light: eyebrow clears AA", contrast(lightFg, lightCard, 0.7) >= 4.5);
+    check("dark: eyebrow clears AA", contrast(darkFg, darkCard, 0.7) >= 4.5);
 
     // The filled primary action must stay unambiguous in both themes.
     const lightPrimary = readVar(":root", "primary");
