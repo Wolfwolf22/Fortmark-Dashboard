@@ -32,6 +32,7 @@ import {
   profileCompletion,
   type NormalizedProfileUpdate,
 } from "./normalize.ts";
+import { LAST_STEP, normalizeStep, stepByNumber } from "./onboarding.ts";
 
 /** Keys that must never appear in audit metadata, whatever the caller passes. */
 const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
@@ -303,6 +304,178 @@ export async function updateOwnProfile(
     });
 
     return { ok: true, completion, licenseReset };
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+}
+
+export type StepSaveResult =
+  | { ok: true; completion: number; onboardingStep: number }
+  | { ok: false; reason: "unavailable" | "no_record" | "invalid" | "unknown_step" };
+
+/**
+ * The fields completion is scored from, read off a stored row.
+ *
+ * A step save only carries its own fields, so scoring the submitted payload
+ * alone would count everything else as empty and make the percentage fall
+ * every time a user saved an early step. Completion is therefore always
+ * computed from the stored row MERGED with the incoming step.
+ */
+function completionSourceFromRow(
+  profile: SyncedPrincipal["profile"]
+): Partial<NormalizedProfileUpdate> {
+  return {
+    preferredDisplayName: profile.preferredDisplayName,
+    legalFirstName: profile.legalFirstName,
+    legalLastName: profile.legalLastName,
+    phoneE164: profile.phoneE164,
+    brokerageOffice: profile.brokerageOffice,
+    licenseState: profile.licenseState,
+    licenseType: profile.licenseType,
+    licenseNumber: profile.licenseNumber,
+    licenseExpiration: profile.licenseExpiration,
+    biography: profile.biography,
+    languages: profile.languages ?? [],
+    specialties: profile.specialties ?? [],
+    professionalTitle: profile.professionalTitle,
+    locationDisplay: profile.locationDisplay,
+  };
+}
+
+/**
+ * Save one onboarding step for the caller.
+ *
+ * Scoped by the session-resolved `clerkUserId`, exactly like every other write
+ * here — no identifier from the request body is consulted, so no request shape
+ * addresses another user's row.
+ *
+ * Idempotent by construction: the write sets this step's fields to normalised
+ * values derived only from the payload, so repeating the same request produces
+ * the same row. `onboarding_step` moves forward only — replaying an earlier
+ * step cannot rewind a user who has since progressed, which is what makes a
+ * retry after a flaky response safe.
+ *
+ * Completion is never written from the step alone; see
+ * `completionSourceFromRow`.
+ */
+export async function saveOnboardingStep(
+  clerkUserId: string,
+  stepNumber: unknown,
+  raw: unknown,
+  env: EnvLike = process.env
+): Promise<StepSaveResult> {
+  if (!profileDatabaseEnabled(env)) return { ok: false, reason: "unavailable" };
+  const db = getDb();
+  if (!db) return { ok: false, reason: "unavailable" };
+
+  const step = stepByNumber(stepNumber);
+  if (!step) return { ok: false, reason: "unknown_step" };
+
+  let fields: Partial<NormalizedProfileUpdate>;
+  try {
+    fields = normalizeStep(step, raw);
+  } catch {
+    return { ok: false, reason: "invalid" };
+  }
+
+  try {
+    const current = await getOwnProfile(clerkUserId, env);
+    if (!current) return { ok: false, reason: "no_record" };
+
+    const merged = { ...completionSourceFromRow(current.profile), ...fields };
+    const completion = profileCompletion(merged);
+    // Forward-only. A replayed earlier step must not rewind the resume point.
+    const onboardingStep = Math.max(current.profile.onboardingStep ?? 0, step.step);
+
+    await db
+      .update(professionalProfiles)
+      .set({
+        ...fields,
+        profileCompletionPercent: completion,
+        onboardingStep,
+        updatedAt: new Date(),
+      })
+      .where(eq(professionalProfiles.userId, current.user.id));
+
+    await writeAuditEvent("profile_updated", {
+      actorUserId: current.user.id,
+      targetUserId: current.user.id,
+      // Step id and score only — never a submitted value.
+      metadata: { onboardingStep: step.step, stepId: step.id, completion },
+    });
+
+    return { ok: true, completion, onboardingStep };
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+}
+
+export type CompleteResult =
+  | { ok: true; completion: number; completedAt: string }
+  | { ok: false; reason: "unavailable" | "no_record" | "invalid" };
+
+/**
+ * Finish onboarding.
+ *
+ * Runs the FULL update contract rather than a step schema, then stamps
+ * `dashboard_users.onboarding_complete`. That timestamp is the only record
+ * that onboarding finished — there is no status column mirroring it, so the
+ * two can never disagree.
+ *
+ * `dashboard_users.status` is deliberately left alone. Nothing in this
+ * application transitions it today, and it is the field that WOULD become
+ * access-relevant if database-backed access control were ever enabled. Writing
+ * it here would quietly make a profile action touch an authorization column,
+ * which is exactly the coupling this release is built to avoid.
+ */
+export async function completeOnboarding(
+  clerkUserId: string,
+  raw: unknown,
+  env: EnvLike = process.env
+): Promise<CompleteResult> {
+  if (!profileDatabaseEnabled(env)) return { ok: false, reason: "unavailable" };
+  const db = getDb();
+  if (!db) return { ok: false, reason: "unavailable" };
+
+  let next: NormalizedProfileUpdate;
+  try {
+    next = normalizeProfileUpdate(raw);
+  } catch {
+    return { ok: false, reason: "invalid" };
+  }
+
+  try {
+    const current = await getOwnProfile(clerkUserId, env);
+    if (!current) return { ok: false, reason: "no_record" };
+
+    const merged = { ...completionSourceFromRow(current.profile), ...next };
+    const completion = profileCompletion(merged);
+    const completedAt = new Date();
+
+    await db
+      .update(professionalProfiles)
+      .set({
+        ...next,
+        profileCompletionPercent: completion,
+        onboardingStep: LAST_STEP,
+        updatedAt: completedAt,
+      })
+      .where(eq(professionalProfiles.userId, current.user.id));
+
+    await db
+      .update(dashboardUsers)
+      .set({ onboardingComplete: completedAt, updatedAt: completedAt })
+      .where(eq(dashboardUsers.id, current.user.id));
+
+    await writeAuditEvent("profile_updated", {
+      actorUserId: current.user.id,
+      targetUserId: current.user.id,
+      // Category and score only. No field values, no email, no licence, no
+      // NRDS, no raw Clerk identifier.
+      metadata: { onboarding: "completed", completion },
+    });
+
+    return { ok: true, completion, completedAt: completedAt.toISOString() };
   } catch {
     return { ok: false, reason: "unavailable" };
   }
