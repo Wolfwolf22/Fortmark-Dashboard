@@ -17,6 +17,7 @@ export const BASE_PATH = "/dashboard";
 /** In-app routes, unprefixed — Next adds the basePath. */
 export const ROUTES = {
   home: "/",
+  onboarding: "/onboarding",
   transactions: "/transactions",
   listings: "/listings",
   listing: (id: string) => `/listings/${id}`,
