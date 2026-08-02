@@ -163,6 +163,17 @@ export const profileImages = pgTable(
     /** The image currently shown. Never overwritten by a failed processing run. */
     activeImageUrl: text("active_image_url"),
     processedImageUrl: text("processed_image_url"),
+    /**
+     * The Blob object key for the active upload, e.g.
+     * `profile-images/<user-uuid>/<upload-uuid>.jpg`.
+     *
+     * Stored separately from the display URL because deletion and the
+     * ownership-prefix check both need the pathname, and deriving it back out
+     * of a CDN URL is guesswork that breaks the moment the URL shape changes.
+     * Null for rows whose active image is still the Clerk-hosted one — there is
+     * nothing of ours to delete in that case.
+     */
+    storagePathname: text("storage_pathname"),
     processingStatus: imageProcessingStatus("processing_status")
       .notNull()
       .default("clerk_only"),
