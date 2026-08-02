@@ -3,6 +3,12 @@ import { auth } from "@clerk/nextjs/server";
 import { decideAccess, isConfigFailure } from "@/lib/auth/dashboard-access";
 import { professionalProfileUiEnabled } from "@/lib/flags";
 import { completeOnboarding, saveOnboardingStep } from "@/lib/profile/service";
+import {
+  ONBOARDING_DEFERRAL_COOKIE,
+  ONBOARDING_DEFERRAL_PATH,
+  ONBOARDING_DEFERRAL_VALUE,
+  deferralCookieOptions,
+} from "@/lib/profile/deferral";
 
 export const runtime = "nodejs";
 
@@ -50,15 +56,26 @@ function featureOff(): NextResponse {
   return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
 }
 
-/** Map a service failure onto a status. Never leaks an exception message. */
-function failure(reason: string): NextResponse {
+/**
+ * Map a service failure onto a status.
+ *
+ * The body carries either a reason code or the structured validation contract
+ * — never an exception message, and never a database column name. The
+ * validation object is built from the shared schemas, so the route contains no
+ * validation messages of its own to drift.
+ */
+function failure(result: {
+  reason: string;
+  validation?: { error: string; fieldErrors: unknown; formErrors: string[] };
+}): NextResponse {
   const status =
-    reason === "invalid" || reason === "unknown_step"
+    result.reason === "invalid" || result.reason === "unknown_step"
       ? 400
-      : reason === "no_record"
+      : result.reason === "no_record"
         ? 404
         : 503;
-  return NextResponse.json({ error: reason }, { status, headers: NO_STORE });
+  const body = result.validation ?? { error: result.reason };
+  return NextResponse.json(body, { status, headers: NO_STORE });
 }
 
 /**
@@ -88,15 +105,35 @@ export async function POST(request: NextRequest) {
 
   if (payload.complete === true) {
     const result = await completeOnboarding(caller.clerkUserId, values);
-    if (!result.ok) return failure(result.reason);
-    return NextResponse.json(
+    if (!result.ok) return failure(result);
+    const response = NextResponse.json(
       { ok: true, completion: result.completion, completedAt: result.completedAt },
       { headers: NO_STORE }
     );
+    // Finished, so the deferral has nothing left to suppress. Cleared rather
+    // than left to expire, so a stale cookie cannot outlive its meaning.
+    response.cookies.delete({
+      name: ONBOARDING_DEFERRAL_COOKIE,
+      path: ONBOARDING_DEFERRAL_PATH,
+    });
+    return response;
+  }
+
+  // "Complete later": defer the automatic redirect for this browser session.
+  // Set server-side and HttpOnly, so the decision cannot be steered from the
+  // document, and it authorizes nothing — see lib/profile/deferral.ts.
+  if (payload.defer === true) {
+    const response = NextResponse.json({ ok: true, deferred: true }, { headers: NO_STORE });
+    response.cookies.set(
+      ONBOARDING_DEFERRAL_COOKIE,
+      ONBOARDING_DEFERRAL_VALUE,
+      deferralCookieOptions()
+    );
+    return response;
   }
 
   const result = await saveOnboardingStep(caller.clerkUserId, payload.step, values);
-  if (!result.ok) return failure(result.reason);
+  if (!result.ok) return failure(result);
   return NextResponse.json(
     { ok: true, completion: result.completion, onboardingStep: result.onboardingStep },
     { headers: NO_STORE }

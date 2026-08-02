@@ -1,9 +1,11 @@
 import { BentoGrid } from "@/components/home/bento-grid";
 import { HomeIdentityCard } from "@/components/home/home-identity-card";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
 import { getHomeIdentityCard, shouldRedirectToOnboarding } from "@/lib/profile/shell";
 import { ROUTES } from "@/lib/routes";
+import { ONBOARDING_DEFERRAL_COOKIE, isDeferred } from "@/lib/profile/deferral";
 
 /**
  * Home — the permanent identity card plus the reorderable bento grid. Title
@@ -23,11 +25,7 @@ import { ROUTES } from "@/lib/routes";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function HomePage({
-  searchParams,
-}: {
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
-}) {
+export default async function HomePage() {
   const session = await getSession();
 
   // First approved login opens the wizard automatically.
@@ -35,13 +33,16 @@ export default async function HomePage({
   // Done HERE, in a server component, rather than in middleware: the decision
   // needs the profile row, and middleware must never touch the database.
   //
-  // `?setup=later` is the escape hatch. "Complete later" returns to Home with
-  // it set, so the user is not bounced straight back into the wizard they just
-  // left — which is what a naive redirect-on-incomplete would do on every
-  // single navigation. Onboarding stays incomplete, and the Home card keeps
-  // showing its setup callout, so the prompt is not lost, only not forced.
-  const params = searchParams ? await searchParams : undefined;
-  const deferred = params?.setup === "later";
+  // "Complete later" sets a session cookie, so the choice survives navigation
+  // rather than suppressing a single redirect. A query parameter could not do
+  // this: navigate away and back and the wizard forced itself open again.
+  //
+  // The cookie authorizes nothing. Every other condition — session, allowlist,
+  // both flags, a reachable database, incomplete onboarding — is still
+  // required, and the Home card keeps its setup callout, so the prompt is
+  // deferred rather than lost.
+  const jar = await cookies();
+  const deferred = isDeferred(jar.get(ONBOARDING_DEFERRAL_COOKIE)?.value);
   if (session && !deferred && (await shouldRedirectToOnboarding(session.user))) {
     redirect(ROUTES.onboarding);
   }

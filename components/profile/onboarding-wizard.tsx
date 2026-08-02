@@ -41,7 +41,8 @@ export interface OnboardingWizardProps {
   role: string | null;
 }
 
-type FieldErrors = Partial<Record<ProfileFieldKey, string>>;
+/** Server contract: field name -> messages. Same shape the editor consumes. */
+type FieldErrors = Partial<Record<ProfileFieldKey, string[]>>;
 
 export function OnboardingWizard({
   steps,
@@ -99,14 +100,26 @@ export function OnboardingWizard({
       });
       if (!res.ok) {
         const detail = (await res.json().catch(() => null)) as
-          | { error?: string; fields?: FieldErrors }
+          | { error?: string; fieldErrors?: FieldErrors; formErrors?: string[] }
           | null;
-        if (detail?.fields) setFieldErrors(detail.fields);
+        const fields = detail?.fieldErrors ?? {};
+        setFieldErrors(fields);
+        const invalid = Object.keys(fields);
         setFormError(
-          detail?.error === "invalid"
-            ? "Some values could not be saved. Check the highlighted fields."
-            : "That did not save. Please try again."
+          invalid.length > 0
+            ? `Check ${invalid.length === 1 ? "the highlighted field" : `${invalid.length} highlighted fields`} and try again.`
+            : (detail?.formErrors?.[0] ?? "That did not save. Please try again.")
         );
+        // Move focus to the first control the server rejected, in the order
+        // the step declares them rather than object-key order, so focus lands
+        // where the eye already is.
+        const firstInvalid = current.fields.find((f) => invalid.includes(f));
+        if (firstInvalid) {
+          requestAnimationFrame(() => {
+            const el = document.getElementById(`field-${firstInvalid}`);
+            if (el instanceof HTMLElement) el.focus();
+          });
+        }
         return false;
       }
       setStored((prev) => ({ ...prev, ...body.values }));
@@ -135,9 +148,20 @@ export function OnboardingWizard({
   async function onCompleteLater() {
     // Save what is valid, then leave. Onboarding stays incomplete by design.
     if (current.fields.length > 0) await saveCurrent();
-    // `?setup=later` tells Home not to bounce straight back here. Onboarding
-    // stays incomplete on purpose; the Home callout keeps asking.
-    router.push(`${ROUTES.home}?setup=later`);
+    // Ask the server to set the session deferral cookie. It is HttpOnly, so it
+    // has to be set here rather than from the document — and it must land
+    // BEFORE navigating, or Home would redirect straight back.
+    try {
+      await fetch(apiPath("/api/profile/onboarding"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ defer: true }),
+      });
+    } catch {
+      // Deferral is a convenience. If it fails the user still reaches Home;
+      // the wizard may prompt again, which is the safe direction to fail.
+    }
+    router.push(ROUTES.home);
     router.refresh();
   }
 
@@ -151,7 +175,14 @@ export function OnboardingWizard({
         body: JSON.stringify({ complete: true, values: stored }),
       });
       if (!res.ok) {
-        setFormError("Could not finish setup. Please try again.");
+        const detail = (await res.json().catch(() => null)) as
+          | { fieldErrors?: FieldErrors; formErrors?: string[] }
+          | null;
+        if (detail?.fieldErrors) setFieldErrors(detail.fieldErrors);
+        setFormError(
+          detail?.formErrors?.[0] ??
+            "Could not finish setup. Check the highlighted fields and try again."
+        );
         return;
       }
       router.push(ROUTES.home);
@@ -216,7 +247,7 @@ export function OnboardingWizard({
             key={key}
             name={key}
             defaultValue={stored[key] ?? ""}
-            error={fieldErrors[key] ?? null}
+            error={fieldErrors[key]?.[0] ?? null}
             disabled={saving}
           />
         ))}
