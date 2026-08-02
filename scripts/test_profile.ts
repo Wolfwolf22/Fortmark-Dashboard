@@ -56,6 +56,22 @@ import { DEFAULT_WIDGET_ORDER } from "../lib/stores/widget-order.ts";
 import { readFileSync } from "node:fs";
 import { syncCurrentUser, updateOwnProfile } from "../lib/profile/service.ts";
 import { getHomeIdentityCard } from "../lib/profile/shell.ts";
+import {
+  FIRST_STEP,
+  LAST_STEP,
+  ONBOARDING_STEPS,
+  nextStep,
+  normalizeStep,
+  onboardingComplete,
+  previousStep,
+  resumeStep,
+  shouldOpenOnboarding,
+  stepByNumber,
+  stepSchema,
+  stepsForRole,
+} from "../lib/profile/onboarding.ts";
+import { PROFILE_FIELDS, PUBLIC_SURFACE_FIELDS, SELF_REPORTED_FIELDS } from "../lib/profile/fields.ts";
+import { toEmail } from "../lib/profile/normalize.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -1529,6 +1545,268 @@ const ALLOWED_ENV = {
     "the migration guard is still preview-only",
     mig.includes('!force && process.env.VERCEL_ENV !== "preview"')
   );
+}
+
+// --- Release A: onboarding lifecycle ---------------------------------------
+{
+  const step = (n: number) => stepByNumber(n)!;
+
+  // Step contract -----------------------------------------------------------
+  check("six steps are declared", ONBOARDING_STEPS.length === 6);
+  check("steps are numbered 1..6 in order",
+    ONBOARDING_STEPS.every((s, i) => s.step === i + 1));
+  check("first and last constants match the table",
+    FIRST_STEP === 1 && LAST_STEP === 6);
+  check("informational steps persist nothing",
+    step(5).fields.length === 0 && step(6).fields.length === 0);
+  check("the review step cannot be skipped", step(6).skippable === false);
+
+  // A step can only ever write fields the shared contract already permits.
+  const allStepFields = ONBOARDING_STEPS.flatMap((s) => s.fields);
+  check("no step declares a field outside the update contract",
+    allStepFields.every((f) => f in PROFILE_FIELDS));
+  check("no field belongs to two steps",
+    new Set(allStepFields).size === allStepFields.length);
+
+  // Per-step narrowing ------------------------------------------------------
+  {
+    // Step 2 must not be able to write a licence number, even if sent one.
+    const out = normalizeStep(step(2), {
+      professionalTitle: "Broker Associate",
+      licenseNumber: "BK999999",
+      role: "admin",
+      clerkUserId: "user_2aaaaaaaaaaaaaaaaaaa",
+    });
+    const keys = Object.keys(out);
+    check("a step writes only its own fields", !keys.includes("licenseNumber"));
+    check("a step strips role", !keys.includes("role"));
+    check("a step strips a clerk id", !keys.includes("clerkUserId"));
+    check("a step keeps its own field", out.professionalTitle === "Broker Associate");
+    check("a step payload never carries a clerk id",
+      !JSON.stringify(out).includes("user_2aaaaaaaaaaaaaaaaaaa"));
+  }
+  check("an informational step normalises to nothing",
+    Object.keys(normalizeStep(step(5), { professionalTitle: "x" })).length === 0);
+
+  // Shared normalisation: the wizard cannot validate differently -------------
+  {
+    const contact = normalizeStep(step(4), {
+      businessEmail: "  Broker@Example.COM ",
+      phoneE164: "(954) 555-0100",
+      whatsappPhoneE164: "9545550100",
+      linkedinUrl: "linkedin.com/in/x",
+      instagramUrl: "javascript:alert(1)",
+      facebookUrl: "//evil.com",
+    });
+    check("step email is lowercased and trimmed", contact.businessEmail === "broker@example.com");
+    check("step phone is E.164", contact.phoneE164 === "+19545550100");
+    check("step whatsapp is E.164", contact.whatsappPhoneE164 === "+19545550100");
+    check("step url is normalised to https", contact.linkedinUrl === "https://linkedin.com/in/x");
+    check("step rejects a javascript url", contact.instagramUrl === null);
+    // A protocol-relative value is NORMALISED, not rejected. These are links a
+    // user publishes about themselves and may legitimately point anywhere, so
+    // the guard is the scheme allowlist, not the host. Rejecting by host is the
+    // rule for return paths, which is a different threat model entirely.
+    check("step normalises a protocol-relative url to https",
+      contact.facebookUrl === "https://evil.com");
+  }
+
+  // Email normaliser --------------------------------------------------------
+  check("email accepts a normal address", toEmail("a@b.co") === "a@b.co");
+  check("email lowercases", toEmail("A@B.CO") === "a@b.co");
+  check("email rejects a dotless domain", toEmail("a@localhost") === null);
+  check("email rejects two at signs", toEmail("a@b@c.co") === null);
+  check("email rejects whitespace", toEmail("a b@c.co") === null);
+  check("email rejects a bare word", toEmail("nobody") === null);
+  check("email rejects angle brackets", toEmail("<a@b.co>") === null);
+  check("email rejects a trailing dot domain", toEmail("a@b.co.") === null);
+  check("email rejects consecutive dots", toEmail("a@b..co") === null);
+  check("email empties to null", toEmail("   ") === null);
+
+  // Resume ------------------------------------------------------------------
+  check("no saved step resumes at the first", resumeStep(null, "broker").step === 1);
+  check("undefined resumes at the first", resumeStep(undefined, "broker").step === 1);
+  check("after saving step 1 resume is step 2", resumeStep(1, "broker").step === 2);
+  check("after saving step 4 resume is step 5", resumeStep(4, "broker").step === 5);
+  check("a step beyond the end resumes on review", resumeStep(99, "broker").step === LAST_STEP);
+  check("a non-integer resumes at the first", resumeStep(2.5 as number, "broker").step === 1);
+  check("a negative resumes at the first applicable step", resumeStep(-3, "broker").step === 1);
+
+  // Role-awareness ----------------------------------------------------------
+  check("brokers are asked for credentials",
+    stepsForRole("broker").some((s) => s.id === "credentials"));
+  check("agents are asked for credentials",
+    stepsForRole("agent").some((s) => s.id === "credentials"));
+  check("admins are not asked for credentials",
+    !stepsForRole("admin").some((s) => s.id === "credentials"));
+  check("transaction coordinators are not asked for credentials",
+    !stepsForRole("transaction_coordinator").some((s) => s.id === "credentials"));
+  check("an unlicensed role skips step 3 when resuming",
+    resumeStep(2, "admin").step === 4);
+  check("navigation skips the credentials step for an unlicensed role",
+    nextStep(step(2), "admin")?.step === 4);
+  check("back-navigation skips it too",
+    previousStep(step(4), "admin")?.step === 2);
+  check("the last step has no next", nextStep(step(6), "broker") === null);
+  check("the first step has no previous", previousStep(step(1), "broker") === null);
+
+  // Completion source -------------------------------------------------------
+  check("completion reads the user timestamp",
+    onboardingComplete({ onboardingComplete: new Date() }) === true);
+  check("a null timestamp is incomplete",
+    onboardingComplete({ onboardingComplete: null }) === false);
+  check("a missing user is incomplete", onboardingComplete(null) === false);
+
+  // Opening rules -----------------------------------------------------------
+  const base = {
+    uiEnabled: true,
+    databaseEnabled: true,
+    databaseAvailable: true,
+    user: { onboardingComplete: null },
+  };
+  check("first approved login opens onboarding", shouldOpenOnboarding(base));
+  check("completed onboarding does not reopen",
+    !shouldOpenOnboarding({ ...base, user: { onboardingComplete: new Date() } }));
+  check("ui flag off does not open", !shouldOpenOnboarding({ ...base, uiEnabled: false }));
+  check("database flag off does not open", !shouldOpenOnboarding({ ...base, databaseEnabled: false }));
+  // The one that matters most: an outage must not trap anyone in a wizard
+  // whose saves cannot succeed.
+  check("a database outage does not open onboarding",
+    !shouldOpenOnboarding({ ...base, databaseAvailable: false }));
+  check("no user record does not open", !shouldOpenOnboarding({ ...base, user: null }));
+  check("complete later suppresses it for the session",
+    !shouldOpenOnboarding({ ...base, dismissedThisSession: true }));
+
+  // Self-reported credentials ----------------------------------------------
+  for (const key of ["licenseNumber", "licenseExpiration", "nrdsNumber"] as const) {
+    check(`${key} is marked self-reported`, SELF_REPORTED_FIELDS.includes(key));
+  }
+  check("the licence number hint says FortMark does not verify it",
+    /does not verify/i.test(PROFILE_FIELDS.licenseNumber.hint ?? ""));
+  check("the NRDS hint says FortMark does not verify it",
+    /does not verify/i.test(PROFILE_FIELDS.nrdsNumber.hint ?? ""));
+
+  // Account email vs business email ----------------------------------------
+  check("business email is a profile field", "businessEmail" in PROFILE_FIELDS);
+  check("business email appears publicly", PUBLIC_SURFACE_FIELDS.includes("businessEmail"));
+  check("the business email hint distinguishes it from the account email",
+    /account sign-in email/i.test(PROFILE_FIELDS.businessEmail.hint ?? ""));
+  // The verified address is not a writable profile field at all.
+  check("the account email is not writable through any step",
+    !allStepFields.some((f) => String(f).toLowerCase().includes("primary")));
+  check("no step writes an email other than the business one",
+    allStepFields.filter((f) => String(f).toLowerCase().includes("email")).join() === "businessEmail");
+}
+
+// --- Release A: surfaces, privacy and flags --------------------------------
+{
+  const wizard = readFileSync("components/profile/onboarding-wizard.tsx", "utf8");
+  const route = readFileSync("app/api/profile/onboarding/route.ts", "utf8");
+  const page = readFileSync("app/(app)/onboarding/page.tsx", "utf8");
+  const home = readFileSync("app/(app)/page.tsx", "utf8");
+  const mw = readFileSync("middleware.ts", "utf8");
+  const service = readFileSync("lib/profile/service.ts", "utf8");
+  const editor = readFileSync("components/profile/profile-editor.tsx", "utf8");
+
+  const strip = (src: string) =>
+    src.split("\n").filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l)).join("\n");
+
+  // Middleware must never touch the profile database.
+  check("middleware makes no database call",
+    !/getDb|drizzle|syncCurrentUser|getOwnProfile|professionalProfiles/.test(strip(mw)));
+  check("middleware imports no profile service", !strip(mw).includes("lib/profile/service"));
+
+  // API authorization -------------------------------------------------------
+  check("the onboarding route re-derives authorization", route.includes("decideAccess(userId)"));
+  check("the onboarding route takes the id from the session",
+    route.includes("const { userId } = await auth()"));
+  check("anonymous callers get 401", route.includes("? 401"));
+  check("a disabled feature 404s", route.includes('{ error: "Not found" }, { status: 404'));
+  check("every onboarding response is no-store",
+    route.includes('"Cache-Control": "no-store"'));
+  check("the route never returns an exception message",
+    !/error: *(e|err|error)\b/.test(strip(route)));
+  check("the route reads no identifier from the body",
+    !/body\.(clerkUserId|userId|profileId)|payload\.(clerkUserId|userId|profileId)/.test(route));
+
+  // Writes are session-scoped ----------------------------------------------
+  check("step saves are scoped by the session clerk id",
+    service.includes("saveOnboardingStep(\n  clerkUserId: string") ||
+      /saveOnboardingStep\([\s\S]{0,80}clerkUserId: string/.test(service));
+  check("step saves resolve the row through getOwnProfile",
+    /saveOnboardingStep[\s\S]{0,1600}getOwnProfile\(clerkUserId/.test(service));
+  check("completion is scoped the same way",
+    /completeOnboarding[\s\S]{0,1600}getOwnProfile\(clerkUserId/.test(service));
+
+  // Idempotency -------------------------------------------------------------
+  check("onboarding_step only moves forward",
+    service.includes("Math.max(current.profile.onboardingStep ?? 0, step.step)"));
+  check("completion is merged, never scored from the step alone",
+    service.includes("completionSourceFromRow(current.profile), ...fields"));
+
+  // Completion timestamp ----------------------------------------------------
+  check("only completion writes the timestamp",
+    /completeOnboarding[\s\S]*?onboardingComplete: completedAt/.test(service));
+  check("a step save never writes the timestamp",
+    !/saveOnboardingStep[\s\S]{0,1800}onboardingComplete:/.test(service));
+  check("status is not written by onboarding",
+    !/completeOnboarding[\s\S]{0,1600}status:/.test(service));
+
+  // Audit metadata carries no PII ------------------------------------------
+  const auditCalls = service.match(/writeAuditEvent\([\s\S]{0,400}?\)\;/g) ?? [];
+  check("audit calls exist", auditCalls.length >= 2);
+  for (const call of auditCalls) {
+    for (const forbidden of ["businessEmail", "phoneE164", "licenseNumber", "nrdsNumber", "clerkUserId", "primaryEmail"]) {
+      check(`audit metadata omits ${forbidden}`, !call.includes(forbidden));
+    }
+  }
+
+  // Wizard behaviour --------------------------------------------------------
+  check("the wizard never advances past a failed write",
+    wizard.includes("if (!ok) return;"));
+  // Ordering by index rather than one regex: the failure branch is long enough
+  // that a bounded gap made this pass or fail for the wrong reason.
+  check("a step is only stored after the server confirmed it",
+    wizard.indexOf("if (!res.ok)") < wizard.indexOf("setStored((prev)") &&
+      wizard.indexOf("return false;") < wizard.indexOf("setStored((prev)"));
+  check("complete later defers rather than completing",
+    wizard.includes("?setup=later") && !/onCompleteLater[\s\S]{0,400}complete: true/.test(wizard));
+  check("the wizard writes to no global store",
+    !/useLayoutStore|useUiStore|useProfileStore/.test(wizard));
+  check("the account email is rendered read-only",
+    wizard.includes("<ReadOnlyField") && wizard.includes('label="Account email"'));
+  // Checked against the request bodies specifically. `accountEmail` sits next
+  // to `values` in the props list, so a proximity match hit the declaration
+  // rather than a submission.
+  const bodies = wizard.match(/body: JSON\.stringify\([^)]*\)/g) ?? [];
+  check("both requests send a body", bodies.length === 2);
+  check("the account email is never submitted",
+    bodies.every((b) => !b.includes("accountEmail")));
+  check("the MLS step claims nothing",
+    /Not connected/.test(wizard) && !/verified/i.test(wizard.slice(wizard.indexOf('current.id === "mls"'), wizard.indexOf('current.id === "mls"') + 700)));
+
+  // Route guards ------------------------------------------------------------
+  check("the wizard route requires the UI flag",
+    page.includes("professionalProfileUiEnabled()") && page.includes("redirect(ROUTES.home)"));
+  check("an unavailable database leaves the wizard",
+    page.includes("!context.available || context.complete"));
+  check("home opens onboarding server-side, not in middleware",
+    home.includes("shouldRedirectToOnboarding"));
+  check("home honours the complete-later escape", home.includes('params?.setup === "later"'));
+
+  // Shared form architecture -----------------------------------------------
+  check("the editor renders through the shared field component",
+    editor.includes("<ProfileField"));
+  check("the editor no longer carries its own labels",
+    !/label: "Legal first name"/.test(editor) && !/label: "NRDS number"/.test(editor));
+  check("the editor and wizard share the same field metadata",
+    editor.includes("ProfileFieldKey") && wizard.includes("PROFILE_FIELDS"));
+
+  // Flags -------------------------------------------------------------------
+  check("the wizard route is gated on the compound UI flag",
+    page.includes("professionalProfileUiEnabled"));
+  check("the onboarding API is gated on the compound UI flag",
+    route.includes("professionalProfileUiEnabled()"));
 }
 
 // --- Summary ---------------------------------------------------------------
