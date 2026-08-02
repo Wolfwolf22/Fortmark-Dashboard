@@ -50,6 +50,7 @@ export default async function OnboardingPage() {
         values={context.values}
         accountEmail={context.accountEmail}
         role={context.role}
+        currentImageUrl={context.currentImageUrl}
       />
     </div>
   );

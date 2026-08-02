@@ -20,6 +20,7 @@ import { ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ProfileField, ReadOnlyField } from "@/components/profile/profile-field";
+import { ProfileImageUpload } from "@/components/profile/profile-image-upload";
 import { PROFILE_FIELDS, PUBLIC_SURFACE_FIELDS } from "@/lib/profile/fields";
 import {
   type OnboardingStep,
@@ -39,6 +40,8 @@ export interface OnboardingWizardProps {
   /** Verified Clerk sign-in address. Displayed read-only, never submitted. */
   accountEmail: string | null;
   role: string | null;
+  /** Current active profile image, for the step 1 preview. */
+  currentImageUrl?: string | null;
 }
 
 /** Server contract: field name -> messages. Same shape the editor consumes. */
@@ -50,12 +53,15 @@ export function OnboardingWizard({
   values,
   accountEmail,
   role,
+  currentImageUrl = null,
 }: OnboardingWizardProps) {
   const router = useRouter();
   const [current, setCurrent] = React.useState<OnboardingStep>(
     () => steps.find((s) => s.step === initialStep) ?? steps[0]
   );
   const [stored, setStored] = React.useState(values);
+  // Local to this component. Image state never enters a global store.
+  const [imageUrl, setImageUrl] = React.useState<string | null>(currentImageUrl);
   const [saving, setSaving] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = React.useState<FieldErrors>({});
@@ -234,6 +240,15 @@ export function OnboardingWizard({
 
       {/* FIELDS ------------------------------------------------------------ */}
       <form ref={formRef} className="space-y-5" onSubmit={(e) => e.preventDefault()}>
+        {current.id === "identity" && (
+          <ProfileImageUpload
+            currentUrl={imageUrl}
+            displayName={stored.preferredDisplayName || accountEmail || "FortMark"}
+            onUploaded={setImageUrl}
+            disabled={saving}
+          />
+        )}
+
         {current.id === "contact" && accountEmail && (
           <ReadOnlyField
             label="Account email"

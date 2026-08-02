@@ -42,6 +42,7 @@ import {
   toValidationFailure,
   type ValidationFailure,
 } from "./onboarding.ts";
+import { deleteProfileImage } from "./image-storage.ts";
 import { z } from "zod";
 
 /** Keys that must never appear in audit metadata, whatever the caller passes. */
@@ -568,6 +569,94 @@ export async function completeOnboarding(
   } catch {
     return { ok: false, reason: "unavailable" };
   }
+}
+
+export type ImageSaveResult =
+  | { ok: true; url: string; status: "uploaded" }
+  | { ok: false; reason: "unavailable" | "no_record" | "provider_unavailable" };
+
+/**
+ * Activate a freshly uploaded profile photo.
+ *
+ * The order exists to guarantee one thing: the profile never points at an
+ * asset that is not there, and a failure never costs the user the photo they
+ * already had.
+ *
+ *   1. the Blob is already uploaded to a NEW immutable path (nothing
+ *      overwritten, so the live image is untouched at this point)
+ *   2. resolve the caller's own row from the session-derived Clerk id
+ *   3. remember the superseded pathname BEFORE overwriting the column
+ *   4. write the new URL and pathname
+ *   5. only once that write succeeded, delete the superseded object
+ *
+ * If step 4 fails the caller deletes the orphan and the previous image is
+ * still live. If step 5 fails the replacement still stands — a leaked object
+ * costs storage, whereas failing the request would cost the user their upload.
+ *
+ * `processedImageUrl` stays null and the status is `uploaded`, not `ready`:
+ * no processor has run, and claiming otherwise would make the display chain
+ * lie about where the image came from.
+ */
+export async function activateProfileImage(
+  clerkUserId: string,
+  uploaded: { url: string; pathname: string },
+  env: EnvLike = process.env
+): Promise<ImageSaveResult> {
+  if (!profileDatabaseEnabled(env)) return { ok: false, reason: "unavailable" };
+  const db = getDb();
+  if (!db) return { ok: false, reason: "unavailable" };
+
+  try {
+    const current = await getOwnProfile(clerkUserId, env);
+    if (!current) return { ok: false, reason: "no_record" };
+
+    // Captured before the update, or it would be lost and the object leaked.
+    const superseded = current.image?.storagePathname ?? null;
+
+    if (current.image) {
+      await db
+        .update(profileImages)
+        .set({
+          activeImageUrl: uploaded.url,
+          storagePathname: uploaded.pathname,
+          processingStatus: "uploaded",
+          updatedAt: new Date(),
+        })
+        .where(eq(profileImages.id, current.image.id));
+    } else {
+      await db.insert(profileImages).values({
+        userId: current.user.id,
+        activeImageUrl: uploaded.url,
+        storagePathname: uploaded.pathname,
+        processingStatus: "uploaded",
+      });
+    }
+
+    // Only now, and only inside this user's own prefix.
+    if (superseded && superseded !== uploaded.pathname) {
+      await deleteProfileImage(current.user.id, superseded);
+    }
+
+    await writeAuditEvent("profile_updated", {
+      actorUserId: current.user.id,
+      targetUserId: current.user.id,
+      // Category only — never the URL, the pathname or any identifier.
+      metadata: { profileImage: "replaced" },
+    });
+
+    return { ok: true, url: uploaded.url, status: "uploaded" };
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+}
+
+/** The internal row id for the caller, used to build their storage prefix. */
+export async function ownDashboardUserId(
+  clerkUserId: string,
+  env: EnvLike = process.env
+): Promise<string | null> {
+  const current = await getOwnProfile(clerkUserId, env);
+  return current?.user.id ?? null;
 }
 
 /** Counts only. Never identifiers, emails or configuration values. */

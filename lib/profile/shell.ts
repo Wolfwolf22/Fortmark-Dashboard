@@ -163,6 +163,8 @@ export interface OnboardingContext {
   values: Partial<Record<ProfileFieldKey, string | null>>;
   accountEmail: string | null;
   role: string | null;
+  /** Active image for the wizard's step 1 preview. */
+  currentImageUrl: string | null;
 }
 
 const UNAVAILABLE: OnboardingContext = {
@@ -173,6 +175,7 @@ const UNAVAILABLE: OnboardingContext = {
   values: {},
   accountEmail: null,
   role: null,
+  currentImageUrl: null,
 };
 
 export async function onboardingContext(
@@ -225,6 +228,12 @@ export async function onboardingContext(
       // The verified Clerk address, shown read-only. Never writable here.
       accountEmail: synced.user.primaryEmail ?? user.email ?? null,
       role,
+      currentImageUrl:
+        synced.image?.processedImageUrl ??
+        synced.image?.activeImageUrl ??
+        synced.image?.clerkImageUrl ??
+        user.imageUrl ??
+        null,
     };
   } catch {
     // A profile problem must never become an access problem.

@@ -16,6 +16,7 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProfileField } from "@/components/profile/profile-field";
+import { ProfileImageUpload } from "@/components/profile/profile-image-upload";
 import type { ProfileFieldKey } from "@/lib/profile/onboarding";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -133,6 +134,10 @@ export function ProfileEditor({
   const [fieldErrors, setFieldErrors] = React.useState<
     Partial<Record<ProfileFieldKey, string[]>>
   >({});
+  // Local to this component, like the wizard's. Never a global store.
+  const [imageUrl, setImageUrl] = React.useState<string | null>(
+    (initial as { imageUrl?: string | null } | null)?.imageUrl ?? null
+  );
 
   const set = (key: string, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -217,6 +222,13 @@ export function ProfileEditor({
           />
         </div>
       </div>
+
+      <ProfileImageUpload
+        currentUrl={imageUrl}
+        displayName={form.preferredDisplayName || "FortMark"}
+        onUploaded={setImageUrl}
+        disabled={saving}
+      />
 
       {TEXT_FIELDS.map((key) => (
         <ProfileField
