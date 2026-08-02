@@ -298,7 +298,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
               href={link.href}
               {...(link.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
               aria-label={link.external ? `${link.label} (opens in a new tab)` : link.label}
-              className="-mt-1 inline-flex h-9 w-fit min-w-0 items-center gap-2 rounded-lg border border-foreground/30 px-3 text-[13px] font-semibold text-foreground transition-colors hover:border-foreground/45 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="-mt-1 inline-flex h-9 w-fit min-w-0 items-center gap-2 rounded-lg border border-foreground/45 px-3 text-[13px] font-semibold text-foreground transition-colors hover:border-foreground/60 hover:bg-foreground/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Icon className="h-[17px] w-[17px] shrink-0" />
               <span className="truncate">{LINK_ACTION[link.kind]}</span>
@@ -323,7 +323,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
                     }
                     // Monochrome on purpose — no network brand colours, so the
                     // row reads as one control group rather than a logo strip.
-                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-foreground/30 text-foreground/70 transition-colors hover:border-foreground/45 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-foreground/45 text-foreground/70 transition-colors hover:border-foreground/60 hover:bg-foreground/[0.05] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <Icon className="h-[17px] w-[17px]" />
                   </a>
@@ -371,7 +371,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
         // track: a 0%-wide bar reads as broken rather than as a measurement.
         <Link
           href={`${ROUTES.settings}?tab=profile`}
-          className="block rounded-panel border border-border bg-foreground/[0.03] p-4 transition-colors hover:border-foreground/25 hover:bg-foreground/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="block rounded-panel border border-border bg-foreground/[0.03] p-4 transition-colors hover:border-foreground/45 hover:bg-foreground/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="flex items-center gap-2 text-[13px] font-semibold text-foreground">
             <SquarePen className="h-4 w-4 shrink-0" aria-hidden />
@@ -416,17 +416,26 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
           </Button>
         </div>
 
-        {/* Tertiary row: bordered rather than ghost, so both read as controls
-            rather than as passive text. The border sits at /30 — deliberately
-            below New Transaction's /45 — and the label carries full foreground
-            contrast (21:1 light, 18.76:1 dark), which is what identifies the
-            control. 40px targets on touch, tightened from `sm` up.
-            `disabled:` drops the border too, so the disabled Digital Card stays
-            distinguishable from an enabled one and not merely dimmed. */}
+        {/* Tertiary row.
+
+            The boundary sits at /45, the same as New Transaction, because a
+            border that communicates "this is a control" has to clear the 3:1
+            non-text threshold to do that job — 2.11:1 in light mode did not.
+            (/42 is the first value that technically passes at 3.04:1; /45 is
+            the standard step and leaves margin.) Subordination is carried by
+            everything except contrast instead: 36px rather than 40px from `sm`
+            up, a transparent rather than card-filled background, 12px text with
+            a smaller glyph, and a lighter hover wash than the secondary above.
+
+            Disabled state is not colour-only: `disabled:border-dashed` changes
+            the boundary's SHAPE, so it reads as unavailable to someone who
+            cannot distinguish the dimming that `disabled:opacity-40` applies.
+            The `disabled` attribute keeps the semantics and the
+            `aria-describedby` explanation stays reachable. */}
         <div className="grid grid-cols-2 gap-2">
           <Button
             variant="outline"
-            className="h-10 min-w-0 border-foreground/30 px-3 text-[13px] hover:border-foreground/45 hover:bg-accent disabled:border-foreground/10 sm:h-9"
+            className="h-10 min-w-0 border-foreground/45 bg-transparent px-3 text-[12px] hover:border-foreground/60 hover:bg-foreground/[0.05] disabled:border-dashed sm:h-9 [&_svg]:size-3.5"
             onClick={() => setCardOpen(true)}
             // Nothing to put on a business card until a profile record exists.
             disabled={setupRequired}
@@ -438,7 +447,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
           </Button>
           <Button
             variant="outline"
-            className="h-10 min-w-0 border-foreground/30 px-3 text-[13px] hover:border-foreground/45 hover:bg-accent sm:h-9"
+            className="h-10 min-w-0 border-foreground/45 bg-transparent px-3 text-[12px] hover:border-foreground/60 hover:bg-foreground/[0.05] sm:h-9 [&_svg]:size-3.5"
             onClick={copyContact}
           >
             {copied ? <Check /> : <Copy />}

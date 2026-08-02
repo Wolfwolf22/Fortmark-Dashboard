@@ -1151,8 +1151,12 @@ const ALLOWED_ENV = {
   check("social row wraps rather than overflowing", card.includes("flex flex-wrap items-center"));
   check("actions use a stable two-column grid", (actions.match(/grid grid-cols-2 gap-2/g) ?? []).length === 2);
   check(
-    "tertiary actions keep a 40px touch target",
-    (actions.match(/h-10 min-w-0 border-foreground\/30 px-3 text-\[13px\]/g) ?? []).length === 2
+    "tertiary actions keep a 40px touch target on mobile",
+    (actions.match(/h-10 min-w-0 border-foreground\/45 bg-transparent px-3/g) ?? []).length === 2
+  );
+  check(
+    "tertiary actions shrink to 36px from sm up",
+    (actions.match(/sm:h-9/g) ?? []).length === 2
   );
   check(
     "tertiary actions are bordered, not ghost",
@@ -1166,25 +1170,54 @@ const ALLOWED_ENV = {
     "new transaction border clears the non-text threshold",
     /className="h-10 min-w-0 border-foreground\/45 px-3/.test(actions)
   );
+  // Subordination is carried by size and fill, NOT by a weaker boundary: a
+  // border that says "this is a control" has to clear 3:1 to do that job.
   check(
-    "the secondary border outranks the tertiary one",
-    actions.indexOf("border-foreground/45 px-3") <
-      actions.indexOf("border-foreground/30 px-3")
+    "tertiary is subordinate by height, not by contrast",
+    actions.includes("h-10 min-w-0 border-foreground/45 bg-transparent") &&
+      actions.includes("sm:h-9") &&
+      !/border-foreground\/(10|20|25|30|35|40)\b/.test(actions)
+  );
+  check(
+    "tertiary is subordinate by fill",
+    (actions.match(/bg-transparent/g) ?? []).length === 2 &&
+      !actions.includes("bg-transparent px-3 text-[13px]")
+  );
+  check(
+    "tertiary is subordinate by type and glyph size",
+    (actions.match(/bg-transparent px-3 text-\[12px\]/g) ?? []).length === 2 &&
+      (actions.match(/\[&_svg\]:size-3\.5/g) ?? []).length === 2
+  );
+  check(
+    "tertiary hover is lighter than the secondary hover",
+    actions.includes("hover:bg-foreground/[0.05]") &&
+      actions.includes("hover:border-foreground/70 hover:bg-accent")
+  );
+  check(
+    "tertiary sits beneath the primary row",
+    actions.indexOf("New transaction") < actions.indexOf("Digital card")
   );
   check(
     "new transaction stays below the filled primary",
     actions.includes('variant="outline"') && !actions.includes('variant="default"')
   );
+  // Not colour-only: the boundary changes SHAPE, so the disabled state survives
+  // for someone who cannot perceive the dimming `disabled:opacity-40` applies.
   check(
-    "disabled digital card loses its border rather than only dimming",
-    actions.includes("disabled:border-foreground/10")
+    "disabled digital card changes border shape, not just colour",
+    /hover:bg-foreground\/\[0\.05\] disabled:border-dashed sm:h-9/.test(actions)
+  );
+  check("disabled digital card keeps disabled semantics", actions.includes("disabled={setupRequired}"));
+  check(
+    "only the digital card carries the disabled treatment",
+    (actions.match(/hover:bg-foreground\/\[0\.05\] disabled:border-dashed/g) ?? []).length === 1
   );
   // The button base sets `whitespace-nowrap`, so a label wider than its grid
   // track would spill outside the card and scroll the page. Every action label
   // must be able to clip.
   check(
     "every action button can shrink below its label",
-    (actions.match(/className="h-10 min-w-0 (border-foreground\/(30|45) )?px-3/g) ?? []).length === 4
+    (actions.match(/className="h-10 min-w-0 (border-foreground\/45 (bg-transparent )?)?px-3/g) ?? []).length === 4
   );
   check(
     "every action label truncates rather than overflowing",
@@ -1287,9 +1320,11 @@ const ALLOWED_ENV = {
         contrast(darkFg, darkCard, 0.7) > contrast(mutedLight, darkCard, 1)
     );
 
-    // Non-text contrast for control boundaries. `--input` measures 1.28:1 on a
-    // white card and 1.38:1 on the dark one, which is why the outlined button
-    // vanished; `foreground/45` is the lowest value clearing 3:1 in both.
+    // Non-text contrast for control boundaries (WCAG 1.4.11, 3:1).
+    //
+    // `--input` measures 1.28:1 on a white card and 1.38:1 on the dark one,
+    // which is why the outlined button vanished. Every control boundary on the
+    // card now sits at `foreground/45`.
     const inputLight = readVar(":root", "input");
     const inputDark = readVar(".dark", "input");
     if (inputLight !== null && inputDark !== null) {
@@ -1298,23 +1333,38 @@ const ALLOWED_ENV = {
         contrast(inputLight, lightCard, 1) < 3 && contrast(inputDark, darkCard, 1) < 3
       );
     }
-    check("light: secondary button border clears 3:1", contrast(lightFg, lightCard, 0.45) >= 3);
-    check("dark: secondary button border clears 3:1", contrast(darkFg, darkCard, 0.45) >= 3);
+
+    const borderLight = contrast(lightFg, lightCard, 0.45);
+    const borderDark = contrast(darkFg, darkCard, 0.45);
+    for (const control of ["new transaction", "enabled digital card", "enabled copy contact"]) {
+      check(`light: ${control} border clears 3:1`, borderLight >= 3);
+      check(`dark: ${control} border clears 3:1`, borderDark >= 3);
+    }
+    check("light: single-contact action border clears 3:1", borderLight >= 3);
+    check("dark: single-contact action border clears 3:1", borderDark >= 3);
+    check("light: social icon button border clears 3:1", borderLight >= 3);
+    check("dark: social icon button border clears 3:1", borderDark >= 3);
+
+    // The previously-shipped tertiary value did NOT pass, which is why
+    // subordination moved to size and fill. Both halves asserted.
     check(
-      "/40 would NOT have been enough in light mode",
+      "the previous /30 tertiary border would fail in both themes",
+      contrast(lightFg, lightCard, 0.3) < 3 && contrast(darkFg, darkCard, 0.3) < 3
+    );
+    check(
+      "/40 would still miss the threshold in light mode",
       contrast(lightFg, lightCard, 0.4) < 3
     );
-
-    // Tertiary sits deliberately below secondary, so its boundary does not
-    // carry 3:1 on its own — the label does the identifying instead, at full
-    // foreground contrast. Both facts are asserted so the trade-off is explicit.
     check(
-      "tertiary border is visible but ranks below secondary",
-      contrast(lightFg, lightCard, 0.3) > contrast(inputLight ?? 1, lightCard, 1) &&
-        contrast(lightFg, lightCard, 0.3) < contrast(lightFg, lightCard, 0.45)
+      "no control boundary on the card sits below the threshold",
+      Math.min(borderLight, borderDark) >= 3
     );
+
+    // Subordination without weakening contrast: the tertiary label still
+    // carries full foreground contrast, so nothing is identified by a border
+    // alone.
     check(
-      "tertiary label carries the identification instead",
+      "tertiary label carries the identification",
       contrast(lightFg, lightCard, 1) >= 4.5 && contrast(darkFg, darkCard, 1) >= 4.5
     );
 
