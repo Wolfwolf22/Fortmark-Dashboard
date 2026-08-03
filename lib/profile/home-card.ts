@@ -125,7 +125,17 @@ export interface HomeIdentityCard {
    * self-card icons would have silently emptied the vCard and the clipboard
    * block too — the display rule would have quietly become a data rule.
    */
-  email: string | null;
+  /**
+   * The PUBLISHABLE address — `professional_profiles.business_email` and
+   * nothing else.
+   *
+   * Never the Clerk account email. That address is verified sign-in identity:
+   * the user gave it to authenticate, not to publish, and this card feeds a
+   * shareable vCard and clipboard block. Falling back to it would disclose a
+   * private address the user never chose to share. When no business email has
+   * been entered, the card simply has no email — that is the honest state.
+   */
+  businessEmail: string | null;
   phoneE164: string | null;
   whatsappPhoneE164: string | null;
   /**
@@ -159,6 +169,8 @@ export interface HomeCardSourceProfile {
   nrdsNumber?: string | null;
   phoneE164?: string | null;
   whatsappPhoneE164?: string | null;
+  /** The publishable address. Distinct from the verified account email. */
+  businessEmail?: string | null;
   linkedinUrl?: string | null;
   instagramUrl?: string | null;
   facebookUrl?: string | null;
@@ -262,13 +274,15 @@ export function fallbackHomeIdentityCard(session: HomeCardSession): HomeIdentity
     // Authenticated and allowlisted, which is the only authority that exists
     // without a row — and it is exactly what syncCurrentUser would record.
     profileStatus: "active",
-    email: session.email ?? null,
+    // No profile row means no business email. The account address is NOT a
+    // substitute — publishing it is precisely what must not happen.
+    businessEmail: null,
     phoneE164: null,
     whatsappPhoneE164: null,
     completion: null,
-    // The verified session email is a genuine, usable shortcut, so it is the
-    // one link a session-only card can honestly offer.
-    links: buildContactLinks({ email: session.email ?? null }),
+
+    // Nothing publishable exists without a profile row.
+    links: buildContactLinks({}),
   };
 }
 
@@ -312,7 +326,7 @@ export function toHomeIdentityCard(
     nrdsNumber: trimmed(profile?.nrdsNumber),
     credentialTrust: credentialTrustFor(profile, user, now),
     profileStatus: profileStatusFor(user),
-    email: trimmed(session.email) ?? trimmed(user?.primaryEmail),
+    businessEmail: trimmed(profile?.businessEmail),
     phoneE164: trimmed(profile?.phoneE164),
     whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164),
     completion:
@@ -325,7 +339,9 @@ export function toHomeIdentityCard(
       facebookUrl: safeLinkUrl(profile?.facebookUrl),
       personalWebsiteUrl: safeLinkUrl(profile?.personalWebsiteUrl),
       professionalWebsiteUrl: safeLinkUrl(profile?.professionalWebsiteUrl),
-      email: trimmed(session.email) ?? trimmed(user?.primaryEmail),
+      // Business email only, for the same reason: these links are the source
+      // of the shareable contact block.
+      email: trimmed(profile?.businessEmail),
       phoneE164: trimmed(profile?.phoneE164),
       whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164),
     }),

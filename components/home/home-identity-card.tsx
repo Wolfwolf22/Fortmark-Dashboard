@@ -173,7 +173,9 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
       // copied, and so the block matches exactly what the card displays.
       // Carried on the card, not recovered from the link list: the self-card no
       // longer renders email/phone links, and Copy Contact must not lose them.
-      email: data.email,
+      // Business email only. The account address is private identity data and
+      // is never published into a clipboard block.
+      email: data.businessEmail,
       phoneE164: data.phoneE164,
       linkedinUrl: data.links.find((l) => l.kind === "linkedin")?.href ?? null,
       personalWebsiteUrl: data.links.find((l) => l.kind === "website")?.href ?? null,
