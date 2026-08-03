@@ -657,6 +657,7 @@ check(
       licenseNumber: "BK123456",
       nrdsNumber: "123456789",
       phoneE164: "+19545550100",
+      businessEmail: "published@example.com",
       linkedinUrl: "https://linkedin.com/in/daniel-wolf",
       profileCompletionPercent: 82,
     },
@@ -676,12 +677,40 @@ check(
   check("phone link is a tel", card.links[2].href.startsWith("tel:"));
   check("external social link is marked external", card.links[0].external === true);
   check("mailto is not marked external", card.links[1].external === false);
+
+  // PRIVACY. The account email is verified sign-in identity, not something the
+  // user chose to publish, and this card feeds a shareable vCard and clipboard
+  // block. Only business_email may ever appear.
+  check("the card publishes the business email",
+    card.businessEmail === "published@example.com");
+  check("the mailto uses the business email, not the account email",
+    card.links[1].href === "mailto:published@example.com");
+  check("the account email appears nowhere in the projection",
+    !JSON.stringify(card).includes("daniel@example.com") &&
+      !JSON.stringify(card).includes(SESSION.email ?? "@@none@@"));
+
+  {
+    // Same profile, no business email: no address is published and no mailto
+    // is manufactured from the account one.
+    const noBiz = toHomeIdentityCard(
+      SESSION,
+      { createdAt: "2026-07-15T12:00:00.000Z", primaryEmail: "daniel@example.com", status: "active" },
+      { preferredDisplayName: "Daniel Wolf", phoneE164: "+19545550100" },
+      null,
+      new Date("2026-07-30T00:00:00Z")
+    );
+    check("no business email means no published email", noBiz.businessEmail === null);
+    check("no business email means no mailto link",
+      !noBiz.links.some((l) => l.kind === "email"));
+    check("the account email is not substituted",
+      !JSON.stringify(noBiz).includes("daniel@example.com"));
+  }
   check(
     "card never carries a clerk id",
     !JSON.stringify(card).includes("user_")
   );
   const keys = Object.keys(card);
-  for (const forbidden of ["clerkUserId", "id", "userId", "primaryEmail", "biography"]) {
+  for (const forbidden of ["clerkUserId", "id", "userId", "primaryEmail", "biography", "email"]) {
     check(`card projection omits ${forbidden}`, !keys.includes(forbidden));
   }
 }
@@ -690,12 +719,14 @@ check(
 {
   const bare = toHomeIdentityCard(SESSION, null, null, null);
   check("bare card uses the session name", bare.displayName === "Daniel Wolf");
-  // The session's verified email is a real, usable shortcut even with no
-  // profile row, so it is the only link a bare card should offer.
-  check(
-    "bare card offers only the session email shortcut",
-    bare.links.length === 1 && bare.links[0].kind === "email"
-  );
+  // A bare card offers NO email. The session address is verified sign-in
+  // identity rather than something the user chose to publish, and with no
+  // profile row there is no business email to publish instead. This assertion
+  // used to require the opposite; that was the privacy defect.
+  check("a bare card publishes no email link",
+    !bare.links.some((l) => l.kind === "email"));
+  check("a bare card does not carry the account email",
+    bare.businessEmail === null && !JSON.stringify(bare).includes("@example.com"));
   const anonymousish = toHomeIdentityCard(
     { name: "A B", role: "Member" },
     null,
@@ -926,8 +957,10 @@ const ALLOWED_ENV = {
   check("fallback invents no join date", fb.joinedAt === null);
   check("fallback invents no verification status", fb.credentialTrust === null);
   check("fallback reports no completion percentage", fb.completion === null);
-  check("fallback offers only the verified session email", fb.links.length === 1);
-  check("fallback email link is a mailto", fb.links[0].kind === "email");
+  check("fallback publishes no links at all", fb.links.length === 0);
+  check("fallback publishes no email", fb.businessEmail === null);
+  check("fallback never leaks the account email",
+    !JSON.stringify(fb).includes("@"));
   const fbNoEmail = fallbackHomeIdentityCard({ name: "A B", role: "Member" });
   check("fallback with no email has no links", fbNoEmail.links.length === 0);
   check("fallback with no image falls through to initials", fbNoEmail.imageUrl === null);
@@ -2645,22 +2678,26 @@ const ALLOWED_ENV = {
   // The coupling that made this dangerous: both surfaces used to recover
   // email/phone by scanning the link list, so hiding the icons would have
   // silently emptied Copy Contact and the vCard too.
-  check("Copy Contact reads the carried email, not the link list",
-    card.includes("email: data.email,") && card.includes("phoneE164: data.phoneE164,"));
+  check("Copy Contact reads the carried business email, not the link list",
+    card.includes("email: data.businessEmail,") && card.includes("phoneE164: data.phoneE164,"));
   check("the self-card no longer scrapes mailto:/tel: out of links",
     !/kind === "email"\)\?\.href\.replace/.test(card) &&
       !/kind === "phone"\)\?\.href\.replace/.test(card));
-  check("the Digital Card reads the carried email and phone",
-    dcard.includes("const email = data.email;") && dcard.includes("const phone = data.phoneE164;"));
+  check("the Digital Card reads the carried business email and phone",
+    dcard.includes("const email = data.businessEmail;") &&
+      dcard.includes("const phone = data.phoneE164;"));
   check("the Digital Card does NOT filter self-contact away",
     !dcard.includes("selfCardLinks"));
-  check("the Digital Card still offers email and phone rows",
-    dcard.includes('<Row label="Email" value={email} />') &&
-      dcard.includes('<Row label="Phone" value={formatPhoneDisplay(phone)} />'));
+  // Actions, not rows: the card is shareable, so these must be tappable.
+  check("the Digital Card offers email and call actions",
+    dcard.includes('href={`mailto:${email}`}') && dcard.includes('href={`tel:${phone}`}'));
+  check("each contact action renders only when its value exists",
+    /\{email && <ContactAction/.test(dcard) && /\{phone && <ContactAction/.test(dcard));
   // Hidden on the self-card, so if it were absent here the value the user
   // typed would be visible on no surface at all.
   check("WhatsApp is published on the shareable card",
-    dcard.includes('<Row label="WhatsApp" value={formatPhoneDisplay(data.whatsappPhoneE164)} />'));
+    /\{whatsapp && \(\s*<ContactAction/.test(dcard) &&
+      dcard.includes("toWhatsApp(data.whatsappPhoneE164)"));
   check("the card carries WhatsApp as data, not via the filtered links",
     readFileSync("lib/profile/home-card.ts", "utf8").includes("whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164)"));
 }
@@ -2668,17 +2705,22 @@ const ALLOWED_ENV = {
 // --- Digital Card always shows licence and NRDS ----------------------------
 {
   const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
-  check("the licence number row is always rendered",
-    dcard.includes('<Row label="License number" value={data.licenseNumber} always />'));
-  check("the NRDS row is always rendered",
-    dcard.includes('<Row label="NRDS ID" value={data.nrdsNumber} always />'));
-  check("Row supports an always mode", /always = false,[\s\S]{0,220}always\?: boolean;/.test(dcard));
-  check("a row without a value is dropped only when NOT always",
+  check("the licence number detail is always rendered",
+    dcard.includes('<Detail label="License number" value={data.licenseNumber} always />'));
+  check("the NRDS detail is always rendered",
+    dcard.includes('<Detail label="NRDS ID" value={data.nrdsNumber} always />'));
+  check("licence type shows only when populated",
+    dcard.includes('<Detail label="License type" value={data.licenseType} />'));
+  check("the redundant combined licence row is gone",
+    !/label="License"\s+value=\{licence\}/.test(dcard));
+  check("Detail supports an always mode",
+    /always = false,[\s\S]{0,220}always\?: boolean;/.test(dcard));
+  check("a detail without a value is dropped only when NOT always",
     dcard.includes("if (!value && !always) return null;"));
   check("the placeholder matches the wording used elsewhere",
     dcard.includes('{value ?? "Not added"}'));
   check("an absent value is styled as absent, not as data",
-    /value\s*\?[\s\S]{0,200}text-muted-foreground/.test(dcard));
+    /value \? "font-semibold text-foreground" : "font-normal text-foreground\/55"/.test(dcard));
 }
 
 // --- Status is Active/Inactive, and is not credential verification ---------
@@ -2698,8 +2740,11 @@ const ALLOWED_ENV = {
       profileStatusFor({ status: "something_else" }) === "inactive");
 
   const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
-  check("the Status row shows the account status",
-    dcard.includes('<Row label="Status" value={PROFILE_STATUS_LABEL[data.profileStatus]} always />'));
+  check("status renders as a restrained pill from the account status",
+    dcard.includes("<StatusPill status={data.profileStatus} />") &&
+      dcard.includes("PROFILE_STATUS_LABEL[status]"));
+  check("status is not signalled by colour alone",
+    /PROFILE_STATUS_LABEL\[status\]/.test(dcard) && dcard.includes('aria-hidden'));
   check("Status no longer renders credential trust",
     !/label="Status"[\s\S]{0,160}CREDENTIAL_TRUST_LABEL/.test(dcard));
   // The public card must not publish provenance at all: telling a recipient
@@ -2822,8 +2867,77 @@ const ALLOWED_ENV = {
 
   const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
   check("the Digital Card identity line drops the duplicate brokerage",
-    dcard.includes('{["FortMark", data.locationDisplay].filter(Boolean).join(" · ")}') &&
-      !dcard.includes('data.brokerageOffice ?? data.locationDisplay'));
+    !dcard.includes('data.brokerageOffice ?? data.locationDisplay'));
+  check("FortMark is named once in the hero",
+    (dcard.match(/>\s*FortMark\s*</g) ?? []).length === 2);
+}
+
+
+// --- Digital Card identity: profession, not membership ---------------------
+{
+  const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
+  const code = dcard.split("\n").filter((l) => !/^\s*(\*|\/\/|\{\/\*)/.test(l)).join("\n");
+
+  check("the hero title comes from professionalTitle",
+    code.includes("const title = data.professionalTitle ?? DEFAULT_PROFESSIONAL_TITLE;"));
+  check("the neutral fallback is a profession, not a membership",
+    dcard.includes('DEFAULT_PROFESSIONAL_TITLE = "Real Estate Professional"'));
+  check("the account role is never the hero title",
+    !/title = data\.professionalTitle \?\? data\.roleLabel/.test(code));
+  // "Member" describes the dashboard relationship, not the work. It must not
+  // reach the card as a profession or as a Role row.
+  check("no Role row remains on the card",
+    !/label="Role"/.test(code));
+  check("roleLabel is not rendered anywhere on the card",
+    !/\{data\.roleLabel\}/.test(code));
+  check("roleLabel still reaches the vCard and contact block only",
+    code.includes("roleLabel: data.roleLabel,"));
+
+  // Association: no stored field exists, so nothing is displayed and nothing
+  // is invented. NRDS is an identifier, not an association name.
+  check("no association row is rendered",
+    !/label="Association"/i.test(code));
+  check("NRDS is not relabelled as an association",
+    !/Association[\s\S]{0,80}nrdsNumber/i.test(code));
+
+  // Hero sizing and hierarchy.
+  check("the avatar is substantially larger than the old 96px",
+    code.includes('className="size-[104px] rounded-panel sm:size-[128px]"'));
+  check("the initials fallback occupies the same frame",
+    /AvatarFallback className="rounded-panel text-2xl font-semibold sm:text-3xl"/.test(code));
+  check("the image is cover-fitted so it cannot distort",
+    code.includes('className="object-cover"'));
+  check("the name is the largest element in the hero",
+    /text-\[22px\] font-bold/.test(code));
+  check("the drawer is wider than the old 400px",
+    code.includes("sm:w-[440px]") && code.includes("lg:w-[460px]"));
+
+  // Layout: grouped panel, two columns on desktop, one on mobile.
+  check("details are a grid, not a stack of ruled rows",
+    /grid-cols-1[\s\S]{0,80}sm:grid-cols-2/.test(code));
+  check("details sit in one grouped panel",
+    /rounded-panel border border-border bg-foreground\/\[0\.02\]/.test(code));
+  check("there is no per-field divider table left",
+    !/border-b border-border py-2\.5 last:border-0/.test(code));
+  check("the section is labelled for assistive technology",
+    code.includes('aria-labelledby="dc-details"') && code.includes('id="dc-details"'));
+
+  // Contact actions are safe and reachable.
+  // Applied via a spread, so the attribute form never appears literally.
+  check("external actions carry noopener noreferrer",
+    code.includes('{ target: "_blank", rel: "noopener noreferrer" }'));
+  check("only external actions open in a new tab",
+    /external \? \{ target: "_blank"/.test(code));
+  check("website links pass through the scheme allowlist",
+    code.includes("safeLinkUrl(data.links.find"));
+  check("actions meet the touch-target height", /h-10 min-w-0 flex-1/.test(code));
+  check("every action has an accessible label", code.includes("aria-label={label}"));
+
+  // Preview toolbar clearance: content does not end flush against the corner
+  // where Vercel injects its floating control.
+  check("the scroll body keeps bottom clearance", /px-5 pb-6 pt-6/.test(code));
+  check("the header keeps the close button clear of the title",
+    /SheetHeader className="border-b border-border p-4 pr-12"/.test(code));
 }
 
 // --- Summary ---------------------------------------------------------------

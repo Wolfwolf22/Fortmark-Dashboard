@@ -7,13 +7,18 @@
  * only ever renders data the signed-in user already has on screen, and the
  * vCard is generated in the browser on demand and never stored.
  *
+ * Structured as a card rather than a settings table. The previous layout was a
+ * single column of label/value rows separated by full-width rules, which is the
+ * visual language of an account-settings page — it read as a form the user had
+ * failed to finish rather than as something they would hand to a client.
+ *
  * Accessibility is delegated to Radix Dialog via the shared Sheet primitive,
  * which supplies the focus trap, Escape-to-close, `aria-modal` and focus
  * restoration to the trigger.
  */
 import * as React from "react";
 import Link from "next/link";
-import { Check, Copy, Download, SquarePen } from "lucide-react";
+import { Check, Copy, Download, Globe, Mail, MessageCircle, Phone, SquarePen } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -29,39 +34,109 @@ import {
   formatJoinedAt,
   type HomeIdentityCard as HomeIdentityCardData,
 } from "@/lib/profile/home-card";
-import { buildContactBlock, formatPhoneDisplay } from "@/lib/profile/links";
+import { buildContactBlock, formatPhoneDisplay, toWhatsApp } from "@/lib/profile/links";
+import { safeLinkUrl } from "@/lib/profile/display";
 import { buildVCard, vCardFilename } from "@/lib/profile/vcard";
 import { ROUTES } from "@/lib/routes";
-import { initials } from "@/lib/utils";
+import { cn, initials } from "@/lib/utils";
 
-function Row({
+/**
+ * Shown when no professional title has been entered.
+ *
+ * Deliberately NOT the account role. "Member" describes someone's relationship
+ * with the FortMark dashboard, not the work they do, and printing it where a
+ * recipient expects a profession is simply wrong. A neutral, accurate
+ * description is better than an accurate answer to a different question.
+ */
+export const DEFAULT_PROFESSIONAL_TITLE = "Real Estate Professional";
+
+/** One detail cell. Absent optional values hold their place and say so. */
+function Detail({
   label,
   value,
   always = false,
 }: {
   label: string;
   value: string | null;
-  /** Keep the row when the value is absent, showing the shared placeholder. */
   always?: boolean;
 }) {
   if (!value && !always) return null;
   return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-border py-2.5 last:border-0">
-      <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+    <div className="min-w-0">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-foreground/55">
         {label}
-      </span>
-      <span
-        className={
-          value
-            ? "min-w-0 truncate text-right text-[13px] font-semibold tabular-nums"
-            : "min-w-0 truncate text-right text-[13px] font-normal text-muted-foreground"
-        }
+      </p>
+      <p
+        className={cn(
+          "mt-0.5 break-words text-[14px] leading-snug",
+          value ? "font-semibold text-foreground" : "font-normal text-foreground/55"
+        )}
       >
-        {/* Same wording the onboarding Review uses, so one absent value is not
+        {/* Same wording as the onboarding Review, so one absent value is not
             "Not added" on one surface and "Pending" on another. */}
         {value ?? "Not added"}
-      </span>
+      </p>
     </div>
+  );
+}
+
+/**
+ * Account status, read-only.
+ *
+ * Colour is never the only signal — the word itself is the status — so this
+ * stays legible to a colour-blind reader and in a greyscale print of the card.
+ */
+function StatusPill({ status }: { status: "active" | "inactive" }) {
+  const active = status === "active";
+  return (
+    <span
+      className={cn(
+        "mt-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+        active
+          ? "border-foreground/20 bg-foreground/[0.04] text-foreground"
+          : "border-border bg-transparent text-foreground/55"
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "size-1.5 rounded-full",
+          active ? "bg-emerald-600 dark:bg-emerald-400" : "bg-foreground/30"
+        )}
+      />
+      {PROFILE_STATUS_LABEL[status]}
+    </span>
+  );
+}
+
+/** A contact action. Rendered only when the underlying value exists. */
+function ContactAction({
+  href,
+  icon: Icon,
+  label,
+  external,
+}: {
+  href: string;
+  icon: typeof Mail;
+  label: string;
+  external?: boolean;
+}) {
+  return (
+    <Button
+      asChild
+      variant="outline"
+      size="sm"
+      className="h-10 min-w-0 flex-1 border-foreground/45 px-2 text-[12px]"
+    >
+      <a
+        href={href}
+        aria-label={label}
+        {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+      >
+        <Icon aria-hidden />
+        <span className="truncate">{label}</span>
+      </a>
+    </Button>
   );
 }
 
@@ -81,15 +156,15 @@ export function DigitalBusinessCard({
 
   // Carried on the card rather than scraped from `links`: the Home self-card
   // hides the email/phone entries, and this card must not lose them with it.
-  const email = data.email;
+  // `businessEmail` is the ONLY address published here — never the account one.
+  const email = data.businessEmail;
   const phone = data.phoneE164;
+  const whatsapp = toWhatsApp(data.whatsappPhoneE164);
   const website =
-    data.links.find((l) => l.kind === "professionalWebsite")?.href ??
-    data.links.find((l) => l.kind === "website")?.href ??
-    null;
+    safeLinkUrl(data.links.find((l) => l.kind === "professionalWebsite")?.href) ??
+    safeLinkUrl(data.links.find((l) => l.kind === "website")?.href);
   const joined = formatJoinedAt(data.joinedAt);
-  const licence =
-    [data.licenseState, data.licenseType, data.licenseNumber].filter(Boolean).join(" ") || null;
+  const title = data.professionalTitle ?? DEFAULT_PROFESSIONAL_TITLE;
 
   const contactBlock = () =>
     buildContactBlock({
@@ -148,64 +223,89 @@ export function DigitalBusinessCard({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-0 p-0 sm:w-[400px] sm:max-w-none lg:w-[440px]"
+        className="flex w-full flex-col gap-0 p-0 sm:w-[440px] sm:max-w-none lg:w-[460px]"
         aria-label="Your FortMark digital card"
       >
-        <SheetHeader className="border-b border-border p-5 pr-12">
+        {/* pr-12 keeps the close button clear of the title. */}
+        <SheetHeader className="border-b border-border p-4 pr-12">
           <SheetTitle className="text-[11px] font-semibold uppercase tracking-[0.14em]">
             FortMark
           </SheetTitle>
-          <SheetDescription>Digital business card</SheetDescription>
+          <SheetDescription className="text-[12px]">Digital business card</SheetDescription>
         </SheetHeader>
 
         <ScrollArea className="min-h-0 flex-1">
-          <div className="p-5">
+          {/* pb-6 rather than a flush edge: on Preview deployments Vercel injects
+              a floating toolbar in the lower corner, and content ending hard
+              against the edge sits underneath it. */}
+          <div className="px-5 pb-6 pt-6">
             <div className="flex flex-col items-center text-center">
-              <Avatar className="h-24 w-24 rounded-panel">
+              {/* 104px on mobile, 128px from sm up — the card's anchor, not a
+                  thumbnail. The fallback uses the same frame so the layout does
+                  not shift between a photo and initials. */}
+              <Avatar className="size-[104px] rounded-panel sm:size-[128px]">
                 {data.imageUrl && (
                   <AvatarImage src={data.imageUrl} alt="" className="object-cover" />
                 )}
-                <AvatarFallback className="rounded-panel text-xl">
+                <AvatarFallback className="rounded-panel text-2xl font-semibold sm:text-3xl">
                   {initials(data.displayName)}
                 </AvatarFallback>
               </Avatar>
-              <p className="mt-4 text-lg font-bold leading-tight">{data.displayName}</p>
-              <p className="mt-0.5 text-[13px] text-muted-foreground">
-                {data.professionalTitle ?? data.roleLabel}
+
+              <h2 className="mt-4 text-[22px] font-bold leading-tight tracking-tight">
+                {data.displayName}
+              </h2>
+              {/* The profession, never the account role. */}
+              <p className="mt-1 text-[15px] font-medium text-foreground/75">{title}</p>
+              <p className="mt-1.5 text-[12px] font-semibold uppercase tracking-[0.12em] text-foreground/55">
+                FortMark
               </p>
-              <p className="text-[13px] text-muted-foreground">
-                {/* Location only after the brand. Brokerage is always
-                    FortMark now, so including it read "FortMark · FORTMARK". */}
-                {["FortMark", data.locationDisplay].filter(Boolean).join(" · ")}
-              </p>
+              {data.locationDisplay && (
+                <p className="mt-1 text-[13px] text-foreground/55">{data.locationDisplay}</p>
+              )}
+
+              <StatusPill status={data.profileStatus} />
             </div>
 
-            <div className="mt-6">
-              <Row label="Role" value={data.roleLabel} />
-              {/* Always rendered. A credential card that changes shape
-                  depending on what is filled in reads as broken rather than
-                  incomplete, so these two hold their place and say so. */}
-              <Row label="License" value={licence} always />
-              <Row label="License number" value={data.licenseNumber} always />
-              <Row label="NRDS ID" value={data.nrdsNumber} always />
-              <Row label="Email" value={email} />
-              <Row label="Phone" value={formatPhoneDisplay(phone)} />
-              <Row label="WhatsApp" value={formatPhoneDisplay(data.whatsappPhoneE164)} />
-              <Row label="Website" value={website} />
-              <Row label="Joined" value={joined} />
-              <Row label="Status" value={PROFILE_STATUS_LABEL[data.profileStatus]} always />
-              {/* No verification row on the PUBLIC card. Announcing
-                  "Self-reported" to a recipient states a negative about the
-                  agent while telling them nothing they can use. `credentialTrust`
-                  is still computed and carried for compliance and for the
-                  future review workflow — it is simply not published here, and
-                  it is emphatically NOT replaced by a "Verified" claim, because
-                  nothing has verified anything. */}
-            </div>
+            {/* Contact actions. Each appears only when its value exists, so the
+                row never offers something that cannot happen. */}
+            {(email || phone || whatsapp || website) && (
+              <div className="mt-6 flex flex-wrap gap-2">
+                {email && <ContactAction href={`mailto:${email}`} icon={Mail} label="Email" />}
+                {phone && <ContactAction href={`tel:${phone}`} icon={Phone} label="Call" />}
+                {whatsapp && (
+                  <ContactAction href={whatsapp} icon={MessageCircle} label="WhatsApp" external />
+                )}
+                {website && (
+                  <ContactAction href={website} icon={Globe} label="Website" external />
+                )}
+              </div>
+            )}
+
+            <section aria-labelledby="dc-details" className="mt-6">
+              <h3
+                id="dc-details"
+                className="text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground/55"
+              >
+                Professional details
+              </h3>
+              {/* Two columns from sm up, one on mobile. Spacing and a single
+                  panel do the grouping, so there is no rule under every field. */}
+              <div className="mt-3 grid grid-cols-1 gap-x-4 gap-y-4 rounded-panel border border-border bg-foreground/[0.02] p-4 sm:grid-cols-2">
+                <Detail label="License number" value={data.licenseNumber} always />
+                <Detail label="NRDS ID" value={data.nrdsNumber} always />
+                {/* Only when populated: an empty licence TYPE tells a recipient
+                    nothing, unlike the two identifiers above which are the
+                    fields people look for. */}
+                <Detail label="License type" value={data.licenseType} />
+                <Detail label="License state" value={data.licenseState} />
+                <Detail label="Member since" value={joined} />
+              </div>
+            </section>
           </div>
         </ScrollArea>
 
-        <div className="grid grid-cols-2 gap-2 border-t border-border p-5">
+        <div className="grid grid-cols-2 gap-2 border-t border-border p-4">
           <Button size="sm" variant="outline" onClick={copyContact}>
             {copied ? <Check /> : <Copy />}
             {copied ? "Copied" : "Copy contact"}
