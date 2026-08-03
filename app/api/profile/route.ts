@@ -93,7 +93,10 @@ export async function PATCH(request: NextRequest) {
   const result = await updateOwnProfile(caller.clerkUserId, body);
   if (!result.ok) {
     const status = result.reason === "invalid" ? 400 : result.reason === "no_record" ? 404 : 503;
-    return NextResponse.json({ error: result.reason }, { status, headers: NO_STORE });
+    // The structured contract when validation failed, otherwise a bare reason.
+    // Never an exception message and never a database column name.
+    const payload = result.validation ?? { error: result.reason };
+    return NextResponse.json(payload, { status, headers: NO_STORE });
   }
 
   const record = await getOwnProfile(caller.clerkUserId);

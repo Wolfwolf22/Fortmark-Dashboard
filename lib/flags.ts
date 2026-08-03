@@ -24,6 +24,29 @@ export function profileDatabaseEnabled(env: EnvLike = process.env): boolean {
 }
 
 /**
+ * Permit Blob writes for profile photos.
+ *
+ * A SEPARATE gate from the profile UI on purpose. Vercel's managed Blob
+ * connection scopes `BLOB_READ_WRITE_TOKEN` to Production *and* Preview and
+ * offers no per-branch option, so the token exists in environments that must
+ * never write to the store. Token presence therefore cannot be the switch —
+ * if it were, connecting the store would have silently enabled uploads
+ * everywhere at once.
+ *
+ * Deliberately strict: only the exact string "1" enables it. "true", "yes" and
+ * "on" are all rejected, unlike the other flags, because this one governs
+ * writes to shared external storage and a typo should fail closed rather than
+ * guess generously.
+ *
+ * It authorizes nobody. Clerk authentication and the allowlist are still
+ * required, and the caller must also pass `professionalProfileUiEnabled`,
+ * which itself requires the database flag.
+ */
+export function profileImageUploadEnabled(env: EnvLike = process.env): boolean {
+  return env.PROFILE_IMAGE_UPLOAD_ENABLED === "1";
+}
+
+/**
  * Render the top-bar identity, drawer and profile editor. Requires the
  * database flag — the UI has nothing to show without it, and enabling the UI
  * alone would render empty chrome.

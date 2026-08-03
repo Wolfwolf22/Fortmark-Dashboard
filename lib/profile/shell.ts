@@ -22,6 +22,13 @@ import {
   type HomeIdentityCard,
 } from "./home-card.ts";
 import { syncCurrentUser, type ClerkIdentity } from "./service.ts";
+import {
+  resumeStep,
+  shouldOpenOnboarding,
+  stepsForRole,
+  type OnboardingStep,
+  type ProfileFieldKey,
+} from "./onboarding.ts";
 import type { SessionUser } from "../auth/session.ts";
 
 export type { ShellProfile };
@@ -132,4 +139,123 @@ export async function getHomeIdentityCard(
     // is owed to the user whatever went wrong underneath it.
     return fallback;
   }
+}
+
+
+/**
+ * Everything the onboarding route and the Home page need to decide whether to
+ * show the wizard, and where to resume.
+ *
+ * Resolved on the SERVER, through the same `syncCurrentUser` path every other
+ * profile read uses — so the allowlist is re-checked before any row is touched
+ * and no database call happens in middleware.
+ *
+ * `available: false` covers every reason the wizard cannot work: flags off, the
+ * database unreachable, sync refused, or an exception. The caller sends those
+ * users to the ordinary dashboard rather than trapping them in a wizard whose
+ * saves would fail.
+ */
+export interface OnboardingContext {
+  available: boolean;
+  complete: boolean;
+  resumeStep: number;
+  steps: readonly OnboardingStep[];
+  values: Partial<Record<ProfileFieldKey, string | null>>;
+  accountEmail: string | null;
+  role: string | null;
+  /** Active image for the wizard's step 1 preview. */
+  currentImageUrl: string | null;
+}
+
+const UNAVAILABLE: OnboardingContext = {
+  available: false,
+  complete: false,
+  resumeStep: 1,
+  steps: [],
+  values: {},
+  accountEmail: null,
+  role: null,
+  currentImageUrl: null,
+};
+
+export async function onboardingContext(
+  user: SessionUser,
+  env: EnvLike = process.env
+): Promise<OnboardingContext> {
+  if (!professionalProfileUiEnabled(env)) return UNAVAILABLE;
+
+  const identity: ClerkIdentity = {
+    clerkUserId: user.id,
+    email: user.email,
+    name: user.name,
+    imageUrl: user.imageUrl,
+    roleLabel: user.role,
+  };
+
+  try {
+    const synced = await syncCurrentUser(identity, env);
+    if (!synced) return UNAVAILABLE;
+
+    const role = synced.user.role ?? null;
+    const p = synced.profile;
+    return {
+      available: true,
+      complete: Boolean(synced.user.onboardingComplete),
+      resumeStep: resumeStep(p?.onboardingStep ?? null, role).step,
+      steps: stepsForRole(role),
+      values: {
+        preferredDisplayName: p?.preferredDisplayName ?? null,
+        legalFirstName: p?.legalFirstName ?? null,
+        legalLastName: p?.legalLastName ?? null,
+        professionalTitle: p?.professionalTitle ?? null,
+        brokerageOffice: p?.brokerageOffice ?? null,
+        locationDisplay: p?.locationDisplay ?? null,
+        biography: p?.biography ?? null,
+        licenseState: p?.licenseState ?? null,
+        licenseType: p?.licenseType ?? null,
+        licenseNumber: p?.licenseNumber ?? null,
+        licenseExpiration: p?.licenseExpiration ?? null,
+        nrdsNumber: p?.nrdsNumber ?? null,
+        businessEmail: p?.businessEmail ?? null,
+        phoneE164: p?.phoneE164 ?? null,
+        whatsappPhoneE164: p?.whatsappPhoneE164 ?? null,
+        personalWebsiteUrl: p?.personalWebsiteUrl ?? null,
+        professionalWebsiteUrl: p?.professionalWebsiteUrl ?? null,
+        linkedinUrl: p?.linkedinUrl ?? null,
+        instagramUrl: p?.instagramUrl ?? null,
+        facebookUrl: p?.facebookUrl ?? null,
+      },
+      // The verified Clerk address, shown read-only. Never writable here.
+      accountEmail: synced.user.primaryEmail ?? user.email ?? null,
+      role,
+      currentImageUrl:
+        synced.image?.processedImageUrl ??
+        synced.image?.activeImageUrl ??
+        synced.image?.clerkImageUrl ??
+        user.imageUrl ??
+        null,
+    };
+  } catch {
+    // A profile problem must never become an access problem.
+    return UNAVAILABLE;
+  }
+}
+
+/**
+ * Whether Home should send this user into onboarding.
+ *
+ * Kept separate from `onboardingContext` so the Home page can ask the cheap
+ * question without the caller having to remember every condition.
+ */
+export async function shouldRedirectToOnboarding(
+  user: SessionUser,
+  env: EnvLike = process.env
+): Promise<boolean> {
+  const context = await onboardingContext(user, env);
+  return shouldOpenOnboarding({
+    uiEnabled: professionalProfileUiEnabled(env),
+    databaseEnabled: profileDatabaseEnabled(env),
+    databaseAvailable: context.available,
+    user: context.available ? { onboardingComplete: context.complete ? new Date() : null } : null,
+  });
 }

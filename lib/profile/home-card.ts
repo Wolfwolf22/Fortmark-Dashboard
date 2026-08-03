@@ -41,6 +41,54 @@ export const CREDENTIAL_TRUST_LABEL: Record<CredentialTrust, string> = {
   expired: "Expired",
 };
 
+/**
+ * The only two statuses a user ever sees.
+ *
+ * Distinct from `CredentialTrust`, which describes whether a LICENCE has been
+ * verified. Conflating the two is what put "Self-reported" under a heading
+ * called Status — an answer to a question nobody asked. Account state and
+ * credential provenance are separate facts and now read as separate rows.
+ */
+export type ProfileStatus = "active" | "inactive";
+
+export const PROFILE_STATUS_LABEL: Record<ProfileStatus, string> = {
+  active: "Active",
+  inactive: "Inactive",
+};
+
+/**
+ * Derive the visible status from the server-controlled account state.
+ *
+ * Read-only by design. `dashboard_users.status` is the account authority, so
+ * letting the profile editor write it would let a suspended user clear their
+ * own suspension — an access-control regression dressed up as a UX toggle.
+ * Anything that is not `active` reads as Inactive.
+ */
+export function profileStatusFor(
+  user: { status?: string | null } | null | undefined
+): ProfileStatus {
+  return user?.status === "active" ? "active" : "inactive";
+}
+
+/**
+ * Contact kinds hidden on the Home self-card.
+ *
+ * The Home card is the user looking at their own record, and offering to email,
+ * ring or message yourself is noise. They stay in `links` rather than being
+ * dropped at the source, because the Digital Card is shareable and genuinely
+ * needs them — this is a presentation rule for one surface, not a change to
+ * the data. Copy Contact and the vCard are unaffected.
+ */
+export const SELF_CARD_HIDDEN_LINK_KINDS: readonly string[] = [
+  "email",
+  "phone",
+  "whatsapp",
+];
+
+export function selfCardLinks<T extends { kind: string }>(links: readonly T[]): T[] {
+  return links.filter((l) => !SELF_CARD_HIDDEN_LINK_KINDS.includes(l.kind));
+}
+
 export interface HomeIdentityCard {
   /**
    * Where this card's data came from.
@@ -67,6 +115,29 @@ export interface HomeIdentityCard {
   licenseExpiration: string | null;
   nrdsNumber: string | null;
   credentialTrust: CredentialTrust | null;
+  /** Account state, as the user sees it. Never null — always Active or Inactive. */
+  profileStatus: ProfileStatus;
+  /**
+   * Carried explicitly rather than parsed back out of `links`.
+   *
+   * Copy Contact and the Digital Card used to recover these by scanning the
+   * link list for `mailto:`/`tel:` entries. That coupling meant hiding the
+   * self-card icons would have silently emptied the vCard and the clipboard
+   * block too — the display rule would have quietly become a data rule.
+   */
+  /**
+   * The PUBLISHABLE address — `professional_profiles.business_email` and
+   * nothing else.
+   *
+   * Never the Clerk account email. That address is verified sign-in identity:
+   * the user gave it to authenticate, not to publish, and this card feeds a
+   * shareable vCard and clipboard block. Falling back to it would disclose a
+   * private address the user never chose to share. When no business email has
+   * been entered, the card simply has no email — that is the honest state.
+   */
+  businessEmail: string | null;
+  phoneE164: string | null;
+  whatsappPhoneE164: string | null;
   /**
    * 0-100, or null when no profile record exists.
    *
@@ -98,6 +169,8 @@ export interface HomeCardSourceProfile {
   nrdsNumber?: string | null;
   phoneE164?: string | null;
   whatsappPhoneE164?: string | null;
+  /** The publishable address. Distinct from the verified account email. */
+  businessEmail?: string | null;
   linkedinUrl?: string | null;
   instagramUrl?: string | null;
   facebookUrl?: string | null;
@@ -198,10 +271,18 @@ export function fallbackHomeIdentityCard(session: HomeCardSession): HomeIdentity
     // No record has been reviewed, so no trust level applies. Not even
     // "self-reported" — nothing has been reported.
     credentialTrust: null,
+    // Authenticated and allowlisted, which is the only authority that exists
+    // without a row — and it is exactly what syncCurrentUser would record.
+    profileStatus: "active",
+    // No profile row means no business email. The account address is NOT a
+    // substitute — publishing it is precisely what must not happen.
+    businessEmail: null,
+    phoneE164: null,
+    whatsappPhoneE164: null,
     completion: null,
-    // The verified session email is a genuine, usable shortcut, so it is the
-    // one link a session-only card can honestly offer.
-    links: buildContactLinks({ email: session.email ?? null }),
+
+    // Nothing publishable exists without a profile row.
+    links: buildContactLinks({}),
   };
 }
 
@@ -244,6 +325,10 @@ export function toHomeIdentityCard(
     licenseExpiration: trimmed(profile?.licenseExpiration),
     nrdsNumber: trimmed(profile?.nrdsNumber),
     credentialTrust: credentialTrustFor(profile, user, now),
+    profileStatus: profileStatusFor(user),
+    businessEmail: trimmed(profile?.businessEmail),
+    phoneE164: trimmed(profile?.phoneE164),
+    whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164),
     completion:
       typeof completion === "number" && Number.isFinite(completion)
         ? Math.max(0, Math.min(100, Math.round(completion)))
@@ -254,7 +339,9 @@ export function toHomeIdentityCard(
       facebookUrl: safeLinkUrl(profile?.facebookUrl),
       personalWebsiteUrl: safeLinkUrl(profile?.personalWebsiteUrl),
       professionalWebsiteUrl: safeLinkUrl(profile?.professionalWebsiteUrl),
-      email: trimmed(session.email) ?? trimmed(user?.primaryEmail),
+      // Business email only, for the same reason: these links are the source
+      // of the shareable contact block.
+      email: trimmed(profile?.businessEmail),
       phoneE164: trimmed(profile?.phoneE164),
       whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164),
     }),

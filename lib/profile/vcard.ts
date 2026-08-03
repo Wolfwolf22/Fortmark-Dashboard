@@ -59,7 +59,11 @@ export function buildVCard(source: VCardSource): string {
   const title = source.professionalTitle ?? source.roleLabel;
   if (title) lines.push(`TITLE:${escapeValue(title)}`);
 
-  const org = ["FortMark", source.brokerageOffice].filter(Boolean).join(";");
+  // "FortMark;FORTMARK" otherwise — brokerage is always FortMark now.
+  const org = ["FortMark", source.brokerageOffice]
+    .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+    .filter((v, i) => i === 0 || v.trim().toLowerCase() !== "fortmark")
+    .join(";");
   lines.push(`ORG:${escapeValue(org)}`);
 
   if (source.email) lines.push(`EMAIL;TYPE=INTERNET,WORK:${escapeValue(source.email)}`);

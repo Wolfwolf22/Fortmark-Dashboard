@@ -40,6 +40,7 @@ import { DigitalBusinessCard } from "@/components/profile/digital-business-card"
 import {
   CREDENTIAL_TRUST_LABEL,
   formatJoinedAt,
+  selfCardLinks,
   type HomeIdentityCard as HomeIdentityCardData,
 } from "@/lib/profile/home-card";
 import { buildContactBlock, type ContactLinkKind } from "@/lib/profile/links";
@@ -118,6 +119,11 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
   const [copied, setCopied] = React.useState(false);
   const copyTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Email and Call are dropped here and nowhere else. This card is the user
+  // looking at their own record; the Digital Card, which is shareable, keeps
+  // the full set.
+  const visibleLinks = React.useMemo(() => selfCardLinks(data.links), [data.links]);
+
   React.useEffect(() => {
     return () => {
       if (copyTimer.current) clearTimeout(copyTimer.current);
@@ -165,8 +171,12 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
       licenseNumber: data.licenseNumber,
       // Rebuilt from the already-validated link list so nothing unvalidated is
       // copied, and so the block matches exactly what the card displays.
-      email: data.links.find((l) => l.kind === "email")?.href.replace(/^mailto:/, "") ?? null,
-      phoneE164: data.links.find((l) => l.kind === "phone")?.href.replace(/^tel:/, "") ?? null,
+      // Carried on the card, not recovered from the link list: the self-card no
+      // longer renders email/phone links, and Copy Contact must not lose them.
+      // Business email only. The account address is private identity data and
+      // is never published into a clipboard block.
+      email: data.businessEmail,
+      phoneE164: data.phoneE164,
       linkedinUrl: data.links.find((l) => l.kind === "linkedin")?.href ?? null,
       personalWebsiteUrl: data.links.find((l) => l.kind === "website")?.href ?? null,
       professionalWebsiteUrl:
@@ -250,9 +260,12 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
             {[data.roleLabel, "FortMark"].filter(Boolean).join(" · ")}
           </p>
 
-          {(data.brokerageOffice ?? data.locationDisplay) && (
+          {/* Location only. The line above already says FortMark, and since
+              brokerage became a fixed value this fell back to printing
+              "FORTMARK" directly beneath "Member · FortMark". */}
+          {data.locationDisplay && (
             <p className="mt-0.5 truncate text-[12px] text-foreground/55">
-              {data.brokerageOffice ?? data.locationDisplay}
+              {data.locationDisplay}
             </p>
           )}
         </div>
@@ -287,11 +300,11 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
           rule: a lone bordered row under the grid read as a floating toolbar
           with no stated purpose. Nothing renders at all when there are no
           links, so no empty row is left behind. */}
-      {data.links.length === 1 &&
+      {visibleLinks.length === 1 &&
         (() => {
           // One link, so an icon alone would not say what it does. The visible
           // text names the action; the accessible name stays the fuller label.
-          const link = data.links[0];
+          const link = visibleLinks[0];
           const Icon = LINK_ICON[link.kind];
           return (
             <a
@@ -306,9 +319,9 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
           );
         })()}
 
-      {data.links.length > 1 && (
+      {visibleLinks.length > 1 && (
         <div className="-mt-1 flex flex-wrap items-center gap-2">
-          {data.links.map((link) => {
+          {visibleLinks.map((link) => {
             const Icon = LINK_ICON[link.kind];
             return (
               <Tooltip key={link.kind}>

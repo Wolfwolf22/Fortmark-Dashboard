@@ -1,0 +1,1 @@
+ALTER TABLE "profile_images" ADD COLUMN "storage_pathname" text;

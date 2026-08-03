@@ -15,6 +15,11 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Lock } from "lucide-react";
+import { ProfileField } from "@/components/profile/profile-field";
+import { FORTMARK_BROKERAGE_NAME } from "@/lib/profile/normalize";
+import { ProfileImageUpload } from "@/components/profile/profile-image-upload";
+import type { ProfileFieldKey } from "@/lib/profile/onboarding";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -29,34 +34,39 @@ import type { ProfileDetail } from "@/lib/profile/display";
 import { apiPath } from "@/lib/routes";
 
 /** Text fields that map one-to-one onto a schema column. */
-const TEXT_FIELDS = [
-  { key: "preferredDisplayName", label: "Display name", placeholder: "How your name appears" },
-  { key: "legalFirstName", label: "Legal first name" },
-  { key: "legalLastName", label: "Legal last name" },
-  { key: "phoneE164", label: "Phone", placeholder: "(954) 555-0100", type: "tel" },
-  { key: "brokerageOffice", label: "Brokerage office" },
-  { key: "licenseNumber", label: "License number" },
-  { key: "licenseExpiration", label: "License expiration", type: "date" },
-  { key: "nrdsNumber", label: "NRDS number" },
-] as const;
-
 /**
- * Release 1.1 "Professional Presence" fields.
+ * Field ORDER only. Every label, placeholder, hint, input type and length
+ * limit now comes from `lib/profile/fields.ts`, the same table the onboarding
+ * wizard renders from.
  *
- * `type="url"` gives a sensible mobile keyboard, but validation is NOT the
- * browser's job here: the server allowlists schemes and rejects anything it
- * cannot prove safe, and the stored value is re-validated again on read.
+ * The editor previously carried its own copies. Two tables describing the same
+ * fields is exactly how a label drifts in one surface and not the other, or
+ * how a maxLength stops matching the Zod schema — so the descriptions live in
+ * one place and these arrays say only "in this order, here".
  */
-const PRESENCE_FIELDS = [
-  { key: "professionalTitle", label: "Professional title", placeholder: "Founder / Broker" },
-  { key: "locationDisplay", label: "Office / location", placeholder: "Fort Lauderdale, FL" },
-  { key: "linkedinUrl", label: "LinkedIn", placeholder: "linkedin.com/in/you", type: "url" },
-  { key: "instagramUrl", label: "Instagram", placeholder: "instagram.com/you", type: "url" },
-  { key: "facebookUrl", label: "Facebook", placeholder: "facebook.com/you", type: "url" },
-  { key: "professionalWebsiteUrl", label: "Professional website", placeholder: "fortmark.net", type: "url" },
-  { key: "personalWebsiteUrl", label: "Personal website", placeholder: "example.com", type: "url" },
-  { key: "whatsappPhoneE164", label: "WhatsApp", placeholder: "(954) 555-0100", type: "tel" },
-] as const;
+const TEXT_FIELDS: readonly ProfileFieldKey[] = [
+  "preferredDisplayName",
+  "legalFirstName",
+  "legalLastName",
+  "phoneE164",
+  // brokerageOffice is absent on purpose: FortMark assigns it. It is rendered
+  // below as a locked value, never as an input.
+  "licenseNumber",
+  "licenseExpiration",
+  "nrdsNumber",
+];
+
+const PRESENCE_FIELDS: readonly ProfileFieldKey[] = [
+  "professionalTitle",
+  "locationDisplay",
+  "businessEmail",
+  "whatsappPhoneE164",
+  "linkedinUrl",
+  "instagramUrl",
+  "facebookUrl",
+  "personalWebsiteUrl",
+  "professionalWebsiteUrl",
+];
 
 /** Comma-separated list fields. */
 const LIST_FIELDS = [
@@ -88,6 +98,7 @@ const EMPTY: ProfileDetail = {
   personalWebsiteUrl: null,
   professionalWebsiteUrl: null,
   whatsappPhoneE164: null,
+  businessEmail: null,
   completion: 0,
 };
 
@@ -96,9 +107,10 @@ type FormState = Record<string, string>;
 function toForm(profile: ProfileDetail | null): FormState {
   const p = profile ?? EMPTY;
   const form: FormState = {};
-  for (const { key } of TEXT_FIELDS) form[key] = p[key] ?? "";
+  const row = p as unknown as Record<string, unknown>;
+  for (const key of TEXT_FIELDS) form[key] = (row[key] as string | null) ?? "";
   for (const { key } of LIST_FIELDS) form[key] = p[key].join(", ");
-  for (const { key } of PRESENCE_FIELDS) form[key] = p[key] ?? "";
+  for (const key of PRESENCE_FIELDS) form[key] = (row[key] as string | null) ?? "";
   form.licenseState = p.licenseState ?? "";
   form.licenseType = p.licenseType ?? "";
   form.biography = p.biography ?? "";
@@ -121,6 +133,14 @@ export function ProfileEditor({
   const [form, setForm] = React.useState<FormState>(() => toForm(initial));
   const [completion, setCompletion] = React.useState(initial?.completion ?? 0);
   const [save, setSave] = React.useState<SaveState>({ status: "idle" });
+  // Same contract the wizard consumes: field name -> messages.
+  const [fieldErrors, setFieldErrors] = React.useState<
+    Partial<Record<ProfileFieldKey, string[]>>
+  >({});
+  // Local to this component, like the wizard's. Never a global store.
+  const [imageUrl, setImageUrl] = React.useState<string | null>(
+    (initial as { imageUrl?: string | null } | null)?.imageUrl ?? null
+  );
 
   const set = (key: string, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -138,15 +158,32 @@ export function ProfileEditor({
         body: JSON.stringify(form),
       });
       if (!response.ok) {
+        const detail = (await response.json().catch(() => null)) as
+          | { fieldErrors?: Partial<Record<ProfileFieldKey, string[]>>; formErrors?: string[] }
+          | null;
+        const fields = detail?.fieldErrors ?? {};
+        setFieldErrors(fields);
+        const invalid = Object.keys(fields) as ProfileFieldKey[];
         setSave({
           status: "error",
           message:
-            response.status === 400
-              ? "Some values could not be saved. Check the highlighted formats and try again."
-              : "Your profile could not be saved right now. Nothing else is affected.",
+            invalid.length > 0
+              ? `Check ${invalid.length === 1 ? "the highlighted field" : `${invalid.length} highlighted fields`} and try again.`
+              : (detail?.formErrors?.[0] ??
+                "Your profile could not be saved right now. Nothing else is affected."),
         });
+        // Focus the first rejected control, in render order.
+        const order = [...TEXT_FIELDS, ...PRESENCE_FIELDS];
+        const first = order.find((f) => invalid.includes(f));
+        if (first) {
+          requestAnimationFrame(() => {
+            const el = document.getElementById(`field-${first}`);
+            if (el instanceof HTMLElement) el.focus();
+          });
+        }
         return;
       }
+      setFieldErrors({});
       const body = (await response.json()) as {
         profile: ProfileDetail | null;
         completion: number;
@@ -189,17 +226,34 @@ export function ProfileEditor({
         </div>
       </div>
 
-      {TEXT_FIELDS.map(({ key, label, ...rest }) => (
-        <div key={key} className="space-y-1.5">
-          <Label htmlFor={`profile-${key}`}>{label}</Label>
-          <Input
-            id={`profile-${key}`}
-            value={form[key] ?? ""}
-            onChange={(e) => set(key, e.target.value)}
-            disabled={saving}
-            {...rest}
-          />
+      <ProfileImageUpload
+        currentUrl={imageUrl}
+        displayName={form.preferredDisplayName || "FortMark"}
+        onUploaded={setImageUrl}
+        disabled={saving}
+      />
+
+      <div className="space-y-1.5">
+        <p className="text-[13px] font-medium text-foreground">Brokerage</p>
+        <div className="flex items-center gap-2 rounded-panel border border-border bg-foreground/[0.03] px-3 py-2.5">
+          <Lock aria-hidden className="size-3.5 shrink-0 text-foreground/55" />
+          <span className="truncate text-[13px] font-semibold text-foreground">
+            {FORTMARK_BROKERAGE_NAME}
+          </span>
+          <span className="sr-only">Assigned by FortMark and cannot be changed.</span>
         </div>
+        <p className="text-[12px] text-foreground/55">Assigned by FortMark</p>
+      </div>
+
+      {TEXT_FIELDS.map((key) => (
+        <ProfileField
+          key={key}
+          name={key}
+          value={form[key] ?? ""}
+          onValueChange={(v: string) => set(key, v)}
+          error={fieldErrors[key]?.[0] ?? null}
+          disabled={saving}
+        />
       ))}
 
       <div className="grid grid-cols-2 gap-3">
@@ -263,17 +317,15 @@ export function ProfileEditor({
           normalised to https and anything unsafe is discarded on save. Leave a
           field empty to hide it.
         </p>
-        {PRESENCE_FIELDS.map(({ key, label, ...rest }) => (
-          <div key={key} className="space-y-1.5">
-            <Label htmlFor={`profile-${key}`}>{label}</Label>
-            <Input
-              id={`profile-${key}`}
-              value={form[key] ?? ""}
-              onChange={(e) => set(key, e.target.value)}
-              disabled={saving}
-              {...rest}
-            />
-          </div>
+        {PRESENCE_FIELDS.map((key) => (
+          <ProfileField
+            key={key}
+            name={key}
+            value={form[key] ?? ""}
+            onValueChange={(v: string) => set(key, v)}
+            error={fieldErrors[key]?.[0] ?? null}
+            disabled={saving}
+          />
         ))}
       </fieldset>
 

@@ -111,6 +111,25 @@ export const professionalProfiles = pgTable(
     professionalWebsiteUrl: text("professional_website_url"),
     /** Separate from `phoneE164` — many agents use a different WhatsApp line. */
     whatsappPhoneE164: text("whatsapp_phone_e164"),
+  /**
+   * Public/business contact address, distinct from the Clerk sign-in address.
+   *
+   * `dashboard_users.primary_email` is the verified account email and is
+   * read-only here — the onboarding wizard shows it but must never change it.
+   * This is the address a professional chooses to publish, which is frequently
+   * not the one they log in with.
+   */
+  businessEmail: text("business_email"),
+  /**
+   * Last onboarding step the user completed, so the wizard can resume.
+   *
+   * Nullable and additive: null means "never started", which is also what
+   * every pre-existing row reads as. Whether onboarding is FINISHED is not
+   * stored here — `dashboard_users.onboarding_complete` already answers that,
+   * and duplicating it as a status column would create two sources of truth
+   * that can disagree.
+   */
+  onboardingStep: integer("onboarding_step"),
     /** Free-form lists stored as jsonb arrays of trimmed strings. */
     languages: jsonb("languages").$type<string[]>().notNull().default([]),
     specialties: jsonb("specialties").$type<string[]>().notNull().default([]),
@@ -144,6 +163,17 @@ export const profileImages = pgTable(
     /** The image currently shown. Never overwritten by a failed processing run. */
     activeImageUrl: text("active_image_url"),
     processedImageUrl: text("processed_image_url"),
+    /**
+     * The Blob object key for the active upload, e.g.
+     * `profile-images/<user-uuid>/<upload-uuid>.jpg`.
+     *
+     * Stored separately from the display URL because deletion and the
+     * ownership-prefix check both need the pathname, and deriving it back out
+     * of a CDN URL is guesswork that breaks the moment the URL shape changes.
+     * Null for rows whose active image is still the Clerk-hosted one — there is
+     * nothing of ours to delete in that case.
+     */
+    storagePathname: text("storage_pathname"),
     processingStatus: imageProcessingStatus("processing_status")
       .notNull()
       .default("clerk_only"),

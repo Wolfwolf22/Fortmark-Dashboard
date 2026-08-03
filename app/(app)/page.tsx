@@ -1,7 +1,11 @@
 import { BentoGrid } from "@/components/home/bento-grid";
 import { HomeIdentityCard } from "@/components/home/home-identity-card";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
-import { getHomeIdentityCard } from "@/lib/profile/shell";
+import { getHomeIdentityCard, shouldRedirectToOnboarding } from "@/lib/profile/shell";
+import { ROUTES } from "@/lib/routes";
+import { ONBOARDING_DEFERRAL_COOKIE, isDeferred } from "@/lib/profile/deferral";
 
 /**
  * Home — the permanent identity card plus the reorderable bento grid. Title
@@ -23,6 +27,25 @@ export const revalidate = 0;
 
 export default async function HomePage() {
   const session = await getSession();
+
+  // First approved login opens the wizard automatically.
+  //
+  // Done HERE, in a server component, rather than in middleware: the decision
+  // needs the profile row, and middleware must never touch the database.
+  //
+  // "Complete later" sets a session cookie, so the choice survives navigation
+  // rather than suppressing a single redirect. A query parameter could not do
+  // this: navigate away and back and the wizard forced itself open again.
+  //
+  // The cookie authorizes nothing. Every other condition — session, allowlist,
+  // both flags, a reachable database, incomplete onboarding — is still
+  // required, and the Home card keeps its setup callout, so the prompt is
+  // deferred rather than lost.
+  const jar = await cookies();
+  const deferred = isDeferred(jar.get(ONBOARDING_DEFERRAL_COOKIE)?.value);
+  if (session && !deferred && (await shouldRedirectToOnboarding(session.user))) {
+    redirect(ROUTES.onboarding);
+  }
   // `session` is non-null here in practice: the enclosing layout redirects an
   // anonymous visitor before this renders. The guard is belt-and-braces, and it
   // is the ONLY branch that can omit the card.

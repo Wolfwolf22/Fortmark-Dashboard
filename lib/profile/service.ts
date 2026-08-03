@@ -27,11 +27,31 @@ import { decideAccess } from "../auth/dashboard-access.ts";
 import { profileDatabaseEnabled, type EnvLike } from "../flags.ts";
 import { resolveDbRole } from "./roles.ts";
 import {
+  FORTMARK_BROKERAGE_NAME,
+  isBrokerageTampering,
   licenseDetailsChanged,
   normalizeProfileUpdate,
+  normalizeProfileUpdatePartial,
   profileCompletion,
+  profileUpdateSchema,
   type NormalizedProfileUpdate,
 } from "./normalize.ts";
+import {
+  LAST_STEP,
+  droppedValueErrors,
+  normalizeStep,
+  stepByNumber,
+  stepSchema,
+  toValidationFailure,
+  type ValidationFailure,
+} from "./onboarding.ts";
+import { deleteProfileImage } from "./image-storage.ts";
+
+import { z } from "zod";
+
+/** One wording for a refused brokerage change, shared by every write path. */
+const BROKERAGE_IMMUTABLE_MESSAGE =
+  "Brokerage is assigned by FortMark and cannot be changed.";
 
 /** Keys that must never appear in audit metadata, whatever the caller passes. */
 const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
@@ -170,6 +190,9 @@ export async function syncCurrentUser(
           legalFirstName: first ?? null,
           legalLastName: rest.length ? rest.join(" ") : null,
           preferredDisplayName: identity.name ?? null,
+          // Every FortMark profile belongs to FortMark. Set at creation so a
+          // row is never briefly null and never depends on a later edit.
+          brokerageOffice: FORTMARK_BROKERAGE_NAME,
         })
         .returning();
       profile = created[0];
@@ -252,7 +275,12 @@ export async function getOwnProfile(
 
 export type UpdateResult =
   | { ok: true; completion: number; licenseReset: boolean }
-  | { ok: false; reason: "unavailable" | "no_record" | "invalid" };
+  | {
+      ok: false;
+      reason: "unavailable" | "no_record" | "invalid";
+      /** Same contract the onboarding API returns, so one client shape serves both. */
+      validation?: ValidationFailure;
+    };
 
 /**
  * Update the caller's own profile.
@@ -270,11 +298,42 @@ export async function updateOwnProfile(
   const db = getDb();
   if (!db) return { ok: false, reason: "unavailable" };
 
+  const submitted = (raw ?? {}) as Record<string, unknown>;
+  const editable = Object.keys(profileUpdateSchema.shape) as (keyof NormalizedProfileUpdate)[];
+
+  // The editor cannot change the brokerage either. A read-only input is a
+  // suggestion; this is the rule.
+  if (isBrokerageTampering(raw)) {
+    return {
+      ok: false,
+      reason: "invalid",
+      validation: {
+        error: "validation_failed",
+        fieldErrors: { brokerageOffice: [BROKERAGE_IMMUTABLE_MESSAGE] },
+        formErrors: [],
+      },
+    };
+  }
+
   let next: NormalizedProfileUpdate;
   try {
     next = normalizeProfileUpdate(raw);
-  } catch {
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return { ok: false, reason: "invalid", validation: toValidationFailure(error, editable) };
+    }
     return { ok: false, reason: "invalid" };
+  }
+
+  // Same reporting the wizard gets: a value that normalised away to null is
+  // told to the user rather than silently dropped from a "saved" profile.
+  const dropped = droppedValueErrors(submitted, next, editable);
+  if (Object.keys(dropped).length > 0) {
+    return {
+      ok: false,
+      reason: "invalid",
+      validation: { error: "validation_failed", fieldErrors: dropped, formErrors: [] },
+    };
   }
 
   try {
@@ -292,7 +351,12 @@ export async function updateOwnProfile(
 
     await db
       .update(professionalProfiles)
-      .set({ ...next, profileCompletionPercent: completion, updatedAt: new Date() })
+      .set({
+        ...next,
+        brokerageOffice: FORTMARK_BROKERAGE_NAME,
+        profileCompletionPercent: completion,
+        updatedAt: new Date(),
+      })
       .where(eq(professionalProfiles.userId, current.user.id));
 
     await writeAuditEvent("profile_updated", {
@@ -306,6 +370,360 @@ export async function updateOwnProfile(
   } catch {
     return { ok: false, reason: "unavailable" };
   }
+}
+
+export type StepSaveResult =
+  | { ok: true; completion: number; onboardingStep: number }
+  | {
+      ok: false;
+      reason: "unavailable" | "no_record" | "invalid" | "unknown_step";
+      /** Present only for `invalid`. Keyed by UI field name, never by column. */
+      validation?: ValidationFailure;
+    };
+
+/**
+ * The fields completion is scored from, read off a stored row.
+ *
+ * A step save only carries its own fields, so scoring the submitted payload
+ * alone would count everything else as empty and make the percentage fall
+ * every time a user saved an early step. Completion is therefore always
+ * computed from the stored row MERGED with the incoming step.
+ */
+function completionSourceFromRow(
+  profile: SyncedPrincipal["profile"]
+): Partial<NormalizedProfileUpdate> {
+  return {
+    preferredDisplayName: profile.preferredDisplayName,
+    legalFirstName: profile.legalFirstName,
+    legalLastName: profile.legalLastName,
+    phoneE164: profile.phoneE164,
+    brokerageOffice: profile.brokerageOffice,
+    licenseState: profile.licenseState,
+    licenseType: profile.licenseType,
+    licenseNumber: profile.licenseNumber,
+    licenseExpiration: profile.licenseExpiration,
+    biography: profile.biography,
+    languages: profile.languages ?? [],
+    specialties: profile.specialties ?? [],
+    professionalTitle: profile.professionalTitle,
+    locationDisplay: profile.locationDisplay,
+  };
+}
+
+/**
+ * Save one onboarding step for the caller.
+ *
+ * Scoped by the session-resolved `clerkUserId`, exactly like every other write
+ * here — no identifier from the request body is consulted, so no request shape
+ * addresses another user's row.
+ *
+ * Idempotent by construction: the write sets this step's fields to normalised
+ * values derived only from the payload, so repeating the same request produces
+ * the same row. `onboarding_step` moves forward only — replaying an earlier
+ * step cannot rewind a user who has since progressed, which is what makes a
+ * retry after a flaky response safe.
+ *
+ * Completion is never written from the step alone; see
+ * `completionSourceFromRow`.
+ */
+export async function saveOnboardingStep(
+  clerkUserId: string,
+  stepNumber: unknown,
+  raw: unknown,
+  env: EnvLike = process.env
+): Promise<StepSaveResult> {
+  if (!profileDatabaseEnabled(env)) return { ok: false, reason: "unavailable" };
+  const db = getDb();
+  if (!db) return { ok: false, reason: "unavailable" };
+
+  const step = stepByNumber(stepNumber);
+  if (!step) return { ok: false, reason: "unknown_step" };
+
+  const submitted = (raw ?? {}) as Record<string, unknown>;
+
+  // Same refusal as completion. `normalizeStep` would strip the key silently,
+  // which is safe but dishonest — the caller would be told the step saved.
+  if (isBrokerageTampering(raw)) {
+    return {
+      ok: false,
+      reason: "invalid",
+      validation: {
+        error: "validation_failed",
+        fieldErrors: { brokerageOffice: [BROKERAGE_IMMUTABLE_MESSAGE] },
+        formErrors: [],
+      },
+    };
+  }
+
+  let fields: Partial<NormalizedProfileUpdate>;
+  try {
+    fields = normalizeStep(step, raw);
+  } catch (error) {
+    // Schema violation — report it per field, using the step's own field list
+    // so the response cannot confirm a field outside this step.
+    if (error instanceof z.ZodError) {
+      return { ok: false, reason: "invalid", validation: toValidationFailure(error, step.fields) };
+    }
+    return { ok: false, reason: "invalid" };
+  }
+
+  // Values that parsed but normalised away to null. The normalisers are
+  // forgiving by design, so without this the user would see a "saved" step
+  // with their input silently missing.
+  const dropped = droppedValueErrors(submitted, fields, step.fields);
+  if (Object.keys(dropped).length > 0) {
+    return {
+      ok: false,
+      reason: "invalid",
+      validation: { error: "validation_failed", fieldErrors: dropped, formErrors: [] },
+    };
+  }
+
+  try {
+    const current = await getOwnProfile(clerkUserId, env);
+    if (!current) return { ok: false, reason: "no_record" };
+
+    const merged = { ...completionSourceFromRow(current.profile), ...fields };
+    const completion = profileCompletion(merged);
+    // Forward-only. A replayed earlier step must not rewind the resume point.
+    const onboardingStep = Math.max(current.profile.onboardingStep ?? 0, step.step);
+
+    await db
+      .update(professionalProfiles)
+      .set({
+        ...fields,
+        // Assigned, not submitted. Repaired on every write so a row can never
+        // drift to null or to a stale value from an older client.
+        brokerageOffice: FORTMARK_BROKERAGE_NAME,
+        profileCompletionPercent: completion,
+        onboardingStep,
+        updatedAt: new Date(),
+      })
+      .where(eq(professionalProfiles.userId, current.user.id));
+
+    await writeAuditEvent("profile_updated", {
+      actorUserId: current.user.id,
+      targetUserId: current.user.id,
+      // Step id and score only — never a submitted value.
+      metadata: { onboardingStep: step.step, stepId: step.id, completion },
+    });
+
+    return { ok: true, completion, onboardingStep };
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+}
+
+export type CompleteResult =
+  | { ok: true; completion: number; completedAt: string }
+  | {
+      ok: false;
+      reason: "unavailable" | "no_record" | "invalid";
+      validation?: ValidationFailure;
+    };
+
+/**
+ * Finish onboarding.
+ *
+ * Runs the FULL update contract rather than a step schema, then stamps
+ * `dashboard_users.onboarding_complete`. That timestamp is the only record
+ * that onboarding finished — there is no status column mirroring it, so the
+ * two can never disagree.
+ *
+ * `dashboard_users.status` is deliberately left alone. Nothing in this
+ * application transitions it today, and it is the field that WOULD become
+ * access-relevant if database-backed access control were ever enabled. Writing
+ * it here would quietly make a profile action touch an authorization column,
+ * which is exactly the coupling this release is built to avoid.
+ */
+export async function completeOnboarding(
+  clerkUserId: string,
+  raw: unknown,
+  env: EnvLike = process.env
+): Promise<CompleteResult> {
+  if (!profileDatabaseEnabled(env)) return { ok: false, reason: "unavailable" };
+  const db = getDb();
+  if (!db) return { ok: false, reason: "unavailable" };
+
+  // Brokerage is assigned, so a request naming a different one is refused
+  // rather than silently stripped — a caller must never be told a write
+  // succeeded when the value it asked for was discarded.
+  if (isBrokerageTampering(raw)) {
+    return {
+      ok: false,
+      reason: "invalid",
+      validation: {
+        error: "validation_failed",
+        fieldErrors: { brokerageOffice: [BROKERAGE_IMMUTABLE_MESSAGE] },
+        formErrors: [],
+      },
+    };
+  }
+
+  // PARTIAL on purpose. The full normaliser fills every absent key with null,
+  // which is right for scoring and wrong for an UPDATE: it would blank every
+  // column the request did not mention, destroying the draft this very call is
+  // meant to finish.
+  let next: Partial<NormalizedProfileUpdate>;
+  try {
+    next = normalizeProfileUpdatePartial(raw);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      // Full validation, so every editable field is in scope.
+      const all = Object.keys(profileUpdateSchema.shape) as (keyof NormalizedProfileUpdate)[];
+      return { ok: false, reason: "invalid", validation: toValidationFailure(error, all) };
+    }
+    return { ok: false, reason: "invalid" };
+  }
+
+  try {
+    const current = await getOwnProfile(clerkUserId, env);
+    if (!current) return { ok: false, reason: "no_record" };
+
+    // Already finished. Return the EXISTING timestamp and write nothing —
+    // that is what makes a duplicate completion idempotent, and it is also
+    // what stops a retry from appending a second audit row.
+    if (current.user.onboardingComplete) {
+      return {
+        ok: true,
+        completion: current.profile.profileCompletionPercent ?? profileCompletion(
+          completionSourceFromRow(current.profile)
+        ),
+        completedAt: new Date(current.user.onboardingComplete).toISOString(),
+      };
+    }
+
+    const merged = { ...completionSourceFromRow(current.profile), ...next };
+    const completion = profileCompletion(merged);
+    const completedAt = new Date();
+
+    // Both writes go out as ONE Neon HTTP batch, which the server applies in a
+    // single transaction. `db.transaction()` is not available on this driver —
+    // drizzle's neon-http adapter throws "No transactions support in neon-http
+    // driver" — so a batch is the strongest atomicity the execution model
+    // offers. It is enough for the invariant that matters: the completion
+    // timestamp can never be stamped while the profile write is lost, or the
+    // reverse.
+    await db.batch([
+      db
+        .update(professionalProfiles)
+        .set({
+          ...next,
+          brokerageOffice: FORTMARK_BROKERAGE_NAME,
+          profileCompletionPercent: completion,
+          onboardingStep: LAST_STEP,
+          updatedAt: completedAt,
+        })
+        .where(eq(professionalProfiles.userId, current.user.id)),
+      db
+        .update(dashboardUsers)
+        .set({ onboardingComplete: completedAt, updatedAt: completedAt })
+        .where(eq(dashboardUsers.id, current.user.id)),
+    ]);
+
+    // Written only after both rows landed, and only on the transition — so it
+    // records the event once rather than once per retry. Outside the batch on
+    // purpose: auditing must never be able to fail the request it describes.
+    await writeAuditEvent("profile_updated", {
+      actorUserId: current.user.id,
+      targetUserId: current.user.id,
+      // Category and score only. No field values, no email, no licence, no
+      // NRDS, no raw Clerk identifier.
+      metadata: { onboarding: "completed", completion },
+    });
+
+    return { ok: true, completion, completedAt: completedAt.toISOString() };
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+}
+
+export type ImageSaveResult =
+  | { ok: true; url: string; status: "uploaded" }
+  | { ok: false; reason: "unavailable" | "no_record" | "provider_unavailable" };
+
+/**
+ * Activate a freshly uploaded profile photo.
+ *
+ * The order exists to guarantee one thing: the profile never points at an
+ * asset that is not there, and a failure never costs the user the photo they
+ * already had.
+ *
+ *   1. the Blob is already uploaded to a NEW immutable path (nothing
+ *      overwritten, so the live image is untouched at this point)
+ *   2. resolve the caller's own row from the session-derived Clerk id
+ *   3. remember the superseded pathname BEFORE overwriting the column
+ *   4. write the new URL and pathname
+ *   5. only once that write succeeded, delete the superseded object
+ *
+ * If step 4 fails the caller deletes the orphan and the previous image is
+ * still live. If step 5 fails the replacement still stands — a leaked object
+ * costs storage, whereas failing the request would cost the user their upload.
+ *
+ * `processedImageUrl` stays null and the status is `uploaded`, not `ready`:
+ * no processor has run, and claiming otherwise would make the display chain
+ * lie about where the image came from.
+ */
+export async function activateProfileImage(
+  clerkUserId: string,
+  uploaded: { url: string; pathname: string },
+  env: EnvLike = process.env
+): Promise<ImageSaveResult> {
+  if (!profileDatabaseEnabled(env)) return { ok: false, reason: "unavailable" };
+  const db = getDb();
+  if (!db) return { ok: false, reason: "unavailable" };
+
+  try {
+    const current = await getOwnProfile(clerkUserId, env);
+    if (!current) return { ok: false, reason: "no_record" };
+
+    // Captured before the update, or it would be lost and the object leaked.
+    const superseded = current.image?.storagePathname ?? null;
+
+    if (current.image) {
+      await db
+        .update(profileImages)
+        .set({
+          activeImageUrl: uploaded.url,
+          storagePathname: uploaded.pathname,
+          processingStatus: "uploaded",
+          updatedAt: new Date(),
+        })
+        .where(eq(profileImages.id, current.image.id));
+    } else {
+      await db.insert(profileImages).values({
+        userId: current.user.id,
+        activeImageUrl: uploaded.url,
+        storagePathname: uploaded.pathname,
+        processingStatus: "uploaded",
+      });
+    }
+
+    // Only now, and only inside this user's own prefix.
+    if (superseded && superseded !== uploaded.pathname) {
+      await deleteProfileImage(current.user.id, superseded);
+    }
+
+    await writeAuditEvent("profile_updated", {
+      actorUserId: current.user.id,
+      targetUserId: current.user.id,
+      // Category only — never the URL, the pathname or any identifier.
+      metadata: { profileImage: "replaced" },
+    });
+
+    return { ok: true, url: uploaded.url, status: "uploaded" };
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+}
+
+/** The internal row id for the caller, used to build their storage prefix. */
+export async function ownDashboardUserId(
+  clerkUserId: string,
+  env: EnvLike = process.env
+): Promise<string | null> {
+  const current = await getOwnProfile(clerkUserId, env);
+  return current?.user.id ?? null;
 }
 
 /** Counts only. Never identifiers, emails or configuration values. */
