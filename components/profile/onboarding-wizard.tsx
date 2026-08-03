@@ -21,12 +21,20 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ProfileField, ReadOnlyField } from "@/components/profile/profile-field";
 import { ProfileImageUpload } from "@/components/profile/profile-image-upload";
-import { PROFILE_FIELDS, PUBLIC_SURFACE_FIELDS } from "@/lib/profile/fields";
+import { Lock } from "lucide-react";
+import {
+  PROFILE_FIELDS,
+  PUBLIC_SURFACE_FIELDS,
+  isSystemAssignedField,
+} from "@/lib/profile/fields";
+import { FORTMARK_BROKERAGE_NAME } from "@/lib/profile/normalize";
 import {
   type OnboardingStep,
   type ProfileFieldKey,
+  earliestStepForFields,
   nextStep as nextStepFor,
   previousStep as previousStepFor,
+  stepById,
 } from "@/lib/profile/onboarding";
 import { apiPath, ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -184,10 +192,31 @@ export function OnboardingWizard({
         const detail = (await res.json().catch(() => null)) as
           | { fieldErrors?: FieldErrors; formErrors?: string[] }
           | null;
-        if (detail?.fieldErrors) setFieldErrors(detail.fieldErrors);
+        const fields = detail?.fieldErrors ?? {};
+        const invalid = Object.keys(fields);
+        setFieldErrors(fields);
+
+        // Review renders no inputs, so an error left here would be invisible —
+        // which is exactly how this failed before. Send the user back to the
+        // step that owns the earliest invalid field, with every saved value
+        // intact, so the message appears beside a control they can fix.
+        const owning = invalid.length > 0 ? earliestStepForFields(invalid) : null;
+        if (owning) {
+          setCurrent(owning);
+          setFormError("Review the highlighted field before finishing.");
+          requestAnimationFrame(() => {
+            const first = owning.fields.find((f) => invalid.includes(f));
+            const el = first ? document.getElementById(`field-${first}`) : null;
+            if (el instanceof HTMLElement) el.focus();
+          });
+          return;
+        }
+
+        // Not a validation problem — say so honestly rather than sending the
+        // user hunting for a highlighted field that does not exist.
         setFormError(
           detail?.formErrors?.[0] ??
-            "Could not finish setup. Check the highlighted fields and try again."
+            "We could not finish setup right now. Your saved information is still here."
         );
         return;
       }
@@ -257,7 +286,7 @@ export function OnboardingWizard({
           />
         )}
 
-        {current.fields.map((key) => (
+        {current.fields.filter((key) => !isSystemAssignedField(key)).map((key) => (
           <ProfileField
             key={key}
             name={key}
@@ -266,6 +295,8 @@ export function OnboardingWizard({
             disabled={saving}
           />
         ))}
+
+        {current.id === "professional" && <LockedBrokerageField />}
 
         {current.id === "credentials" && (
           <p className="rounded-panel border border-border bg-foreground/[0.03] p-3 text-[12px] text-foreground/70">
@@ -339,6 +370,35 @@ export function OnboardingWizard({
   );
 }
 
+
+/**
+ * Brokerage, shown but never asked for.
+ *
+ * Deliberately NOT a disabled input: a disabled input is still a form control
+ * that a client could re-enable, and rendering one invites the reader to think
+ * the value is merely locked in the UI. It is not a form value at all — the
+ * server assigns it on every write — so this is plain text with a lock.
+ */
+function LockedBrokerageField() {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[13px] font-medium text-foreground">
+        {PROFILE_FIELDS.brokerageOffice.label}
+      </p>
+      <div className="flex items-center gap-2 rounded-panel border border-border bg-foreground/[0.03] px-3 py-2.5">
+        <Lock aria-hidden className="size-3.5 shrink-0 text-foreground/55" />
+        <span className="truncate text-[13px] font-semibold text-foreground">
+          {FORTMARK_BROKERAGE_NAME}
+        </span>
+        {/* The visible lock carries the meaning for sighted users; this says
+            the same thing to a screen reader without duplicating the value. */}
+        <span className="sr-only">Assigned by FortMark and cannot be changed.</span>
+      </div>
+      <p className="text-[12px] text-foreground/55">Assigned by FortMark</p>
+    </div>
+  );
+}
+
 /** Final read-back. Shows what will appear publicly, and what is missing. */
 function ReviewSummary({
   values,
@@ -355,8 +415,16 @@ function ReviewSummary({
           <p className="font-medium text-foreground">{accountEmail}</p>
         </div>
       )}
+      <div className="text-[13px]">
+        <span className="text-foreground/55">Brokerage</span>
+        <p className="flex items-center gap-1.5 font-medium text-foreground">
+          <Lock aria-hidden className="size-3 shrink-0 text-foreground/55" />
+          {FORTMARK_BROKERAGE_NAME}
+          <span className="font-normal text-foreground/55">— assigned by FortMark</span>
+        </p>
+      </div>
       <dl className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
-        {PUBLIC_SURFACE_FIELDS.map((key) => {
+        {PUBLIC_SURFACE_FIELDS.filter((key) => !isSystemAssignedField(key)).map((key) => {
           const v = values[key];
           return (
             <div key={key} className="min-w-0">
@@ -376,7 +444,8 @@ function ReviewSummary({
       </dl>
       <p className="text-[12px] text-foreground/55">
         These fields appear on My FortMark and your digital card. Anything left
-        blank simply does not appear.
+        blank simply does not appear, and none of them is required to finish —
+        you can add or update optional details later from Edit Profile.
       </p>
     </div>
   );

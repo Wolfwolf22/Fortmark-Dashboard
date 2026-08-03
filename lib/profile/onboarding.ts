@@ -69,7 +69,9 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
     step: 2,
     title: "Professional identity",
     description: "Your title, office and a short professional biography.",
-    fields: ["professionalTitle", "brokerageOffice", "locationDisplay", "biography"],
+    // No `brokerageOffice`: it is assigned by FortMark, not entered. The step
+    // still SHOWS it, as a locked value — see the wizard.
+    fields: ["professionalTitle", "locationDisplay", "biography"],
     skippable: true,
   },
   {
@@ -278,6 +280,37 @@ export function droppedValueErrors(
     }
   }
   return out;
+}
+
+/**
+ * The step that owns a field, or null when no step collects it.
+ *
+ * Derived from `ONBOARDING_STEPS` rather than written out, so a field cannot be
+ * moved between steps and leave a stale map behind.
+ */
+export function stepForField(key: ProfileFieldKey): OnboardingStep | null {
+  return ONBOARDING_STEPS.find((s) => s.fields.includes(key)) ?? null;
+}
+
+/**
+ * The earliest step containing any of these fields.
+ *
+ * This is what stops Review being a dead end. Completion validates the whole
+ * profile, so it can reject a value belonging to a step the user left long ago
+ * — and Review renders no inputs, so attaching the error there would show the
+ * user nothing at all. Routing back to the owning step puts the message beside
+ * the control that can actually fix it.
+ */
+export function earliestStepForFields(
+  keys: readonly string[]
+): OnboardingStep | null {
+  let best: OnboardingStep | null = null;
+  for (const key of keys) {
+    const step = stepForField(key as ProfileFieldKey);
+    if (!step) continue;
+    if (!best || step.step < best.step) best = step;
+  }
+  return best;
 }
 
 /**

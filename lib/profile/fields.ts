@@ -58,8 +58,9 @@ export const PROFILE_FIELDS: Record<ProfileFieldKey, FieldMeta> = {
   },
   brokerageOffice: {
     key: "brokerageOffice",
-    label: "Brokerage office",
+    label: "Brokerage",
     kind: "text",
+    hint: "Assigned by FortMark",
     maxLength: 160,
   },
   locationDisplay: {
@@ -154,6 +155,19 @@ export const PROFILE_FIELDS: Record<ProfileFieldKey, FieldMeta> = {
   specialties: { key: "specialties", label: "Specialties", kind: "text", maxLength: 400 },
   serviceAreas: { key: "serviceAreas", label: "Service areas", kind: "text", maxLength: 400 },
 };
+
+/**
+ * Fields the application assigns, which the user can never edit.
+ *
+ * Separated from the editable set so a form built by iterating fields cannot
+ * accidentally render an input for one — the omission is structural rather
+ * than something each surface has to remember.
+ */
+export const SYSTEM_ASSIGNED_FIELDS: readonly ProfileFieldKey[] = ["brokerageOffice"];
+
+export function isSystemAssignedField(key: ProfileFieldKey): boolean {
+  return SYSTEM_ASSIGNED_FIELDS.includes(key);
+}
 
 /** Fields whose value is only ever self-reported, never verified by FortMark. */
 export const SELF_REPORTED_FIELDS: readonly ProfileFieldKey[] = [

@@ -15,7 +15,9 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Lock } from "lucide-react";
 import { ProfileField } from "@/components/profile/profile-field";
+import { FORTMARK_BROKERAGE_NAME } from "@/lib/profile/normalize";
 import { ProfileImageUpload } from "@/components/profile/profile-image-upload";
 import type { ProfileFieldKey } from "@/lib/profile/onboarding";
 import { Label } from "@/components/ui/label";
@@ -47,7 +49,8 @@ const TEXT_FIELDS: readonly ProfileFieldKey[] = [
   "legalFirstName",
   "legalLastName",
   "phoneE164",
-  "brokerageOffice",
+  // brokerageOffice is absent on purpose: FortMark assigns it. It is rendered
+  // below as a locked value, never as an input.
   "licenseNumber",
   "licenseExpiration",
   "nrdsNumber",
@@ -229,6 +232,18 @@ export function ProfileEditor({
         onUploaded={setImageUrl}
         disabled={saving}
       />
+
+      <div className="space-y-1.5">
+        <p className="text-[13px] font-medium text-foreground">Brokerage</p>
+        <div className="flex items-center gap-2 rounded-panel border border-border bg-foreground/[0.03] px-3 py-2.5">
+          <Lock aria-hidden className="size-3.5 shrink-0 text-foreground/55" />
+          <span className="truncate text-[13px] font-semibold text-foreground">
+            {FORTMARK_BROKERAGE_NAME}
+          </span>
+          <span className="sr-only">Assigned by FortMark and cannot be changed.</span>
+        </div>
+        <p className="text-[12px] text-foreground/55">Assigned by FortMark</p>
+      </div>
 
       {TEXT_FIELDS.map((key) => (
         <ProfileField
