@@ -18,7 +18,19 @@
  */
 import * as React from "react";
 import Link from "next/link";
-import { Check, Copy, Download, Globe, Mail, MessageCircle, Phone, SquarePen } from "lucide-react";
+import {
+  Briefcase,
+  Check,
+  Copy,
+  Download,
+  Facebook,
+  Globe,
+  Instagram,
+  Linkedin,
+  Mail,
+  MessageCircle,
+  SquarePen,
+} from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -49,6 +61,18 @@ import { cn, initials } from "@/lib/utils";
  * description is better than an accurate answer to a different question.
  */
 export const DEFAULT_PROFESSIONAL_TITLE = "Real Estate Professional";
+
+/**
+ * A URL as a person would read it.
+ *
+ * `https://` and a trailing slash are noise in a detail cell and make long
+ * values wrap worse. The full href is still what any action links to — this
+ * only affects the text.
+ */
+function displayUrl(url: string | null): string | null {
+  if (!url) return null;
+  return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+}
 
 /** One detail cell. Absent optional values hold their place and say so. */
 function Detail({
@@ -160,9 +184,43 @@ export function DigitalBusinessCard({
   const email = data.businessEmail;
   const phone = data.phoneE164;
   const whatsapp = toWhatsApp(data.whatsappPhoneE164);
-  const website =
-    safeLinkUrl(data.links.find((l) => l.kind === "professionalWebsite")?.href) ??
-    safeLinkUrl(data.links.find((l) => l.kind === "website")?.href);
+
+  // Every href re-checked against the scheme allowlist on the way out. These
+  // round-trip through the database, so the read gate matters as much as the
+  // write gate did.
+  const linkOf = (kind: string) =>
+    safeLinkUrl(data.links.find((l) => l.kind === kind)?.href);
+  const personalWebsite = linkOf("website");
+  const professionalWebsite = linkOf("professionalWebsite");
+  const linkedin = linkOf("linkedin");
+  const instagram = linkOf("instagram");
+  const facebook = linkOf("facebook");
+  // Kept separate above so the details section can name each one, but the
+  // exports want a single canonical site, professional first.
+  const website = professionalWebsite ?? personalWebsite;
+
+  /**
+   * The top row is PUBLIC/SOCIAL actions only.
+   *
+   * Email and Call are direct-contact actions, and this card is the agent
+   * looking at what they hand to a client — the values still belong on the
+   * card, but as readable detail rather than a button. WhatsApp stays because
+   * it is an external `wa.me` link that behaves like the social entries rather
+   * than like a self-directed shortcut.
+   */
+  const socialActions = [
+    linkedin && { href: linkedin, icon: Linkedin, label: "LinkedIn" },
+    instagram && { href: instagram, icon: Instagram, label: "Instagram" },
+    facebook && { href: facebook, icon: Facebook, label: "Facebook" },
+    personalWebsite && { href: personalWebsite, icon: Globe, label: "Website" },
+    professionalWebsite && {
+      href: professionalWebsite,
+      icon: Briefcase,
+      label: "Professional site",
+    },
+    whatsapp && { href: whatsapp, icon: MessageCircle, label: "WhatsApp" },
+  ].filter(Boolean) as Array<{ href: string; icon: typeof Mail; label: string }>;
+
   const joined = formatJoinedAt(data.joinedAt);
   const title = data.professionalTitle ?? DEFAULT_PROFESSIONAL_TITLE;
 
@@ -267,18 +325,20 @@ export function DigitalBusinessCard({
               <StatusPill status={data.profileStatus} />
             </div>
 
-            {/* Contact actions. Each appears only when its value exists, so the
-                row never offers something that cannot happen. */}
-            {(email || phone || whatsapp || website) && (
+            {/* Public/social actions only — no Email, no Call. The row vanishes
+                entirely when there is nothing to link to, rather than leaving
+                disabled placeholders behind. */}
+            {socialActions.length > 0 && (
               <div className="mt-6 flex flex-wrap gap-2">
-                {email && <ContactAction href={`mailto:${email}`} icon={Mail} label="Email" />}
-                {phone && <ContactAction href={`tel:${phone}`} icon={Phone} label="Call" />}
-                {whatsapp && (
-                  <ContactAction href={whatsapp} icon={MessageCircle} label="WhatsApp" external />
-                )}
-                {website && (
-                  <ContactAction href={website} icon={Globe} label="Website" external />
-                )}
+                {socialActions.map((a) => (
+                  <ContactAction
+                    key={a.label}
+                    href={a.href}
+                    icon={a.icon}
+                    label={a.label}
+                    external
+                  />
+                ))}
               </div>
             )}
 
@@ -299,7 +359,14 @@ export function DigitalBusinessCard({
                     fields people look for. */}
                 <Detail label="License type" value={data.licenseType} />
                 <Detail label="License state" value={data.licenseState} />
+                {/* Email and Phone read as information here rather than as
+                    buttons above. `email` is the business address only. */}
+                <Detail label="Email" value={email} />
+                <Detail label="Phone" value={formatPhoneDisplay(phone)} />
                 <Detail label="Member since" value={joined} />
+                <Detail label="Location" value={data.locationDisplay} />
+                <Detail label="Website" value={displayUrl(personalWebsite)} />
+                <Detail label="Professional site" value={displayUrl(professionalWebsite)} />
               </div>
             </section>
           </div>

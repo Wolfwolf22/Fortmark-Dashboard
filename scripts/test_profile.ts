@@ -2688,15 +2688,37 @@ const ALLOWED_ENV = {
       dcard.includes("const phone = data.phoneE164;"));
   check("the Digital Card does NOT filter self-contact away",
     !dcard.includes("selfCardLinks"));
-  // Actions, not rows: the card is shareable, so these must be tappable.
-  check("the Digital Card offers email and call actions",
-    dcard.includes('href={`mailto:${email}`}') && dcard.includes('href={`tel:${phone}`}'));
-  check("each contact action renders only when its value exists",
-    /\{email && <ContactAction/.test(dcard) && /\{phone && <ContactAction/.test(dcard));
+  // Email and Call are NOT top actions. This card is what an agent hands to a
+  // client; the values belong on it as readable detail, not as buttons that
+  // invite the agent to contact themselves. The top row is public/social only.
+  check("the top action row offers no email action",
+    !dcard.includes('href={`mailto:${email}`}'));
+  check("the top action row offers no call action",
+    !dcard.includes('href={`tel:${phone}`}'));
+  check("email and phone are still shown, as details",
+    dcard.includes('<Detail label="Email" value={email} />') &&
+      dcard.includes('<Detail label="Phone" value={formatPhoneDisplay(phone)} />'));
+  check("the action row is built from social/web links only",
+    /const socialActions = \[/.test(dcard) &&
+      !/socialActions[\s\S]{0,400}mailto:/.test(dcard) &&
+      !/socialActions[\s\S]{0,400}tel:/.test(dcard));
+  check("the action row disappears cleanly when there is nothing to link to",
+    dcard.includes("{socialActions.length > 0 && ("));
+  check("social actions render when present",
+    /linkedin && \{ href: linkedin/.test(dcard) &&
+      /personalWebsite && \{ href: personalWebsite/.test(dcard) &&
+      /professionalWebsite && \{/.test(dcard));
+  check("both websites are shown as readable text in details",
+    dcard.includes('<Detail label="Website" value={displayUrl(personalWebsite)} />') &&
+      dcard.includes('<Detail label="Professional site" value={displayUrl(professionalWebsite)} />'));
+  check("long values wrap instead of overflowing",
+    dcard.includes("break-words") && dcard.includes("min-w-0"));
   // Hidden on the self-card, so if it were absent here the value the user
   // typed would be visible on no surface at all.
+  // WhatsApp stays a top action: it is an external wa.me link that behaves
+  // like the social entries, not a self-directed shortcut.
   check("WhatsApp is published on the shareable card",
-    /\{whatsapp && \(\s*<ContactAction/.test(dcard) &&
+    /whatsapp && \{ href: whatsapp/.test(dcard) &&
       dcard.includes("toWhatsApp(data.whatsappPhoneE164)"));
   check("the card carries WhatsApp as data, not via the filtered links",
     readFileSync("lib/profile/home-card.ts", "utf8").includes("whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164)"));
@@ -2825,9 +2847,15 @@ const ALLOWED_ENV = {
 
   // Internal states are never published.
   const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
-  for (const internal of ["pending_profile", "suspended", "archived", "disabled"]) {
-    check(`the public card never names the internal state ${internal}`,
-      !dcard.includes(internal));
+  {
+    // Comments mention words like "disabled" in passing; only rendered code
+    // can leak an internal state name.
+    const dcardCode = dcard.split("\n")
+      .filter((l) => !/^\s*(\*|\/\/|\{\/\*)/.test(l)).join("\n");
+    for (const internal of ["pending_profile", "suspended", "archived"]) {
+      check(`the public card never names the internal state ${internal}`,
+        !dcardCode.includes(internal));
+    }
   }
   check("only two labels can ever reach the public card",
     Object.values(PROFILE_STATUS_LABEL).every((v) => v === "Active" || v === "Inactive"));
@@ -2938,6 +2966,57 @@ const ALLOWED_ENV = {
   check("the scroll body keeps bottom clearance", /px-5 pb-6 pt-6/.test(code));
   check("the header keeps the close button clear of the title",
     /SheetHeader className="border-b border-border p-4 pr-12"/.test(code));
+}
+
+
+// --- Contact export survives the UI change ---------------------------------
+//
+// The recurring hazard on this card: a display rule quietly becoming a data
+// rule. Email and Call left the action row; they must still reach the
+// clipboard block and the vCard, which are what a recipient actually keeps.
+{
+  const SRC = {
+    displayName: "Preview Test",
+    professionalTitle: "Preview Agent",
+    roleLabel: "Member",
+    brokerageOffice: "FORTMARK",
+    locationDisplay: "Fort Lauderdale, FL",
+    licenseState: "FL",
+    licenseType: "Broker Associate",
+    licenseNumber: "SL1234567",
+    nrdsNumber: "123456789",
+    email: "preview.test@example.com",
+    phoneE164: "+15555550100",
+  };
+  const blockText = buildContactBlock({ ...SRC, professionalWebsiteUrl: "https://example.com" });
+  check("Copy Contact still carries the email", blockText.includes("preview.test@example.com"));
+  // The block formats the number for a human reader, so assert the digits
+  // survive rather than a particular presentation.
+  check("Copy Contact still carries the phone",
+    blockText.replace(/\D/g, "").includes("5555550100"));
+
+  const vcf = buildVCard({ ...SRC, websiteUrl: "https://example.com" });
+  check("the vCard still carries the email",
+    /EMAIL[^\n]*preview\.test@example\.com/.test(vcf));
+  check("the vCard still carries the phone", /TEL[^\n]*\+15555550100/.test(vcf));
+  check("the vCard still carries the licence and NRDS",
+    vcf.includes("SL1234567") && vcf.includes("123456789"));
+
+  const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
+  // The export payloads must read the carried fields, not the rendered actions.
+  check("the vCard reads the carried email and phone, not the action row",
+    /buildVCard\(\{[\s\S]{0,420}email,\s*\n\s*phoneE164: phone,/.test(dcard));
+  check("the contact block reads the carried email and phone",
+    /buildContactBlock\(\{[\s\S]{0,420}email,\s*\n\s*phoneE164: phone,/.test(dcard));
+  check("the exported email is still the business address only",
+    dcard.includes("const email = data.businessEmail;"));
+
+  // The Home self-card is untouched by this pass.
+  const card = readFileSync("components/home/home-identity-card.tsx", "utf8");
+  check("the Home self-card still hides self-contact",
+    card.includes("selfCardLinks(data.links)"));
+  check("the Home self-card still exports the business email",
+    card.includes("email: data.businessEmail,"));
 }
 
 // --- Summary ---------------------------------------------------------------
