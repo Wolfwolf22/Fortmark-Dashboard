@@ -186,10 +186,30 @@ if (url && url !== "[SENSITIVE]") {
     const s = v.trim().toLowerCase();
     return s === "1" || s === "true" || s === "yes" || s === "on" ? "on" : "off";
   };
+  /**
+   * Mirrors `profileImageUploadEnabled` exactly — only the literal "1".
+   *
+   * It cannot share `on()` above. That helper is generous, so it would report
+   * `PROFILE_IMAGE_UPLOAD_ENABLED=true` as "on" while the application, which
+   * accepts only "1", has uploads OFF. A build log that disagrees with the
+   * running code is worse than no log: it would send someone hunting the Blob
+   * store for a failure whose cause is one word in the Vercel dashboard.
+   *
+   * `rejected` is called out separately rather than folded into "off" so that
+   * "never set" and "set to something this flag refuses" are distinguishable.
+   */
+  const strict = (name) => {
+    const v = process.env[name];
+    if (typeof v !== "string") return "unset";
+    return v === "1" ? "on" : "off (rejected — only the exact string 1 enables it)";
+  };
   console.log(
     `[migrate] flags PROFILE_DATABASE_ENABLED=${on("PROFILE_DATABASE_ENABLED")} ` +
       `PROFESSIONAL_PROFILE_UI_ENABLED=${on("PROFESSIONAL_PROFILE_UI_ENABLED")} ` +
       `DATABASE_ACCESS_CONTROL_ENABLED=${on("DATABASE_ACCESS_CONTROL_ENABLED")}`
+  );
+  console.log(
+    `[migrate] flags PROFILE_IMAGE_UPLOAD_ENABLED=${strict("PROFILE_IMAGE_UPLOAD_ENABLED")}`
   );
 }
 
