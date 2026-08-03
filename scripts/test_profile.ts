@@ -13,11 +13,15 @@
  * Run: npm run test:profile
  */
 import {
+  FORTMARK_BROKERAGE_NAME,
   cleanText,
+  isBrokerageTampering,
   licenseDetailsChanged,
   toProfileUrl,
   normalizeProfileUpdate,
+  normalizeProfileUpdatePartial,
   profileCompletion,
+  profileUpdateSchema,
   toE164,
   toIsoDate,
   toLicenseState,
@@ -67,11 +71,19 @@ import {
   previousStep,
   resumeStep,
   shouldOpenOnboarding,
+  earliestStepForFields,
   stepByNumber,
+  stepForField,
   stepSchema,
   stepsForRole,
 } from "../lib/profile/onboarding.ts";
-import { PROFILE_FIELDS, PUBLIC_SURFACE_FIELDS, SELF_REPORTED_FIELDS } from "../lib/profile/fields.ts";
+import {
+  PROFILE_FIELDS,
+  PUBLIC_SURFACE_FIELDS,
+  SELF_REPORTED_FIELDS,
+  SYSTEM_ASSIGNED_FIELDS,
+  isSystemAssignedField,
+} from "../lib/profile/fields.ts";
 import {
   ONBOARDING_DEFERRAL_COOKIE,
   ONBOARDING_DEFERRAL_PATH,
@@ -1756,10 +1768,23 @@ const ALLOWED_ENV = {
   check("step saves are scoped by the session clerk id",
     service.includes("saveOnboardingStep(\n  clerkUserId: string") ||
       /saveOnboardingStep\([\s\S]{0,80}clerkUserId: string/.test(service));
-  check("step saves resolve the row through getOwnProfile",
-    /saveOnboardingStep[\s\S]{0,1600}getOwnProfile\(clerkUserId/.test(service));
-  check("completion is scoped the same way",
-    /completeOnboarding[\s\S]{0,1600}getOwnProfile\(clerkUserId/.test(service));
+  // Scoped to the function BODY rather than a character window. The previous
+  // form was `fn[\s\S]{0,1600}getOwnProfile`, which failed the moment the
+  // function grew past the magic number even though the behaviour was
+  // unchanged — a distance limit measures formatting, not scoping.
+  const fnBody = (src: string, name: string): string => {
+    const at = src.indexOf(`export async function ${name}(`);
+    if (at < 0) return "";
+    const next = src.indexOf("\nexport ", at + 1);
+    return src.slice(at, next < 0 ? src.length : next);
+  };
+  for (const fn of ["saveOnboardingStep", "completeOnboarding"]) {
+    const body = fnBody(service, fn);
+    check(`${fn} resolves the row through getOwnProfile`,
+      body.length > 0 && body.includes("getOwnProfile(clerkUserId"));
+    check(`${fn} takes the clerk id from the session, not the body`,
+      /^\s*clerkUserId: string,/m.test(body));
+  }
 
   // Idempotency -------------------------------------------------------------
   check("onboarding_step only moves forward",
@@ -2360,6 +2385,217 @@ const ALLOWED_ENV = {
     env.includes("BLOB_READ_WRITE_TOKEN=") && /never NEXT_PUBLIC_/.test(env));
   check("no flag value is committed to .env.example",
     !/PROFILE_IMAGE_UPLOAD_ENABLED=1/.test(env) && !/BLOB_READ_WRITE_TOKEN=\S/.test(env));
+}
+
+
+// --- Onboarding completion must not require optional fields ----------------
+//
+// The observed Preview defect. `profileUpdateSchema` used `z.string().optional()`,
+// which accepts `undefined` but REJECTS `null` — and the server projects an
+// unset field as null. The Review step posts the whole prefilled profile back,
+// so every field the user had left blank ("Not added") arrived as null and
+// failed `invalid_type`. Completion was impossible for anyone with a partial
+// profile, and the errors landed on a step that renders no inputs, so nothing
+// was highlighted.
+{
+  // The exact shape observed: some values populated, several "Not added" nulls,
+  // no licence/NRDS, one scheme-less domain. Synthetic throughout.
+  const REVIEW_SHAPE = {
+    preferredDisplayName: "Preview Test",
+    professionalTitle: "Preview Agent",
+    businessEmail: "preview.test@example.com",
+    phoneE164: "+15555550100",
+    locationDisplay: null,
+    whatsappPhoneE164: null,
+    professionalWebsiteUrl: null,
+    instagramUrl: null,
+    facebookUrl: null,
+    licenseState: null,
+    licenseType: null,
+    licenseNumber: null,
+    licenseExpiration: null,
+    nrdsNumber: null,
+    personalWebsiteUrl: "example.com",
+  };
+  const accepts = (v: unknown) => {
+    try { normalizeProfileUpdate(v); return true; } catch { return false; }
+  };
+
+  check("REGRESSION: the observed Review payload completes", accepts(REVIEW_SHAPE));
+  check("a scheme-less domain normalises rather than blocking completion",
+    normalizeProfileUpdate(REVIEW_SHAPE).personalWebsiteUrl === "https://example.com");
+
+  // null is the projection of an unset field, so it must round-trip.
+  check("null is accepted for every optional field",
+    accepts({
+      preferredDisplayName: null, legalFirstName: null, legalLastName: null,
+      phoneE164: null, whatsappPhoneE164: null, businessEmail: null,
+      biography: null, locationDisplay: null, professionalTitle: null,
+      linkedinUrl: null, instagramUrl: null, facebookUrl: null,
+      personalWebsiteUrl: null, professionalWebsiteUrl: null,
+      licenseState: null, licenseType: null, licenseNumber: null,
+      licenseExpiration: null, nrdsNumber: null,
+    }));
+  check("blank strings are accepted too", accepts({ locationDisplay: "", biography: "" }));
+  check("whitespace-only is accepted and normalises to null",
+    normalizeProfileUpdate({ locationDisplay: "   " }).locationDisplay === null);
+  check("an entirely empty payload is accepted", accepts({}));
+  check("completion needs only a preferred display name",
+    normalizeProfileUpdate({ preferredDisplayName: "Preview Test" }).preferredDisplayName === "Preview Test");
+  check("the whole licence group may be blank",
+    accepts({ licenseState: null, licenseType: null, licenseNumber: null,
+              licenseExpiration: null, nrdsNumber: null }));
+  // "null"/"undefined" are real strings a user could legitimately type.
+  check('the literal string "null" is not treated as empty',
+    normalizeProfileUpdate({ biography: "null" }).biography === "null");
+
+  // Optional never means "store rubbish".
+  check("an invalid nonblank email is still refused",
+    normalizeProfileUpdate({ businessEmail: "not-an-email" }).businessEmail === null);
+  check("an invalid nonblank phone is still refused",
+    normalizeProfileUpdate({ phoneE164: "invalid-phone" }).phoneE164 === null);
+  check("javascript: is still refused",
+    normalizeProfileUpdate({ personalWebsiteUrl: "javascript:alert(1)" }).personalWebsiteUrl === null);
+  check("data: is still refused",
+    normalizeProfileUpdate({ linkedinUrl: "data:text/html,x" }).linkedinUrl === null);
+
+  // A low score must never be a gate.
+  const minimal = normalizeProfileUpdate({ preferredDisplayName: "Preview Test" });
+  check("a minimal profile scores low but is still valid",
+    profileCompletion(minimal) > 0 && profileCompletion(minimal) < 50);
+}
+
+// --- Completion writes only what was supplied ------------------------------
+//
+// `normalizeProfileUpdate` fills every absent key with null. Using it as the
+// payload of an UPDATE would blank every column the request did not mention —
+// destroying the very draft completion is meant to finish.
+{
+  const part = normalizeProfileUpdatePartial({ professionalTitle: "Preview Agent" });
+  check("a partial update returns only the supplied keys",
+    "professionalTitle" in part && !("biography" in part) && !("phoneE164" in part));
+  check("an omitted field is not written, so the stored value survives",
+    !("locationDisplay" in part));
+  check("an explicitly null field IS written, so the user can clear it",
+    normalizeProfileUpdatePartial({ biography: null }).biography === null);
+  check("a partial payload cannot erase unrelated saved fields",
+    Object.keys(normalizeProfileUpdatePartial({ preferredDisplayName: "X" }))
+      .every((k) => k === "preferredDisplayName" || k === "brokerageOffice"));
+
+  const svc = readFileSync("lib/profile/service.ts", "utf8");
+  const body = (() => {
+    const at = svc.indexOf("export async function completeOnboarding(");
+    const next = svc.indexOf("\nexport ", at + 1);
+    return svc.slice(at, next < 0 ? svc.length : next);
+  })();
+  check("completion uses the PARTIAL normaliser, not the full one",
+    body.includes("normalizeProfileUpdatePartial(raw)") &&
+      !/\bnext = normalizeProfileUpdate\(raw\)/.test(body));
+  check("completion merges the persisted row before scoring",
+    body.includes("completionSourceFromRow(current.profile)"));
+}
+
+// --- Review errors route to the step that owns the field -------------------
+{
+  check("every collected field maps to exactly one step",
+    ONBOARDING_STEPS.flatMap((s) => s.fields)
+      .every((f) => stepForField(f)?.fields.includes(f) === true));
+  check("a field no step collects maps to null",
+    stepForField("serviceAreas" as never) === null);
+  check("the earliest owning step wins",
+    earliestStepForFields(["businessEmail", "professionalTitle"])?.id === "professional");
+  check("a contact-only failure routes to contact",
+    earliestStepForFields(["instagramUrl"])?.id === "contact");
+  check("unknown fields do not invent a step",
+    earliestStepForFields(["nonsenseField"]) === null);
+
+  const wiz = readFileSync("components/profile/onboarding-wizard.tsx", "utf8");
+  const stripped = wiz.split("\n").filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l)).join("\n");
+  check("completion failure navigates to the owning step",
+    stripped.includes("earliestStepForFields(invalid)") && stripped.includes("setCurrent(owning)"));
+  check("focus moves to the first invalid control on that step",
+    /owning\.fields\.find\(\(f\) => invalid\.includes\(f\)\)/.test(stripped));
+  check("a non-validation failure is not reported as bad fields",
+    stripped.includes("Your saved information is still here."));
+  {
+    // The old generic dead end must be gone, not merely supplemented.
+    check("Review no longer dead-ends on a generic message",
+      !stripped.includes("Check the highlighted fields and try again.") ||
+        stripped.includes("Review the highlighted field before finishing."));
+  }
+}
+
+// --- Brokerage is assigned by FortMark, never entered ----------------------
+{
+  check("the canonical brokerage is a single shared constant",
+    FORTMARK_BROKERAGE_NAME === "FORTMARK");
+  check("brokerage is classified as system-assigned",
+    isSystemAssignedField("brokerageOffice") && SYSTEM_ASSIGNED_FIELDS.includes("brokerageOffice"));
+
+  // Not an input on any surface.
+  check("no onboarding step collects brokerage",
+    ONBOARDING_STEPS.every((s) => !s.fields.includes("brokerageOffice")));
+  check("the shared update schema has no brokerage key",
+    !Object.prototype.hasOwnProperty.call(profileUpdateSchema.shape, "brokerageOffice"));
+
+  // Server assigns it on every path, whatever the request said.
+  check("normalisation always yields the canonical brokerage",
+    normalizeProfileUpdate({}).brokerageOffice === FORTMARK_BROKERAGE_NAME);
+  check("a blank submission still yields the canonical value",
+    normalizeProfileUpdate({ brokerageOffice: "" }).brokerageOffice === FORTMARK_BROKERAGE_NAME);
+  check("a partial update always carries the canonical brokerage",
+    normalizeProfileUpdatePartial({ biography: "x" }).brokerageOffice === FORTMARK_BROKERAGE_NAME);
+
+  // Tampering is refused loudly, not stripped silently.
+  check("submitting another brokerage is tampering",
+    isBrokerageTampering({ brokerageOffice: "Another Brokerage" }));
+  check("blank is not tampering", !isBrokerageTampering({ brokerageOffice: "   " }));
+  check("absent is not tampering", !isBrokerageTampering({}));
+  check("echoing the canonical value is not tampering",
+    !isBrokerageTampering({ brokerageOffice: "FORTMARK" }) &&
+      !isBrokerageTampering({ brokerageOffice: "fortmark" }));
+  check("a tampered request cannot smuggle the value through normalisation",
+    normalizeProfileUpdate({ brokerageOffice: "Another Brokerage" }).brokerageOffice
+      === FORTMARK_BROKERAGE_NAME);
+
+  const svc = readFileSync("lib/profile/service.ts", "utf8");
+  const sv = svc.split("\n").filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l)).join("\n");
+  check("all three user-write paths refuse tampering",
+    (sv.match(/isBrokerageTampering\(raw\)/g) ?? []).length === 3);
+  check("every write pins the canonical brokerage",
+    (sv.match(/brokerageOffice: FORTMARK_BROKERAGE_NAME/g) ?? []).length >= 4);
+  check("the refusal names the field, not a database column",
+    sv.includes("fieldErrors: { brokerageOffice: [BROKERAGE_IMMUTABLE_MESSAGE] }"));
+  check("the refusal message explains who assigns it",
+    svc.includes("Brokerage is assigned by FortMark and cannot be changed."));
+
+  // Score must not punish the user for a field they cannot fill.
+  check("brokerage does not contribute to the completion score",
+    profileCompletion({ preferredDisplayName: "X" }) ===
+      profileCompletion({ preferredDisplayName: "X", brokerageOffice: "FORTMARK" }));
+
+  // UI: displayed, never editable, never "Not added".
+  const wiz = readFileSync("components/profile/onboarding-wizard.tsx", "utf8");
+  const ed = readFileSync("components/profile/profile-editor.tsx", "utf8");
+  check("the wizard renders no input for a system-assigned field",
+    wiz.includes("current.fields.filter((key) => !isSystemAssignedField(key))"));
+  check("the wizard shows the locked brokerage on the professional step",
+    wiz.includes("<LockedBrokerageField />"));
+  check("the locked field is plain text, not a disabled input",
+    /function LockedBrokerageField[\s\S]{0,900}FORTMARK_BROKERAGE_NAME/.test(wiz) &&
+      !/function LockedBrokerageField[\s\S]{0,900}<(input|ProfileField)/i.test(wiz));
+  check("screen readers are told the value is assigned",
+    wiz.includes("Assigned by FortMark and cannot be changed."));
+  check("Review excludes brokerage from the optional grid",
+    wiz.includes('PUBLIC_SURFACE_FIELDS.filter((key) => !isSystemAssignedField(key))'));
+  check("Review shows the canonical brokerage explicitly",
+    /Brokerage[\s\S]{0,320}FORTMARK_BROKERAGE_NAME/.test(wiz));
+  check("Review states optional fields are not required",
+    wiz.includes("none of them is required to finish"));
+  check("the editor renders no brokerage input",
+    !/"brokerageOffice",/.test(ed));
+  check("the editor shows the locked brokerage",
+    ed.includes("FORTMARK_BROKERAGE_NAME") && ed.includes("Assigned by FortMark"));
 }
 
 // --- Summary ---------------------------------------------------------------
