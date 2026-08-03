@@ -2321,6 +2321,40 @@ const ALLOWED_ENV = {
     !/process\.env\.PROFILE_IMAGE_UPLOAD_ENABLED\}/.test(mig));
 
   // Documented by name only.
+  // A switched-off feature must not be reported as a bad file ---------------
+  //
+  // The 404 body carries no fieldErrors, so the control's generic fallback
+  // would have told the user to "choose a JPEG, PNG, or WebP under 4 MB" —
+  // sending them off resizing a photo that was never the problem.
+  {
+    const ui = readFileSync("components/profile/profile-image-upload.tsx", "utf8");
+    const uiSrc = strip(ui);
+    check("a 404 is reported as unavailable, not as a bad file",
+      /res\.status === 404\)[\s\S]{0,160}setError\(UNAVAILABLE_ERROR\)/.test(uiSrc));
+    check("the unavailable message never mentions formats or size",
+      /const UNAVAILABLE_ERROR = "[^"]*";/.test(ui) &&
+        !/const UNAVAILABLE_ERROR = "[^"]*(JPEG|PNG|WebP|MB)/.test(ui));
+    // BOTH controls, counted — not `includes`. The file input and the button
+    // that clicks it are separate elements, and an `includes` check passes
+    // while only one of them is disabled: leaving the input live would keep
+    // the upload reachable by keyboard after the server refused it.
+    check("the control latches off once the server says 404",
+      uiSrc.includes("setUnavailable(true)") &&
+        uiSrc.split("disabled={disabled || uploading || unavailable}").length - 1 === 2);
+    // Only a 400 carries the validation contract, so only a 400 may blame the
+    // file. 401/403/503 are not the user's mistake either.
+    {
+      const guard = uiSrc.indexOf("res.status !== 400");
+      const blame = uiSrc.indexOf("fieldErrors?.profileImage?.[0] ?? GENERIC_ERROR");
+      check("only a 400 may report a format problem",
+        guard >= 0 && blame >= 0 && guard < blame);
+    }
+    check("the format hint is withdrawn when uploads are off",
+      /unavailable[\s\S]{0,120}Your existing photo is unaffected\./.test(uiSrc));
+    check("an unavailable notice is not styled as the user's error",
+      /unavailable\s*\?\s*"text-\[12px\] text-foreground\/70"/.test(uiSrc));
+  }
+
   check("the upload flag is documented", env.includes("PROFILE_IMAGE_UPLOAD_ENABLED="));
   check("the blob token is documented as server-only",
     env.includes("BLOB_READ_WRITE_TOKEN=") && /never NEXT_PUBLIC_/.test(env));
