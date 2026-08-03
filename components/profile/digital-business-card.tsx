@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   CREDENTIAL_TRUST_LABEL,
+  PROFILE_STATUS_LABEL,
   formatJoinedAt,
   type HomeIdentityCard as HomeIdentityCardData,
 } from "@/lib/profile/home-card";
@@ -34,15 +35,32 @@ import { buildVCard, vCardFilename } from "@/lib/profile/vcard";
 import { ROUTES } from "@/lib/routes";
 import { initials } from "@/lib/utils";
 
-function Row({ label, value }: { label: string; value: string | null }) {
-  if (!value) return null;
+function Row({
+  label,
+  value,
+  always = false,
+}: {
+  label: string;
+  value: string | null;
+  /** Keep the row when the value is absent, showing the shared placeholder. */
+  always?: boolean;
+}) {
+  if (!value && !always) return null;
   return (
     <div className="flex items-baseline justify-between gap-4 border-b border-border py-2.5 last:border-0">
       <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
         {label}
       </span>
-      <span className="min-w-0 truncate text-right text-[13px] font-semibold tabular-nums">
-        {value}
+      <span
+        className={
+          value
+            ? "min-w-0 truncate text-right text-[13px] font-semibold tabular-nums"
+            : "min-w-0 truncate text-right text-[13px] font-normal text-muted-foreground"
+        }
+      >
+        {/* Same wording the onboarding Review uses, so one absent value is not
+            "Not added" on one surface and "Pending" on another. */}
+        {value ?? "Not added"}
       </span>
     </div>
   );
@@ -62,8 +80,10 @@ export function DigitalBusinessCard({
 
   React.useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
-  const email = data.links.find((l) => l.kind === "email")?.href.replace(/^mailto:/, "") ?? null;
-  const phone = data.links.find((l) => l.kind === "phone")?.href.replace(/^tel:/, "") ?? null;
+  // Carried on the card rather than scraped from `links`: the Home self-card
+  // hides the email/phone entries, and this card must not lose them with it.
+  const email = data.email;
+  const phone = data.phoneE164;
   const website =
     data.links.find((l) => l.kind === "professionalWebsite")?.href ??
     data.links.find((l) => l.kind === "website")?.href ??
@@ -163,14 +183,24 @@ export function DigitalBusinessCard({
 
             <div className="mt-6">
               <Row label="Role" value={data.roleLabel} />
-              <Row label="License" value={licence} />
-              <Row label="NRDS ID" value={data.nrdsNumber} />
+              {/* Always rendered. A credential card that changes shape
+                  depending on what is filled in reads as broken rather than
+                  incomplete, so these two hold their place and say so. */}
+              <Row label="License" value={licence} always />
+              <Row label="License number" value={data.licenseNumber} always />
+              <Row label="NRDS ID" value={data.nrdsNumber} always />
               <Row label="Email" value={email} />
               <Row label="Phone" value={formatPhoneDisplay(phone)} />
               <Row label="Website" value={website} />
               <Row label="Joined" value={joined} />
+              <Row label="Status" value={PROFILE_STATUS_LABEL[data.profileStatus]} always />
+              {/* Separate row, separate question. This says whether the
+                  LICENCE has been checked; it is not the account's status, and
+                  presenting it as one was the defect. Kept because dropping it
+                  would leave the card implying FortMark verified details that
+                  nobody has verified. */}
               <Row
-                label="Status"
+                label="Verification"
                 value={
                   data.credentialTrust ? CREDENTIAL_TRUST_LABEL[data.credentialTrust] : null
                 }

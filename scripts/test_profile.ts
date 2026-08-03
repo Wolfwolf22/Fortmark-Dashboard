@@ -62,6 +62,12 @@ import { readFileSync } from "node:fs";
 import { syncCurrentUser, updateOwnProfile } from "../lib/profile/service.ts";
 import { getHomeIdentityCard } from "../lib/profile/shell.ts";
 import {
+  PROFILE_STATUS_LABEL,
+  profileStatusFor,
+  selfCardLinks,
+  SELF_CARD_HIDDEN_LINK_KINDS,
+} from "../lib/profile/home-card.ts";
+import {
   FIRST_STEP,
   LAST_STEP,
   ONBOARDING_STEPS,
@@ -1143,10 +1149,14 @@ const ALLOWED_ENV = {
   check("copy success is announced politely", card.includes('aria-live="polite"'));
 
   // 10. Links render only when present, and stay monochrome.
+  // Branching is on the FILTERED list now — the self-card hides email/phone —
+  // but the zero/one/many guarantee is unchanged.
   check("no contact row is rendered when there are no links",
-    !card.includes("data.links.length > 0 &&") &&
-      card.includes("data.links.length === 1 &&") &&
-      card.includes("data.links.length > 1 &&"));
+    !card.includes("visibleLinks.length > 0 &&") &&
+      card.includes("visibleLinks.length === 1 &&") &&
+      card.includes("visibleLinks.length > 1 &&"));
+  check("the single-link branch reads from the filtered list, not the raw one",
+    card.includes("const link = visibleLinks[0];"));
   check(
     "a single contact renders a visible action label",
     card.includes("{LINK_ACTION[link.kind]}")
@@ -1163,7 +1173,7 @@ const ALLOWED_ENV = {
   );
   check(
     "the multi-link branch still renders tooltips",
-    card.slice(card.indexOf("data.links.length > 1 &&")).includes("<TooltipContent>{link.label}</TooltipContent>")
+    card.slice(card.indexOf("visibleLinks.length > 1 &&")).includes("<TooltipContent>{link.label}</TooltipContent>")
   );
   check(
     "both contact branches expose an accessible name",
@@ -2596,6 +2606,119 @@ const ALLOWED_ENV = {
     !/"brokerageOffice",/.test(ed));
   check("the editor shows the locked brokerage",
     ed.includes("FORTMARK_BROKERAGE_NAME") && ed.includes("Assigned by FortMark"));
+}
+
+
+// --- Self-card hides self-contact; Digital Card keeps it -------------------
+//
+// Emailing or ringing yourself is not an action. The Home card is the user
+// looking at their own record; the Digital Card is shareable and still needs
+// the full contact set, so this is a rule about ONE surface, not about data.
+{
+  const LINKS = [
+    { kind: "email", href: "mailto:preview.test@example.com", label: "Send email" },
+    { kind: "phone", href: "tel:+15555550100", label: "Call" },
+    { kind: "linkedin", href: "https://linkedin.com/in/example", label: "LinkedIn profile" },
+    { kind: "website", href: "https://example.com", label: "Website" },
+    { kind: "whatsapp", href: "https://wa.me/15555550100", label: "WhatsApp" },
+  ];
+  const visible = selfCardLinks(LINKS);
+  check("the self-card drops the email link",
+    !visible.some((l) => l.kind === "email"));
+  check("the self-card drops the call link",
+    !visible.some((l) => l.kind === "phone"));
+  check("professional links survive on the self-card",
+    visible.some((l) => l.kind === "linkedin") && visible.some((l) => l.kind === "website"));
+  check("only email and phone are hidden",
+    SELF_CARD_HIDDEN_LINK_KINDS.length === 2 &&
+      SELF_CARD_HIDDEN_LINK_KINDS.includes("email") &&
+      SELF_CARD_HIDDEN_LINK_KINDS.includes("phone"));
+  check("filtering does not mutate the source list", LINKS.length === 5);
+  check("a link set of only self-contact leaves nothing to render",
+    selfCardLinks(LINKS.filter((l) => l.kind === "email" || l.kind === "phone")).length === 0);
+
+  const card = readFileSync("components/home/home-identity-card.tsx", "utf8");
+  const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
+
+  // The coupling that made this dangerous: both surfaces used to recover
+  // email/phone by scanning the link list, so hiding the icons would have
+  // silently emptied Copy Contact and the vCard too.
+  check("Copy Contact reads the carried email, not the link list",
+    card.includes("email: data.email,") && card.includes("phoneE164: data.phoneE164,"));
+  check("the self-card no longer scrapes mailto:/tel: out of links",
+    !/kind === "email"\)\?\.href\.replace/.test(card) &&
+      !/kind === "phone"\)\?\.href\.replace/.test(card));
+  check("the Digital Card reads the carried email and phone",
+    dcard.includes("const email = data.email;") && dcard.includes("const phone = data.phoneE164;"));
+  check("the Digital Card does NOT filter self-contact away",
+    !dcard.includes("selfCardLinks"));
+  check("the Digital Card still offers email and phone rows",
+    dcard.includes('<Row label="Email" value={email} />') &&
+      dcard.includes('<Row label="Phone" value={formatPhoneDisplay(phone)} />'));
+}
+
+// --- Digital Card always shows licence and NRDS ----------------------------
+{
+  const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
+  check("the licence number row is always rendered",
+    dcard.includes('<Row label="License number" value={data.licenseNumber} always />'));
+  check("the NRDS row is always rendered",
+    dcard.includes('<Row label="NRDS ID" value={data.nrdsNumber} always />'));
+  check("Row supports an always mode", /always = false,[\s\S]{0,220}always\?: boolean;/.test(dcard));
+  check("a row without a value is dropped only when NOT always",
+    dcard.includes("if (!value && !always) return null;"));
+  check("the placeholder matches the wording used elsewhere",
+    dcard.includes('{value ?? "Not added"}'));
+  check("an absent value is styled as absent, not as data",
+    /value\s*\?[\s\S]{0,200}text-muted-foreground/.test(dcard));
+}
+
+// --- Status is Active/Inactive, and is not credential verification ---------
+{
+  check("there are exactly two user-facing statuses",
+    Object.keys(PROFILE_STATUS_LABEL).length === 2);
+  check("the labels are Active and Inactive",
+    PROFILE_STATUS_LABEL.active === "Active" && PROFILE_STATUS_LABEL.inactive === "Inactive");
+  check("an active account reads Active", profileStatusFor({ status: "active" }) === "active");
+  check("a suspended account reads Inactive",
+    profileStatusFor({ status: "suspended" }) === "inactive");
+  check("a pending account reads Inactive",
+    profileStatusFor({ status: "pending_profile" }) === "inactive");
+  check("an unknown or missing account state fails closed to Inactive",
+    profileStatusFor(null) === "inactive" &&
+      profileStatusFor(undefined) === "inactive" &&
+      profileStatusFor({ status: "something_else" }) === "inactive");
+
+  const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
+  check("the Status row shows the account status",
+    dcard.includes('<Row label="Status" value={PROFILE_STATUS_LABEL[data.profileStatus]} always />'));
+  check("Status no longer renders credential trust",
+    !/label="Status"[\s\S]{0,160}CREDENTIAL_TRUST_LABEL/.test(dcard));
+  // Provenance is preserved, just under its own heading — removing it would
+  // leave the card implying FortMark verified details nobody verified.
+  check("verification provenance moved to its own row",
+    /label="Verification"[\s\S]{0,200}CREDENTIAL_TRUST_LABEL/.test(dcard));
+  check('"Self-reported" is no longer presented as a status',
+    !/Status[\s\S]{0,120}Self-reported/.test(dcard));
+
+  const hc = readFileSync("lib/profile/home-card.ts", "utf8");
+  check("status is derived, never accepted from a request",
+    hc.includes("export function profileStatusFor(") &&
+      !/profileStatus[^\n]*(raw|input|body)/i.test(hc));
+  check("dashboard_users.status is still never written by profile code",
+    !/set\(\{[\s\S]{0,200}status:\s*"(active|inactive|suspended)"/.test(
+      readFileSync("lib/profile/service.ts", "utf8").replace(
+        /\.insert\(dashboardUsers\)[\s\S]*?\.returning\(\)/, "")));
+}
+
+// --- Brokerage is stated once ----------------------------------------------
+{
+  const card = readFileSync("components/home/home-identity-card.tsx", "utf8");
+  check("the secondary line carries location, not a second brokerage",
+    card.includes("{data.locationDisplay && (") &&
+      !card.includes("data.brokerageOffice ?? data.locationDisplay"));
+  check("FortMark is still named once on the self-card",
+    (card.match(/"FortMark"/g) ?? []).length === 1);
 }
 
 // --- Summary ---------------------------------------------------------------
