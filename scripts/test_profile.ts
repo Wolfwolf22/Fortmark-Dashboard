@@ -12,6 +12,7 @@
  *
  * Run: npm run test:profile
  */
+import { resolveBlobToken } from "../lib/profile/image-storage.ts";
 import {
   FORTMARK_BROKERAGE_NAME,
   cleanText,
@@ -2366,14 +2367,19 @@ const ALLOWED_ENV = {
   check("the delete helper refuses when disabled",
     /deleteProfileImage[\s\S]{0,500}if \(!profileImageUploadEnabled\(\)\) return false;/.test(storage));
   {
+    // Credential resolution replaced the old `blobConfigured()` predicate, so
+    // this tracks the resolver. Both indices must be real — a bare `a < b`
+    // would pass if either needle vanished.
     const src = strip(storage);
     const flag = src.indexOf("profileImageUploadEnabled()");
-    const token = src.indexOf("blobConfigured()");
-    check("the flag is checked BEFORE the token in the writer",
+    const token = src.indexOf("resolveBlobToken()");
+    check("the flag is checked BEFORE the credential in the writer",
       flag >= 0 && token >= 0 && flag < token);
   }
   check("token presence is never treated as the gate",
-    !/if \(blobConfigured\(\)\)[\s\S]{0,120}put\(/.test(storage));
+    !/if \(resolveBlobToken\(\)\.ok\)[\s\S]{0,120}put\(/.test(storage));
+  check("the dead credential predicate is gone, so nothing can check it and then write untokened",
+    !/export function blobConfigured/.test(storage));
 
   // Reported at build time by STATE only, never by value — and reported with
   // the SAME strictness the application applies. The generous `on()` helper
@@ -3017,6 +3023,93 @@ const ALLOWED_ENV = {
     card.includes("selfCardLinks(data.links)"));
   check("the Home self-card still exports the business email",
     card.includes("email: data.businessEmail,"));
+}
+
+
+// --- Blob credential isolation ---------------------------------------------
+//
+// Vercel's managed connection scopes ONE Preview store's token into Production
+// as well, so in Production the generic BLOB_READ_WRITE_TOKEN may be a preview
+// credential. Writing production headshots into the preview store — or
+// deleting from it — is the failure this prevents.
+{
+  const DED = "vercel_blob_rw_dedicated_placeholder";
+  const GEN = "vercel_blob_rw_generic_placeholder";
+
+  // Production: dedicated only, no fallback, ever.
+  {
+    const r = resolveBlobToken({ VERCEL_ENV: "production", PROFILE_BLOB_READ_WRITE_TOKEN: DED });
+    check("production uses the dedicated profile token",
+      r.ok && r.token === DED && r.source === "dedicated");
+  }
+  {
+    const r = resolveBlobToken({ VERCEL_ENV: "production", BLOB_READ_WRITE_TOKEN: GEN });
+    check("production NEVER falls back to the generic token",
+      !r.ok && r.reason === "production_requires_dedicated");
+  }
+  {
+    // Both present: the dedicated one still wins, so a lingering managed
+    // connection cannot quietly take precedence.
+    const r = resolveBlobToken({
+      VERCEL_ENV: "production",
+      PROFILE_BLOB_READ_WRITE_TOKEN: DED,
+      BLOB_READ_WRITE_TOKEN: GEN,
+    });
+    check("the dedicated token wins when both are present", r.ok && r.token === DED);
+  }
+  check("production with no credential at all is unconfigured",
+    !resolveBlobToken({ VERCEL_ENV: "production" }).ok);
+  check("production treats a blank dedicated token as absent",
+    !resolveBlobToken({ VERCEL_ENV: "production", PROFILE_BLOB_READ_WRITE_TOKEN: "   " }).ok);
+
+  // Preview / development: fallback retained so existing deployments keep
+  // working while the dedicated variable rolls out.
+  {
+    const r = resolveBlobToken({ VERCEL_ENV: "preview", BLOB_READ_WRITE_TOKEN: GEN });
+    check("preview may still use the generic token", r.ok && r.source === "fallback");
+  }
+  {
+    const r = resolveBlobToken({ VERCEL_ENV: "preview", PROFILE_BLOB_READ_WRITE_TOKEN: DED });
+    check("preview prefers the dedicated token when present",
+      r.ok && r.token === DED && r.source === "dedicated");
+  }
+  check("no credential anywhere is unconfigured",
+    !resolveBlobToken({}).ok && resolveBlobToken({}).ok === false);
+
+  const storage = readFileSync("lib/profile/image-storage.ts", "utf8");
+  const code = storage.split("\n").filter((l) => !/^\s*(\*|\/\/)/.test(l)).join("\n");
+
+  // The SDK reads BLOB_READ_WRITE_TOKEN from the ambient environment unless a
+  // token is passed. Passing it explicitly is what makes the resolution real
+  // rather than decorative.
+  check("the write passes the resolved token explicitly",
+    /put\([\s\S]{0,200}token: credential\.token,/.test(code));
+  check("the delete passes the resolved token explicitly",
+    code.includes("del(pathname as string, { token: credential.token })"));
+  check("neither call relies on the ambient credential",
+    !/put\((?![\s\S]{0,200}token:)/.test(code) || code.includes("token: credential.token"));
+
+  // Gate ordering is unchanged: the flag still short-circuits before any
+  // credential work, so a disabled environment makes zero Blob calls.
+  check("the upload flag is still checked before the credential",
+    code.indexOf("profileImageUploadEnabled()") < code.indexOf("resolveBlobToken()"));
+  check("token presence alone still does not enable uploads",
+    !profileImageUploadEnabled({ PROFILE_BLOB_READ_WRITE_TOKEN: DED }));
+
+  // Never a client value.
+  check("the dedicated variable is not NEXT_PUBLIC",
+    !storage.includes("NEXT_PUBLIC_PROFILE_BLOB") &&
+      !readFileSync(".env.example", "utf8").includes("NEXT_PUBLIC_PROFILE_BLOB"));
+  check("the storage module stays server-only", storage.includes('import "server-only"'));
+
+  // Build-time reporting, presence only.
+  const mig = readFileSync("scripts/migrate.mjs", "utf8");
+  check("the build reports both credentials by presence",
+    mig.includes("PROFILE_BLOB_READ_WRITE_TOKEN present=${Boolean("));
+  check("the build never prints a credential value",
+    !/\$\{process\.env\.(PROFILE_)?BLOB_READ_WRITE_TOKEN\}/.test(mig));
+  check("the new variable is documented by name only",
+    /^PROFILE_BLOB_READ_WRITE_TOKEN=$/m.test(readFileSync(".env.example", "utf8")));
 }
 
 // --- Summary ---------------------------------------------------------------

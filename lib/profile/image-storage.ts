@@ -67,13 +67,44 @@ export function ownsPathname(dashboardUserId: string, pathname: string | null | 
   return pathname.startsWith(userPrefix(dashboardUserId));
 }
 
-/** Whether the store is configured at all. */
-export function blobConfigured(
+/**
+ * Resolve the credential this subsystem is allowed to use.
+ *
+ * `PROFILE_BLOB_READ_WRITE_TOKEN` names the profile-image store explicitly.
+ * `BLOB_READ_WRITE_TOKEN` is whatever Vercel's managed connection happened to
+ * inject, and that connection scopes a single Preview store's token into
+ * Production as well — so in Production the generic variable may well be a
+ * PREVIEW credential. Writing production headshots into the preview store, or
+ * deleting from it, is the failure this prevents.
+ *
+ * Production therefore REQUIRES the dedicated variable and never falls back.
+ * Failing closed costs an upload; falling back silently crosses environments.
+ *
+ * Preview and development may still fall back, so existing Preview deployments
+ * keep working while the dedicated variable is rolled out.
+ */
+export type BlobCredential =
+  | { ok: true; token: string; source: "dedicated" | "fallback" }
+  | { ok: false; reason: "missing" | "production_requires_dedicated" };
+
+export function resolveBlobToken(
   env: Record<string, string | undefined> = process.env
-): boolean {
-  const t = env.BLOB_READ_WRITE_TOKEN;
-  return typeof t === "string" && t.trim().length > 0;
+): BlobCredential {
+  const dedicated = env.PROFILE_BLOB_READ_WRITE_TOKEN?.trim();
+  if (dedicated) return { ok: true, token: dedicated, source: "dedicated" };
+
+  // Production gets no fallback. The generic token cannot be shown to belong
+  // to the production store, and an unverifiable credential is not one to
+  // write with.
+  if (env.VERCEL_ENV === "production") {
+    return { ok: false, reason: "production_requires_dedicated" };
+  }
+
+  const generic = env.BLOB_READ_WRITE_TOKEN?.trim();
+  if (generic) return { ok: true, token: generic, source: "fallback" };
+  return { ok: false, reason: "missing" };
 }
+
 
 export type UploadResult =
   | { ok: true; url: string; pathname: string }
@@ -95,10 +126,15 @@ export async function uploadProfileImage(input: {
   // in every environment the managed connection touches, so the write itself
   // refuses rather than trusting every future caller to have checked first.
   if (!profileImageUploadEnabled()) return { ok: false, reason: "disabled" };
-  if (!blobConfigured()) return { ok: false, reason: "unconfigured" };
+  // Resolved and passed explicitly. The SDK would otherwise read
+  // BLOB_READ_WRITE_TOKEN from the ambient environment, which is exactly the
+  // credential Production must not use.
+  const credential = resolveBlobToken();
+  if (!credential.ok) return { ok: false, reason: "unconfigured" };
   try {
     const blob = await put(input.pathname, Buffer.from(input.bytes), {
       access: "public",
+      token: credential.token,
       contentType: input.contentType,
       addRandomSuffix: true,
       // Immutable objects, so they may be cached hard. A replacement is a new
@@ -128,13 +164,16 @@ export async function deleteProfileImage(
   // Same gate as the write: a disabled environment touches the store for
   // nothing at all, not even cleanup.
   if (!profileImageUploadEnabled()) return false;
-  if (!blobConfigured()) return false;
+  // Same resolution as the write. A delete aimed at the wrong store is worse
+  // than a failed one.
+  const credential = resolveBlobToken();
+  if (!credential.ok) return false;
   // The ownership gate, not an optimisation: the token can delete anything in
   // the store, so this is what stops a wrong pathname destroying another
   // user's photo.
   if (!ownsPathname(dashboardUserId, pathname)) return false;
   try {
-    await del(pathname as string);
+    await del(pathname as string, { token: credential.token });
     return true;
   } catch {
     return false;
