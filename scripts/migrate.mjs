@@ -211,6 +211,13 @@ if (url && url !== "[SENSITIVE]") {
   console.log(
     `[migrate] flags PROFILE_IMAGE_UPLOAD_ENABLED=${strict("PROFILE_IMAGE_UPLOAD_ENABLED")}`
   );
+  // Presence only, never a value. Production must carry the dedicated profile
+  // store credential; the generic one may be a preview token there.
+  console.log(
+    `[migrate] blob PROFILE_BLOB_READ_WRITE_TOKEN present=${Boolean(
+      process.env.PROFILE_BLOB_READ_WRITE_TOKEN
+    )} BLOB_READ_WRITE_TOKEN present=${Boolean(process.env.BLOB_READ_WRITE_TOKEN)}`
+  );
 }
 
 // Migrations themselves remain preview-only. Reporting is safe everywhere;
