@@ -2629,13 +2629,15 @@ const ALLOWED_ENV = {
     !visible.some((l) => l.kind === "phone"));
   check("professional links survive on the self-card",
     visible.some((l) => l.kind === "linkedin") && visible.some((l) => l.kind === "website"));
-  check("only email and phone are hidden",
-    SELF_CARD_HIDDEN_LINK_KINDS.length === 2 &&
-      SELF_CARD_HIDDEN_LINK_KINDS.includes("email") &&
-      SELF_CARD_HIDDEN_LINK_KINDS.includes("phone"));
+  check("the self-card drops the WhatsApp link",
+    !visible.some((l) => l.kind === "whatsapp"));
+  check("exactly the three self-contact kinds are hidden",
+    SELF_CARD_HIDDEN_LINK_KINDS.length === 3 &&
+      ["email", "phone", "whatsapp"].every((k) => SELF_CARD_HIDDEN_LINK_KINDS.includes(k)));
   check("filtering does not mutate the source list", LINKS.length === 5);
   check("a link set of only self-contact leaves nothing to render",
-    selfCardLinks(LINKS.filter((l) => l.kind === "email" || l.kind === "phone")).length === 0);
+    selfCardLinks(LINKS.filter((l) =>
+      ["email", "phone", "whatsapp"].includes(l.kind))).length === 0);
 
   const card = readFileSync("components/home/home-identity-card.tsx", "utf8");
   const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
@@ -2655,6 +2657,12 @@ const ALLOWED_ENV = {
   check("the Digital Card still offers email and phone rows",
     dcard.includes('<Row label="Email" value={email} />') &&
       dcard.includes('<Row label="Phone" value={formatPhoneDisplay(phone)} />'));
+  // Hidden on the self-card, so if it were absent here the value the user
+  // typed would be visible on no surface at all.
+  check("WhatsApp is published on the shareable card",
+    dcard.includes('<Row label="WhatsApp" value={formatPhoneDisplay(data.whatsappPhoneE164)} />'));
+  check("the card carries WhatsApp as data, not via the filtered links",
+    readFileSync("lib/profile/home-card.ts", "utf8").includes("whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164)"));
 }
 
 // --- Digital Card always shows licence and NRDS ----------------------------
@@ -2694,12 +2702,22 @@ const ALLOWED_ENV = {
     dcard.includes('<Row label="Status" value={PROFILE_STATUS_LABEL[data.profileStatus]} always />'));
   check("Status no longer renders credential trust",
     !/label="Status"[\s\S]{0,160}CREDENTIAL_TRUST_LABEL/.test(dcard));
-  // Provenance is preserved, just under its own heading — removing it would
-  // leave the card implying FortMark verified details nobody verified.
-  check("verification provenance moved to its own row",
-    /label="Verification"[\s\S]{0,200}CREDENTIAL_TRUST_LABEL/.test(dcard));
-  check('"Self-reported" is no longer presented as a status',
-    !/Status[\s\S]{0,120}Self-reported/.test(dcard));
+  // The public card must not publish provenance at all: telling a recipient
+  // "Self-reported" states a negative about the agent and tells them nothing
+  // usable. The value is retained internally, and is NOT swapped for a
+  // "Verified" claim, because nothing has verified anything.
+  const dcardCode = dcard.split("\n")
+    .filter((l) => !/^\s*(\*|\/\/|\{\/\*)/.test(l)).join("\n");
+  check("the public card renders no verification row",
+    !dcardCode.includes('label="Verification"'));
+  check("the public card never renders credential trust",
+    !dcardCode.includes("CREDENTIAL_TRUST_LABEL"));
+  check("no Verified claim replaced it",
+    !/Verified by FortMark|label="Verified"/.test(dcardCode));
+  check("credentialTrust is still computed and carried internally",
+    readFileSync("lib/profile/home-card.ts", "utf8").includes("credentialTrustFor(profile, user, now)"));
+  check("the internal self-card may still show provenance",
+    readFileSync("components/home/home-identity-card.tsx", "utf8").includes("CREDENTIAL_TRUST_LABEL"));
 
   const hc = readFileSync("lib/profile/home-card.ts", "utf8");
   check("status is derived, never accepted from a request",
@@ -2719,6 +2737,93 @@ const ALLOWED_ENV = {
       !card.includes("data.brokerageOffice ?? data.locationDisplay"));
   check("FortMark is still named once on the self-card",
     (card.match(/"FortMark"/g) ?? []).length === 1);
+}
+
+
+// --- Account status stays admin-controlled ---------------------------------
+//
+// Status is authorization-adjacent. An agent who could set their own state
+// could clear a suspension, so it is derived for display and never accepted as
+// input on any path.
+{
+  const svc = readFileSync("lib/profile/service.ts", "utf8");
+  const route = readFileSync("app/api/profile/onboarding/route.ts", "utf8");
+  const profileRoute = readFileSync("app/api/profile/route.ts", "utf8");
+  const editor = readFileSync("components/profile/profile-editor.tsx", "utf8");
+  const wizard = readFileSync("components/profile/onboarding-wizard.tsx", "utf8");
+
+  // The only place dashboardUsers gets a status is the initial insert, which
+  // is server-resolved. No update path may set it.
+  const updates = svc.split("db\n      .update(dashboardUsers)").slice(1)
+    .concat(svc.split("db.update(dashboardUsers)").slice(1));
+  check("no update path writes dashboard_users.status",
+    updates.every((u) => !/^\s*[\s\S]{0,400}?status:/.test(u.slice(0, 400))));
+  check("status is not an accepted profile input",
+    !Object.prototype.hasOwnProperty.call(profileUpdateSchema.shape, "status"));
+  check("a status key in a request body is stripped by the schema",
+    !("status" in (profileUpdateSchema.parse({ status: "active" } as never) as object)));
+  check("normalisation never emits a status field",
+    !("status" in normalizeProfileUpdate({ status: "active" } as never)));
+  check("a partial update never emits a status field",
+    !("status" in normalizeProfileUpdatePartial({ status: "active" } as never)));
+
+  // A suspended user cannot promote themselves: the display derives from the
+  // stored account state, and no writable path exists.
+  check("a suspended account still reads Inactive after a profile update attempt",
+    profileStatusFor({ status: "suspended" }) === "inactive");
+  check("no editable status control exists in Edit Profile",
+    !/name="status"|"status",/.test(editor));
+  check("no editable status control exists in the wizard",
+    !/name="status"/.test(wizard));
+  check("neither profile route reads a status from the body",
+    !/body\.status|payload\.status|values\.status/.test(route + profileRoute));
+
+  // Internal states are never published.
+  const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
+  for (const internal of ["pending_profile", "suspended", "archived", "disabled"]) {
+    check(`the public card never names the internal state ${internal}`,
+      !dcard.includes(internal));
+  }
+  check("only two labels can ever reach the public card",
+    Object.values(PROFILE_STATUS_LABEL).every((v) => v === "Active" || v === "Inactive"));
+
+  // Standing guarantees, unchanged by this work.
+  check("DATABASE_ACCESS_CONTROL_ENABLED remains code-disabled",
+    databaseAccessControlEnabled({ DATABASE_ACCESS_CONTROL_ENABLED: "1" }) === false);
+}
+
+// --- FortMark is never printed twice ---------------------------------------
+{
+  const block1 = buildContactBlock({
+    displayName: "Preview Test",
+    professionalTitle: "Preview Agent",
+    roleLabel: "Member",
+    brokerageOffice: "FORTMARK",
+    locationDisplay: "Fort Lauderdale, FL",
+  });
+  check("the contact block names FortMark once",
+    (block1.match(/fortmark/gi) ?? []).length === 1);
+  check("the contact block keeps the location",
+    block1.includes("Fort Lauderdale, FL"));
+
+  const vcf = buildVCard({
+    displayName: "Preview Test",
+    professionalTitle: "Preview Agent",
+    roleLabel: "Member",
+    brokerageOffice: "FORTMARK",
+    email: "preview.test@example.com",
+    phoneE164: "+15555550100",
+  });
+  const orgLine = vcf.split(/\r?\n/).find((l) => l.startsWith("ORG:")) ?? "";
+  check("the vCard ORG names FortMark once",
+    (orgLine.match(/fortmark/gi) ?? []).length === 1);
+  check("the vCard still carries email and phone",
+    vcf.includes("preview.test@example.com") && vcf.includes("+15555550100"));
+
+  const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
+  check("the Digital Card identity line drops the duplicate brokerage",
+    dcard.includes('{["FortMark", data.locationDisplay].filter(Boolean).join(" · ")}') &&
+      !dcard.includes('data.brokerageOffice ?? data.locationDisplay'));
 }
 
 // --- Summary ---------------------------------------------------------------

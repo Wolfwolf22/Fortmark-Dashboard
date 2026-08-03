@@ -73,12 +73,17 @@ export function profileStatusFor(
 /**
  * Contact kinds hidden on the Home self-card.
  *
- * The Home card is the user looking at their own record, and offering to email
- * or ring yourself is noise. They stay in `links` rather than being dropped at
- * the source, because the Digital Card is shareable and genuinely needs them —
- * this is a presentation rule for one surface, not a change to the data.
+ * The Home card is the user looking at their own record, and offering to email,
+ * ring or message yourself is noise. They stay in `links` rather than being
+ * dropped at the source, because the Digital Card is shareable and genuinely
+ * needs them — this is a presentation rule for one surface, not a change to
+ * the data. Copy Contact and the vCard are unaffected.
  */
-export const SELF_CARD_HIDDEN_LINK_KINDS: readonly string[] = ["email", "phone"];
+export const SELF_CARD_HIDDEN_LINK_KINDS: readonly string[] = [
+  "email",
+  "phone",
+  "whatsapp",
+];
 
 export function selfCardLinks<T extends { kind: string }>(links: readonly T[]): T[] {
   return links.filter((l) => !SELF_CARD_HIDDEN_LINK_KINDS.includes(l.kind));
@@ -122,6 +127,7 @@ export interface HomeIdentityCard {
    */
   email: string | null;
   phoneE164: string | null;
+  whatsappPhoneE164: string | null;
   /**
    * 0-100, or null when no profile record exists.
    *
@@ -258,6 +264,7 @@ export function fallbackHomeIdentityCard(session: HomeCardSession): HomeIdentity
     profileStatus: "active",
     email: session.email ?? null,
     phoneE164: null,
+    whatsappPhoneE164: null,
     completion: null,
     // The verified session email is a genuine, usable shortcut, so it is the
     // one link a session-only card can honestly offer.
@@ -307,6 +314,7 @@ export function toHomeIdentityCard(
     profileStatus: profileStatusFor(user),
     email: trimmed(session.email) ?? trimmed(user?.primaryEmail),
     phoneE164: trimmed(profile?.phoneE164),
+    whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164),
     completion:
       typeof completion === "number" && Number.isFinite(completion)
         ? Math.max(0, Math.min(100, Math.round(completion)))

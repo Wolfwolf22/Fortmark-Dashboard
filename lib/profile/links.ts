@@ -153,9 +153,12 @@ export function buildContactBlock(source: ContactBlockSource): string {
   push(source.displayName);
   push(source.professionalTitle ?? source.roleLabel);
 
+  // The line already begins with "FortMark", and brokerage is now always
+  // FortMark, so including it produced "FortMark · FORTMARK".
   const org = [source.brokerageOffice, source.locationDisplay]
     .map((v) => (typeof v === "string" ? v.trim() : ""))
     .filter(Boolean)
+    .filter((v) => v.toLowerCase() !== "fortmark")
     .join(" · ");
   if (org) lines.push(`FortMark · ${org}`);
   else lines.push("FortMark");

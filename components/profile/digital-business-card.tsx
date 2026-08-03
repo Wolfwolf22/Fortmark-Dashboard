@@ -25,7 +25,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  CREDENTIAL_TRUST_LABEL,
   PROFILE_STATUS_LABEL,
   formatJoinedAt,
   type HomeIdentityCard as HomeIdentityCardData,
@@ -175,9 +174,9 @@ export function DigitalBusinessCard({
                 {data.professionalTitle ?? data.roleLabel}
               </p>
               <p className="text-[13px] text-muted-foreground">
-                {["FortMark", data.brokerageOffice ?? data.locationDisplay]
-                  .filter(Boolean)
-                  .join(" · ")}
+                {/* Location only after the brand. Brokerage is always
+                    FortMark now, so including it read "FortMark · FORTMARK". */}
+                {["FortMark", data.locationDisplay].filter(Boolean).join(" · ")}
               </p>
             </div>
 
@@ -191,20 +190,17 @@ export function DigitalBusinessCard({
               <Row label="NRDS ID" value={data.nrdsNumber} always />
               <Row label="Email" value={email} />
               <Row label="Phone" value={formatPhoneDisplay(phone)} />
+              <Row label="WhatsApp" value={formatPhoneDisplay(data.whatsappPhoneE164)} />
               <Row label="Website" value={website} />
               <Row label="Joined" value={joined} />
               <Row label="Status" value={PROFILE_STATUS_LABEL[data.profileStatus]} always />
-              {/* Separate row, separate question. This says whether the
-                  LICENCE has been checked; it is not the account's status, and
-                  presenting it as one was the defect. Kept because dropping it
-                  would leave the card implying FortMark verified details that
-                  nobody has verified. */}
-              <Row
-                label="Verification"
-                value={
-                  data.credentialTrust ? CREDENTIAL_TRUST_LABEL[data.credentialTrust] : null
-                }
-              />
+              {/* No verification row on the PUBLIC card. Announcing
+                  "Self-reported" to a recipient states a negative about the
+                  agent while telling them nothing they can use. `credentialTrust`
+                  is still computed and carried for compliance and for the
+                  future review workflow — it is simply not published here, and
+                  it is emphatically NOT replaced by a "Verified" claim, because
+                  nothing has verified anything. */}
             </div>
           </div>
         </ScrollArea>
