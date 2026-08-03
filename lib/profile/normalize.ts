@@ -163,39 +163,88 @@ export function toEmail(v: unknown): string | null {
 }
 
 /**
+ * The brokerage every FortMark dashboard profile belongs to.
+ *
+ * System-assigned, not user-supplied: the dashboard exists for FortMark agents,
+ * so there is no brokerage to choose. Kept here beside the other profile rules
+ * rather than in a component, because the SERVER is what makes it true — a
+ * read-only input would only be a suggestion.
+ *
+ * Deliberately not an environment variable. It is a product fact, not a
+ * deployment setting, and reading it from the environment would let a
+ * misconfigured scope silently rebrand every profile.
+ */
+export const FORTMARK_BROKERAGE_NAME = "FORTMARK";
+
+/**
+ * The brokerage value a request tried to set, or null when it sent none.
+ *
+ * Read from the RAW body, before Zod strips the key, because the whole point is
+ * to notice a value the schema would otherwise discard silently.
+ */
+export function submittedBrokerage(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+  const v = (raw as Record<string, unknown>).brokerageOffice;
+  const s = typeof v === "string" ? v.trim() : "";
+  return s.length > 0 ? s : null;
+}
+
+/**
+ * Whether a request tried to set a brokerage other than FortMark's.
+ *
+ * Blank and absent are NOT tampering — an older client that echoes an empty
+ * field back is harmless, and the server supplies the canonical value anyway.
+ * Only a non-blank value that disagrees is refused, and it is refused loudly
+ * rather than dropped, so a caller is never told a write succeeded when the
+ * value it asked for was discarded.
+ */
+export function isBrokerageTampering(raw: unknown): boolean {
+  const s = submittedBrokerage(raw);
+  return s !== null && s.toUpperCase() !== FORTMARK_BROKERAGE_NAME;
+}
+
+/**
  * The only fields a user may change about themselves.
  *
  * Role, status, access authority, Clerk id and the verified primary email are
  * absent by construction — an unknown key is stripped by Zod rather than
- * reaching the update statement.
+ * reaching the update statement. `brokerageOffice` is absent for the same
+ * reason: it is system-assigned, so it is not an input at all.
+ *
+ * Every field is `.nullish()`, not `.optional()`. That distinction was a real
+ * defect: `.optional()` accepts `undefined` but REJECTS `null`, and the server
+ * projects an unset field as `null`. Any surface that read a profile and posted
+ * it back — which is exactly what the wizard's Review step does — therefore
+ * failed validation on every field the user had left blank. Optional has to
+ * mean "may be absent OR explicitly empty", or round-tripping a profile is
+ * impossible.
  */
 export const profileUpdateSchema = z
   .object({
-    preferredDisplayName: z.string().max(120).optional(),
-    legalFirstName: z.string().max(120).optional(),
-    legalLastName: z.string().max(120).optional(),
-    phoneE164: z.string().max(40).optional(),
-    brokerageOffice: z.string().max(160).optional(),
-    licenseState: z.string().max(40).optional(),
-    licenseType: z.string().max(60).optional(),
-    licenseNumber: z.string().max(60).optional(),
-    licenseExpiration: z.string().max(20).optional(),
-    nrdsNumber: z.string().max(40).optional(),
-    biography: z.string().max(2000).optional(),
-    languages: z.union([z.array(z.string()), z.string()]).optional(),
-    specialties: z.union([z.array(z.string()), z.string()]).optional(),
-    serviceAreas: z.union([z.array(z.string()), z.string()]).optional(),
+    preferredDisplayName: z.string().max(120).nullish(),
+    legalFirstName: z.string().max(120).nullish(),
+    legalLastName: z.string().max(120).nullish(),
+    phoneE164: z.string().max(40).nullish(),
+    licenseState: z.string().max(40).nullish(),
+    licenseType: z.string().max(60).nullish(),
+    licenseNumber: z.string().max(60).nullish(),
+    licenseExpiration: z.string().max(20).nullish(),
+    nrdsNumber: z.string().max(40).nullish(),
+    biography: z.string().max(2000).nullish(),
+    languages: z.union([z.array(z.string()), z.string()]).nullish(),
+    specialties: z.union([z.array(z.string()), z.string()]).nullish(),
+    serviceAreas: z.union([z.array(z.string()), z.string()]).nullish(),
     // --- Release 1.1: professional presence -------------------------------
-    professionalTitle: z.string().max(120).optional(),
-    locationDisplay: z.string().max(120).optional(),
-    linkedinUrl: z.string().max(400).optional(),
-    instagramUrl: z.string().max(400).optional(),
-    facebookUrl: z.string().max(400).optional(),
-    personalWebsiteUrl: z.string().max(400).optional(),
-    professionalWebsiteUrl: z.string().max(400).optional(),
-    whatsappPhoneE164: z.string().max(40).optional(),
+    professionalTitle: z.string().max(120).nullish(),
+    locationDisplay: z.string().max(120).nullish(),
+    linkedinUrl: z.string().max(400).nullish(),
+    instagramUrl: z.string().max(400).nullish(),
+    facebookUrl: z.string().max(400).nullish(),
+    personalWebsiteUrl: z.string().max(400).nullish(),
+    professionalWebsiteUrl: z.string().max(400).nullish(),
+    whatsappPhoneE164: z.string().max(40).nullish(),
     // --- Release A: onboarding --------------------------------------------
-    businessEmail: z.string().max(254).optional(),
+    businessEmail: z.string().max(254).nullish(),
   })
   .strip();
 
@@ -231,11 +280,13 @@ export interface NormalizedProfileUpdate {
 export function normalizeProfileUpdate(raw: unknown): NormalizedProfileUpdate {
   const input = profileUpdateSchema.parse(raw ?? {});
   return {
+    // System-assigned, never read from the request. Set here rather than in a
+    // caller so no write path can forget it.
+    brokerageOffice: FORTMARK_BROKERAGE_NAME,
     preferredDisplayName: cleanText(input.preferredDisplayName),
     legalFirstName: cleanText(input.legalFirstName),
     legalLastName: cleanText(input.legalLastName),
     phoneE164: toE164(input.phoneE164),
-    brokerageOffice: cleanText(input.brokerageOffice),
     licenseState: toLicenseState(input.licenseState),
     licenseType: cleanText(input.licenseType),
     // Licence numbers are compared by humans; collapse case and spacing but
@@ -263,13 +314,50 @@ export function normalizeProfileUpdate(raw: unknown): NormalizedProfileUpdate {
   };
 }
 
-/** Fields that count toward completion, and their weights. */
+/**
+ * Normalise only the fields the request actually supplied.
+ *
+ * The distinction this preserves is the difference between a save and a wipe.
+ * `normalizeProfileUpdate` returns EVERY key, filling absent ones with null —
+ * correct for scoring a whole profile, catastrophic as the payload of an
+ * `UPDATE`, because a partial request would blank every column it did not
+ * mention. Zod drops absent optional keys, so the parsed object's own keys are
+ * exactly what the caller sent.
+ *
+ *   key absent      -> not returned  -> the stored value survives
+ *   key present null-> returned null  -> the user cleared it, so it clears
+ *
+ * `brokerageOffice` is always returned, because it is assigned rather than
+ * submitted and must be repaired on every write.
+ */
+export function normalizeProfileUpdatePartial(
+  raw: unknown
+): Partial<NormalizedProfileUpdate> {
+  const supplied = profileUpdateSchema.parse(raw ?? {}) as Record<string, unknown>;
+  const full = normalizeProfileUpdate(raw);
+  const out: Partial<NormalizedProfileUpdate> = {
+    brokerageOffice: FORTMARK_BROKERAGE_NAME,
+  };
+  for (const key of Object.keys(supplied) as (keyof NormalizedProfileUpdate)[]) {
+    (out as Record<string, unknown>)[key] = full[key];
+  }
+  return out;
+}
+
+/**
+ * Fields that count toward completion, and their weights.
+ *
+ * `brokerageOffice` is deliberately ABSENT. It is system-assigned, so counting
+ * it would hand every user five free points for a value they cannot influence,
+ * and the percentage is meant to measure what someone can still go and add.
+ * The score divides by the weights actually listed, so removing it re-bases the
+ * denominator rather than capping everyone below 100.
+ */
 const COMPLETION_FIELDS: Array<[keyof NormalizedProfileUpdate, number]> = [
   ["preferredDisplayName", 10],
   ["legalFirstName", 10],
   ["legalLastName", 10],
   ["phoneE164", 10],
-  ["brokerageOffice", 5],
   ["licenseState", 10],
   ["licenseType", 5],
   ["licenseNumber", 10],

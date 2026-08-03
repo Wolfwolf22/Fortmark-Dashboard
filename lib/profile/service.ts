@@ -27,8 +27,11 @@ import { decideAccess } from "../auth/dashboard-access.ts";
 import { profileDatabaseEnabled, type EnvLike } from "../flags.ts";
 import { resolveDbRole } from "./roles.ts";
 import {
+  FORTMARK_BROKERAGE_NAME,
+  isBrokerageTampering,
   licenseDetailsChanged,
   normalizeProfileUpdate,
+  normalizeProfileUpdatePartial,
   profileCompletion,
   profileUpdateSchema,
   type NormalizedProfileUpdate,
@@ -43,7 +46,12 @@ import {
   type ValidationFailure,
 } from "./onboarding.ts";
 import { deleteProfileImage } from "./image-storage.ts";
+
 import { z } from "zod";
+
+/** One wording for a refused brokerage change, shared by every write path. */
+const BROKERAGE_IMMUTABLE_MESSAGE =
+  "Brokerage is assigned by FortMark and cannot be changed.";
 
 /** Keys that must never appear in audit metadata, whatever the caller passes. */
 const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
@@ -182,6 +190,9 @@ export async function syncCurrentUser(
           legalFirstName: first ?? null,
           legalLastName: rest.length ? rest.join(" ") : null,
           preferredDisplayName: identity.name ?? null,
+          // Every FortMark profile belongs to FortMark. Set at creation so a
+          // row is never briefly null and never depends on a later edit.
+          brokerageOffice: FORTMARK_BROKERAGE_NAME,
         })
         .returning();
       profile = created[0];
@@ -290,6 +301,20 @@ export async function updateOwnProfile(
   const submitted = (raw ?? {}) as Record<string, unknown>;
   const editable = Object.keys(profileUpdateSchema.shape) as (keyof NormalizedProfileUpdate)[];
 
+  // The editor cannot change the brokerage either. A read-only input is a
+  // suggestion; this is the rule.
+  if (isBrokerageTampering(raw)) {
+    return {
+      ok: false,
+      reason: "invalid",
+      validation: {
+        error: "validation_failed",
+        fieldErrors: { brokerageOffice: [BROKERAGE_IMMUTABLE_MESSAGE] },
+        formErrors: [],
+      },
+    };
+  }
+
   let next: NormalizedProfileUpdate;
   try {
     next = normalizeProfileUpdate(raw);
@@ -326,7 +351,12 @@ export async function updateOwnProfile(
 
     await db
       .update(professionalProfiles)
-      .set({ ...next, profileCompletionPercent: completion, updatedAt: new Date() })
+      .set({
+        ...next,
+        brokerageOffice: FORTMARK_BROKERAGE_NAME,
+        profileCompletionPercent: completion,
+        updatedAt: new Date(),
+      })
       .where(eq(professionalProfiles.userId, current.user.id));
 
     await writeAuditEvent("profile_updated", {
@@ -411,6 +441,20 @@ export async function saveOnboardingStep(
 
   const submitted = (raw ?? {}) as Record<string, unknown>;
 
+  // Same refusal as completion. `normalizeStep` would strip the key silently,
+  // which is safe but dishonest — the caller would be told the step saved.
+  if (isBrokerageTampering(raw)) {
+    return {
+      ok: false,
+      reason: "invalid",
+      validation: {
+        error: "validation_failed",
+        fieldErrors: { brokerageOffice: [BROKERAGE_IMMUTABLE_MESSAGE] },
+        formErrors: [],
+      },
+    };
+  }
+
   let fields: Partial<NormalizedProfileUpdate>;
   try {
     fields = normalizeStep(step, raw);
@@ -448,6 +492,9 @@ export async function saveOnboardingStep(
       .update(professionalProfiles)
       .set({
         ...fields,
+        // Assigned, not submitted. Repaired on every write so a row can never
+        // drift to null or to a stale value from an older client.
+        brokerageOffice: FORTMARK_BROKERAGE_NAME,
         profileCompletionPercent: completion,
         onboardingStep,
         updatedAt: new Date(),
@@ -498,9 +545,28 @@ export async function completeOnboarding(
   const db = getDb();
   if (!db) return { ok: false, reason: "unavailable" };
 
-  let next: NormalizedProfileUpdate;
+  // Brokerage is assigned, so a request naming a different one is refused
+  // rather than silently stripped — a caller must never be told a write
+  // succeeded when the value it asked for was discarded.
+  if (isBrokerageTampering(raw)) {
+    return {
+      ok: false,
+      reason: "invalid",
+      validation: {
+        error: "validation_failed",
+        fieldErrors: { brokerageOffice: [BROKERAGE_IMMUTABLE_MESSAGE] },
+        formErrors: [],
+      },
+    };
+  }
+
+  // PARTIAL on purpose. The full normaliser fills every absent key with null,
+  // which is right for scoring and wrong for an UPDATE: it would blank every
+  // column the request did not mention, destroying the draft this very call is
+  // meant to finish.
+  let next: Partial<NormalizedProfileUpdate>;
   try {
-    next = normalizeProfileUpdate(raw);
+    next = normalizeProfileUpdatePartial(raw);
   } catch (error) {
     if (error instanceof z.ZodError) {
       // Full validation, so every editable field is in scope.
@@ -543,6 +609,7 @@ export async function completeOnboarding(
         .update(professionalProfiles)
         .set({
           ...next,
+          brokerageOffice: FORTMARK_BROKERAGE_NAME,
           profileCompletionPercent: completion,
           onboardingStep: LAST_STEP,
           updatedAt: completedAt,
