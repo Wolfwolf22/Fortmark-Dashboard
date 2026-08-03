@@ -27,6 +27,7 @@ import {
   databaseAccessControlEnabled,
   professionalProfileUiEnabled,
   profileDatabaseEnabled,
+  profileImageUploadEnabled,
 } from "../lib/flags.ts";
 import { resolveDbRole } from "../lib/profile/roles.ts";
 import {
@@ -2213,6 +2214,118 @@ const ALLOWED_ENV = {
     /storagePathname: text\("storage_pathname"\),/.test(schema));
   check("no image bytes are stored in postgres",
     !/bytea|blob\(|imageBytes/.test(schema));
+}
+
+// --- Image upload gate: token presence must never enable uploads -----------
+//
+// Vercel's managed Blob connection scopes BLOB_READ_WRITE_TOKEN to Production
+// AND Preview with no per-branch option. The token therefore exists in
+// environments that must never write to the store, and cannot be the switch.
+{
+  // Strict on purpose: only "1". Unlike the other flags, "true"/"yes"/"on" are
+  // refused, because this one governs writes to shared external storage and a
+  // typo should fail closed rather than be guessed generously.
+  check("only the exact string 1 enables uploads",
+    profileImageUploadEnabled({ PROFILE_IMAGE_UPLOAD_ENABLED: "1" }));
+  for (const v of ["true", "yes", "on", "TRUE", "0", "", " 1", "1 ", "01"]) {
+    check(`upload flag rejects ${JSON.stringify(v)}`,
+      !profileImageUploadEnabled({ PROFILE_IMAGE_UPLOAD_ENABLED: v }));
+  }
+  check("upload flag defaults off when missing", !profileImageUploadEnabled({}));
+
+  // The gate is independent of the token, and of the other flags.
+  const TOKEN = { BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_placeholder" };
+  check("a present token does not enable uploads",
+    !profileImageUploadEnabled({ ...TOKEN }));
+  check("a present token plus every OTHER flag does not enable uploads",
+    !profileImageUploadEnabled({
+      ...TOKEN,
+      PROFILE_DATABASE_ENABLED: "1",
+      PROFESSIONAL_PROFILE_UI_ENABLED: "1",
+    }));
+
+  // The upload flag alone is not sufficient either — the UI flag (which itself
+  // requires the database flag) must also be on.
+  const uploadOnly = { ...TOKEN, PROFILE_IMAGE_UPLOAD_ENABLED: "1" };
+  check("the upload flag alone does not satisfy the UI gate",
+    !professionalProfileUiEnabled(uploadOnly));
+  check("the upload flag alone does not satisfy the database gate",
+    !profileDatabaseEnabled(uploadOnly));
+  const allOn = {
+    ...TOKEN,
+    PROFILE_IMAGE_UPLOAD_ENABLED: "1",
+    PROFILE_DATABASE_ENABLED: "1",
+    PROFESSIONAL_PROFILE_UI_ENABLED: "1",
+  };
+  check("all three together are required and sufficient",
+    profileImageUploadEnabled(allOn) && professionalProfileUiEnabled(allOn));
+  // And it still cannot touch the access authority.
+  check("the upload flag never enables database access control",
+    !databaseAccessControlEnabled({ ...allOn, DATABASE_ACCESS_CONTROL_ENABLED: "1" }));
+}
+
+// --- Image upload gate: enforced at both layers ----------------------------
+{
+  const route = readFileSync("app/api/profile/image/route.ts", "utf8");
+  const storage = readFileSync("lib/profile/image-storage.ts", "utf8");
+  const mig = readFileSync("scripts/migrate.mjs", "utf8");
+  const env = readFileSync(".env.example", "utf8");
+
+  const strip = (src: string) =>
+    src.split("\n").filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l)).join("\n");
+
+  check("the route checks the upload flag",
+    strip(route).includes("!profileImageUploadEnabled()"));
+  check("the route checks the UI flag too",
+    strip(route).includes("!professionalProfileUiEnabled()"));
+  // Before the session is read, so a disabled environment makes no Clerk,
+  // database or Blob call at all.
+  // Both indices must be real. `indexOf` returns -1 for a missing needle, so a
+  // bare `a < b` would PASS when the gate is deleted entirely — the vacuous
+  // ordering assertion is exactly the bug this check exists to catch.
+  {
+    const src = strip(route);
+    const gate = src.indexOf("profileImageUploadEnabled()");
+    const session = src.indexOf("await requireCaller()");
+    check("the gate runs before anything else", gate >= 0 && session >= 0 && gate < session);
+  }
+  check("a disabled feature 404s", route.includes('{ error: "Not found" }, { status: 404'));
+
+  // Defence in depth: the write itself refuses, so no future caller can reach
+  // the store by forgetting the route check.
+  check("the upload helper refuses when disabled",
+    strip(storage).includes('if (!profileImageUploadEnabled()) return { ok: false, reason: "disabled" };'));
+  check("the delete helper refuses when disabled",
+    /deleteProfileImage[\s\S]{0,500}if \(!profileImageUploadEnabled\(\)\) return false;/.test(storage));
+  {
+    const src = strip(storage);
+    const flag = src.indexOf("profileImageUploadEnabled()");
+    const token = src.indexOf("blobConfigured()");
+    check("the flag is checked BEFORE the token in the writer",
+      flag >= 0 && token >= 0 && flag < token);
+  }
+  check("token presence is never treated as the gate",
+    !/if \(blobConfigured\(\)\)[\s\S]{0,120}put\(/.test(storage));
+
+  // Reported at build time by STATE only, never by value — and reported with
+  // the SAME strictness the application applies. The generous `on()` helper
+  // would print "on" for "true", which the flag itself refuses, so a build log
+  // using it would contradict the running code.
+  check("the build reports the upload flag state",
+    mig.includes('PROFILE_IMAGE_UPLOAD_ENABLED=${strict("PROFILE_IMAGE_UPLOAD_ENABLED")}'));
+  check("the build does not report the upload flag with the generous helper",
+    !mig.includes('PROFILE_IMAGE_UPLOAD_ENABLED=${on('));
+  check("the strict reporter accepts only the exact string 1",
+    /const strict = \(name\) => \{[\s\S]{0,240}v === "1" \? "on"/.test(mig));
+  check("the build never prints a flag value",
+    !/process\.env\.PROFILE_IMAGE_UPLOAD_ENABLED\}/.test(mig));
+
+  // Documented by name only.
+  check("the upload flag is documented", env.includes("PROFILE_IMAGE_UPLOAD_ENABLED="));
+  check("the blob token is documented as server-only",
+    env.includes("BLOB_READ_WRITE_TOKEN=") && /never NEXT_PUBLIC_/.test(env));
+  check("no flag value is committed to .env.example",
+    !/PROFILE_IMAGE_UPLOAD_ENABLED=1/.test(env) && !/BLOB_READ_WRITE_TOKEN=\S/.test(env));
 }
 
 // --- Summary ---------------------------------------------------------------
