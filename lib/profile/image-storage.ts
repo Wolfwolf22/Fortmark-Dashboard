@@ -14,6 +14,7 @@ import "server-only";
  * documents, no identification, no contracts, no MLS documents.
  */
 import { del, put } from "@vercel/blob";
+import { profileImageUploadEnabled } from "../flags.ts";
 import type { AllowedImageFormat } from "./image-format.ts";
 
 /** Every object this application writes lives under this root. */
@@ -76,7 +77,7 @@ export function blobConfigured(
 
 export type UploadResult =
   | { ok: true; url: string; pathname: string }
-  | { ok: false; reason: "unconfigured" | "provider_unavailable" };
+  | { ok: false; reason: "disabled" | "unconfigured" | "provider_unavailable" };
 
 /**
  * Upload one image and return its public URL and pathname.
@@ -90,6 +91,10 @@ export async function uploadProfileImage(input: {
   bytes: Uint8Array;
   contentType: string;
 }): Promise<UploadResult> {
+  // Defence in depth. The route already checks this, but the token is present
+  // in every environment the managed connection touches, so the write itself
+  // refuses rather than trusting every future caller to have checked first.
+  if (!profileImageUploadEnabled()) return { ok: false, reason: "disabled" };
   if (!blobConfigured()) return { ok: false, reason: "unconfigured" };
   try {
     const blob = await put(input.pathname, Buffer.from(input.bytes), {
@@ -120,6 +125,9 @@ export async function deleteProfileImage(
   dashboardUserId: string,
   pathname: string | null | undefined
 ): Promise<boolean> {
+  // Same gate as the write: a disabled environment touches the store for
+  // nothing at all, not even cleanup.
+  if (!profileImageUploadEnabled()) return false;
   if (!blobConfigured()) return false;
   // The ownership gate, not an optimisation: the token can delete anything in
   // the store, so this is what stops a wrong pathname destroying another

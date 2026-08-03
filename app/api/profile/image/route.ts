@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
 import { decideAccess, isConfigFailure } from "@/lib/auth/dashboard-access";
-import { professionalProfileUiEnabled } from "@/lib/flags";
+import { professionalProfileUiEnabled, profileImageUploadEnabled } from "@/lib/flags";
 import {
   ALLOWED_IMAGE_MIME,
   IMAGE_ERROR_MESSAGE,
@@ -71,7 +71,13 @@ async function requireCaller(): Promise<
  * photo is still live.
  */
 export async function POST(request: NextRequest) {
-  if (!professionalProfileUiEnabled()) {
+  // All three gates, before anything else. `professionalProfileUiEnabled`
+  // already requires PROFILE_DATABASE_ENABLED, so this covers the full set.
+  //
+  // This runs before the session is even read, so a disabled environment makes
+  // no Blob call, no database call and no Clerk round trip — the route simply
+  // does not exist as far as a caller can tell.
+  if (!professionalProfileUiEnabled() || !profileImageUploadEnabled()) {
     return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
   }
 
