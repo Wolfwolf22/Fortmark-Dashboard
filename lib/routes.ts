@@ -31,13 +31,53 @@ export const ROUTES = {
 } as const;
 
 /**
- * Canonical portal origin. Falls back to a relative origin in the browser so
- * local development works without extra configuration; server code that needs
- * an absolute URL should pass an explicit origin.
+ * Reduce an operator-configured value to a bare, safe origin.
+ *
+ * Returns null for anything it cannot vouch for, and never throws. That
+ * matters because the result feeds `new URL(path, origin)` inside middleware:
+ * an unvalidated value like `app.fortmark.net` (no scheme) or `ht!tp://nope`
+ * makes that constructor throw, and a throw from middleware is
+ * MIDDLEWARE_INVOCATION_FAILED — a 500 across the entire zone rather than the
+ * redirect the visitor should have received.
+ *
+ * Rules, in order of what they defend against:
+ *   - http/https only        — `javascript:` and `data:` can never become a
+ *                              redirect target
+ *   - hostname required      — rules out `https:///` and similar
+ *   - no credentials         — `https://user:pass@host` is refused outright
+ *                              rather than silently forwarded
+ *   - origin only            — a configured path, query or fragment is dropped,
+ *                              so `https://app.fortmark.net/dashboard` cannot
+ *                              double the basePath into `/dashboard/dashboard`
+ */
+export function toSafeOrigin(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (!url.hostname) return null;
+  if (url.username || url.password) return null;
+  return url.origin;
+}
+
+/**
+ * Canonical portal origin, or an empty string when none can be trusted.
+ *
+ * Falls back to the browser origin so local development works without extra
+ * configuration; server code that needs an absolute URL should pass an
+ * explicit origin. An empty return is a supported state, not a failure —
+ * `signInUrl` degrades to a relative path that the caller resolves against the
+ * request origin.
  */
 export function portalOrigin(): string {
-  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (configured) return configured.replace(/\/+$/, "");
+  const configured = toSafeOrigin(process.env.NEXT_PUBLIC_APP_URL);
+  if (configured) return configured;
   if (typeof window !== "undefined") return window.location.origin;
   return "";
 }

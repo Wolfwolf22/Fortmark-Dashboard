@@ -20,7 +20,10 @@ import {
   apiPath,
   assetPath,
   isSafeReturnPath,
+  signInUrl,
 } from "../lib/routes.ts";
+
+import { readFileSync } from "node:fs";
 
 let passed = 0;
 const failures: string[] = [];
@@ -156,6 +159,166 @@ check("api chat path gains the basePath prefix", apiPath("/api/chat") === "/dash
 check("already-prefixed api path is untouched", apiPath("/dashboard/api/profile") === "/dashboard/api/profile");
 check("relative api path is not mangled", apiPath("api/profile") === "api/profile");
 check("api path is basePath-consistent", apiPath("/api/x").startsWith(`${BASE_PATH}/`));
+
+// --- Incident regression: MIDDLEWARE_INVOCATION_FAILED ---------------------
+//
+// Production went down with `@clerk/nextjs: Missing publishableKey` thrown from
+// edge middleware on every dashboard route. `clerkMiddleware()` throws when a
+// key is absent, and a throw from middleware is a 500 for the whole zone. The
+// guard added to middleware.ts runs BEFORE Clerk's handler, so a missing key
+// degrades to a terminal 503 instead of taking the dashboard down.
+{
+  const mw = readFileSync("middleware.ts", "utf8");
+  // Comment-stripped source. Several of these needles also appear in the
+  // comments that explain why they are absent from the code, which would
+  // otherwise fail the checks spuriously.
+  const mwCode = mw
+    .split("\n")
+    .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l))
+    .join("\n");
+
+  // Both indices must EXIST as well as be ordered: `indexOf` returns -1 when a
+  // needle is absent, and -1 is less than any real index, so an ordering test
+  // alone passes vacuously when the guard is deleted.
+  const guardAt = mw.indexOf("clerkIsConfigured()");
+  const invokeAt = mw.indexOf("clerkHandler(req, event)");
+  check(
+    "middleware checks Clerk configuration before invoking Clerk",
+    guardAt >= 0 && invokeAt >= 0 && guardAt < invokeAt
+  );
+  check(
+    "a missing key returns the unavailable response",
+    mw.includes("if (!clerkIsConfigured()) return serviceUnavailable(req)")
+  );
+  // Middleware cannot import `dashboard-access` — that module hashes with
+  // `node:crypto`, which the edge runtime refuses to bundle, so the build
+  // fails outright. The rule is therefore restated locally, and these assert
+  // the two copies still agree on every case that matters.
+  check(
+    "middleware stays free of node: imports",
+    !/from "node:/.test(mw) && !/require\("node:/.test(mw)
+  );
+  check(
+    "middleware does not import the crypto-bearing access module",
+    !mwCode.includes("lib/auth/dashboard-access")
+  );
+  check(
+    "the local guard requires both keys, like hasClerkKeys",
+    /nonEmpty\(env\.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY\) && nonEmpty\(env\.CLERK_SECRET_KEY\)/.test(mw)
+  );
+  check(
+    "a configuration failure never becomes an access grant",
+    !/serviceUnavailable[\s\S]{0,600}NextResponse\.next\(\)/.test(mw)
+  );
+  check("middleware never calls NextResponse.next()", !mwCode.includes("NextResponse.next()"));
+  check(
+    "API routes get a JSON 503 when Clerk cannot start",
+    /pathname\.startsWith\("\/api\/"\)[\s\S]{0,200}status: 503/.test(mw)
+  );
+  check("page requests get a terminal 503, not a redirect that could loop",
+    /return new NextResponse\([\s\S]{0,200}status: 503/.test(mw));
+  check(
+    "the unavailable response is never cached",
+    (mw.match(/"Cache-Control": "no-store"/g) ?? []).length >= 2
+  );
+  // The 503 body must be plain text, never the app shell: rendering any part of
+  // the dashboard while auth cannot initialise would be the access grant this
+  // path exists to prevent.
+  check(
+    "the unavailable page body is plain text, not markup",
+    /Content-Type": "text\/plain/.test(mwCode) && !/<html|__NEXT_DATA__|<body/.test(mwCode)
+  );
+  check(
+    "the unavailable page carries no session or identity data",
+    !/userId|sessionClaims|emailAddress/.test(
+      mwCode.slice(mwCode.indexOf("function serviceUnavailable"), mwCode.indexOf("const clerkHandler"))
+    )
+  );
+
+  // A hostile return path must never survive into the sign-in redirect, in any
+  // of the forms an attacker can reach the middleware with.
+  for (const hostile of [
+    "//evil.com",
+    "https://evil.com",
+    "/\\evil.com",
+    "/x://evil.com",
+    "javascript:alert(1)",
+    "evil.com",
+  ]) {
+    const built = signInUrl(hostile);
+    check(
+      `hostile return path is not carried into the sign-in url: ${JSON.stringify(hostile)}`,
+      !built.includes("evil.com") && !built.includes("javascript:")
+    );
+  }
+  // The legitimate case still round-trips.
+  check(
+    "a safe return path is preserved",
+    signInUrl("/dashboard/leads").includes(encodeURIComponent("/dashboard/leads"))
+  );
+
+  // Both keys are required. A publishable key alone must not look configured.
+  check("both keys absent fails closed", !hasClerkKeys({}));
+  check(
+    "publishable key alone fails closed",
+    !hasClerkKeys({ NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_x" })
+  );
+  check(
+    "secret key alone fails closed",
+    !hasClerkKeys({ CLERK_SECRET_KEY: "sk_live_x" })
+  );
+  check(
+    "blank publishable key fails closed",
+    !hasClerkKeys({ NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "   ", CLERK_SECRET_KEY: "sk_live_x" })
+  );
+  check(
+    "both keys present is configured",
+    hasClerkKeys({ NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_x", CLERK_SECRET_KEY: "sk_live_x" })
+  );
+
+  // The redirect path that a healthy, signed-out request takes must not throw
+  // for any operator-provided app URL. `signInUrl` is the value handed to
+  // `new URL(..., origin)`, so it must always yield something resolvable.
+  const ORIGIN = "https://app.fortmark.net";
+  for (const appUrl of [
+    undefined, "", "   ",
+    "https://app.fortmark.net", "https://app.fortmark.net/",
+    "app.fortmark.net", "https://app.fortmark.net/dashboard",
+    "  https://app.fortmark.net  ", "ht!tp://nope", "javascript:alert(1)",
+  ]) {
+    const prev = process.env.NEXT_PUBLIC_APP_URL;
+    if (appUrl === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+    else process.env.NEXT_PUBLIC_APP_URL = appUrl;
+    let threw = false;
+    let resolvable = false;
+    try {
+      const u = new URL(signInUrl("/dashboard"), ORIGIN);
+      resolvable = u.protocol === "https:" || u.protocol === "http:";
+    } catch {
+      threw = true;
+    }
+    if (prev === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+    else process.env.NEXT_PUBLIC_APP_URL = prev;
+    check(`sign-in URL never throws for app url ${JSON.stringify(appUrl)}`, !threw);
+    check(`sign-in URL stays http(s) for app url ${JSON.stringify(appUrl)}`, resolvable);
+  }
+
+  // The same, for the sign-in path variable.
+  for (const signIn of [undefined, "", "/sign-in", "https://app.fortmark.net/sign-in", "not a url", "  /sign-in  "]) {
+    const prev = process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL;
+    if (signIn === undefined) delete process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL;
+    else process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL = signIn;
+    let threw = false;
+    try {
+      new URL(signInUrl("/dashboard"), ORIGIN);
+    } catch {
+      threw = true;
+    }
+    if (prev === undefined) delete process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL;
+    else process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL = prev;
+    check(`sign-in URL never throws for sign-in var ${JSON.stringify(signIn)}`, !threw);
+  }
+}
 
 // --- Summary ---------------------------------------------------------------
 const total = passed + failures.length;
