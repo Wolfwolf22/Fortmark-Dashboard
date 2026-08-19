@@ -31,7 +31,7 @@ import { initials } from "@/lib/utils";
 type LoadState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "ready"; profile: ProfileDetail | null }
+  | { status: "ready"; profile: ProfileDetail | null; imageUploadEnabled: boolean }
   | { status: "error" };
 
 export function ProfileDrawer({
@@ -58,8 +58,18 @@ export function ProfileDrawer({
           headers: { Accept: "application/json" },
         });
         if (!response.ok) throw new Error(String(response.status));
-        const body = (await response.json()) as { profile: ProfileDetail | null };
-        setState({ status: "ready", profile: body.profile ?? null });
+        const body = (await response.json()) as {
+          profile: ProfileDetail | null;
+          imageUploadEnabled?: boolean;
+        };
+        setState({
+          status: "ready",
+          profile: body.profile ?? null,
+          // Absent means "an older server that did not report it" — assume
+          // enabled and let the upload route's 404 be the answer, which is
+          // exactly the pre-existing behaviour.
+          imageUploadEnabled: body.imageUploadEnabled !== false,
+        });
       } catch (error) {
         // An aborted fetch is the drawer closing, not a failure.
         if ((error as Error)?.name === "AbortError") return;
@@ -106,7 +116,14 @@ export function ProfileDrawer({
             ) : (
               <ProfileEditor
                 initial={state.profile}
-                onSaved={(profile) => setState({ status: "ready", profile })}
+                imageUploadEnabled={state.imageUploadEnabled}
+                onSaved={(profile) =>
+                  setState({
+                    status: "ready",
+                    profile,
+                    imageUploadEnabled: state.imageUploadEnabled,
+                  })
+                }
               />
             )}
           </div>

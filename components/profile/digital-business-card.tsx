@@ -180,8 +180,12 @@ export function DigitalBusinessCard({
 
   // Carried on the card rather than scraped from `links`: the Home self-card
   // hides the email/phone entries, and this card must not lose them with it.
-  // `businessEmail` is the ONLY address published here — never the account one.
-  const email = data.businessEmail;
+  //
+  // The RESOLVED public address: the alternative email when the user entered
+  // one, otherwise their account email. Selected once in
+  // `publicContactEmail` so this card, the vCard and the clipboard block
+  // cannot disagree about which address is published.
+  const email = data.publicContactEmail ?? data.businessEmail;
   const phone = data.phoneE164;
   const whatsapp = toWhatsApp(data.whatsappPhoneE164);
 

@@ -6,6 +6,8 @@
  * these; it never re-implements them.
  */
 import { z } from "zod";
+import { canonicalizeTitle } from "./titles.ts";
+import { canonicalizeMlsBoard, toMlsAgentId } from "./mls.ts";
 
 /** US jurisdictions accepted for a real-estate licence. */
 export const LICENSE_STATES = [
@@ -245,6 +247,14 @@ export const profileUpdateSchema = z
     whatsappPhoneE164: z.string().max(40).nullish(),
     // --- Release A: onboarding --------------------------------------------
     businessEmail: z.string().max(254).nullish(),
+    // --- Release B: MLS identity ------------------------------------------
+    // `mlsVerificationStatus` and `mlsVerifiedAt` are deliberately ABSENT.
+    // They are server-assigned, and leaving them out of the schema is what
+    // makes "a user cannot mark themselves verified" structural rather than a
+    // rule someone has to remember to enforce: Zod strips the keys, so no
+    // request shape reaches the update statement carrying them.
+    mlsAgentId: z.string().max(32).nullish(),
+    mlsOrganization: z.string().max(120).nullish(),
   })
   .strip();
 
@@ -274,6 +284,8 @@ export interface NormalizedProfileUpdate {
   professionalWebsiteUrl: string | null;
   whatsappPhoneE164: string | null;
   businessEmail: string | null;
+  mlsAgentId: string | null;
+  mlsOrganization: string | null;
 }
 
 /** Parse then normalise. Throws only on a schema violation, not on odd values. */
@@ -298,7 +310,11 @@ export function normalizeProfileUpdate(raw: unknown): NormalizedProfileUpdate {
     languages: toStringList(input.languages),
     specialties: toStringList(input.specialties),
     serviceAreas: toStringList(input.serviceAreas),
-    professionalTitle: cleanText(input.professionalTitle),
+    // Canonicalised to a catalogue value when it matches one, by value or by
+    // label. An unrecognised string is preserved as typed rather than dropped
+    // — rows written before the catalogue existed hold free text, and blanking
+    // them would destroy data the user never asked to change.
+    professionalTitle: canonicalizeTitle(input.professionalTitle),
     locationDisplay: cleanText(input.locationDisplay),
     // Every URL goes through the scheme allowlist; an unsafe value becomes
     // null rather than throwing, so one bad paste cannot block a whole save.
@@ -311,6 +327,10 @@ export function normalizeProfileUpdate(raw: unknown): NormalizedProfileUpdate {
     // An unusable address becomes null rather than throwing, matching how the
     // URL fields behave: one bad paste must not block an entire save.
     businessEmail: toEmail(input.businessEmail),
+    // Self-reported. Normalising the shape says nothing about whether the
+    // identifier belongs to this person — see lib/profile/mls.ts.
+    mlsAgentId: toMlsAgentId(input.mlsAgentId),
+    mlsOrganization: canonicalizeMlsBoard(input.mlsOrganization),
   };
 }
 

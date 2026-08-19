@@ -13,8 +13,10 @@ import "server-only";
 import {
   professionalProfileUiEnabled,
   profileDatabaseEnabled,
+  profileImageUploadEnabled,
   type EnvLike,
 } from "../flags.ts";
+import { toMlsIdentity, type MlsIdentity } from "./mls.ts";
 import { toProfileDisplay, type ShellProfile } from "./display.ts";
 import {
   fallbackHomeIdentityCard,
@@ -165,6 +167,19 @@ export interface OnboardingContext {
   role: string | null;
   /** Active image for the wizard's step 1 preview. */
   currentImageUrl: string | null;
+  /**
+   * Whether photo uploads can actually succeed in this environment.
+   *
+   * Resolved on the server and passed down so the control's APPEARANCE and its
+   * ability to save agree. Previously the upload component discovered the flag
+   * only by posting and getting a 404, which meant a disabled environment
+   * still rendered a working-looking "Add photo" button that could never
+   * store anything. The 404 handling stays as defence in depth — this makes
+   * the common case coherent rather than replacing the server's answer.
+   */
+  imageUploadEnabled: boolean;
+  /** Self-reported MLS identity and its verification state. Never fabricated. */
+  mls: MlsIdentity;
 }
 
 const UNAVAILABLE: OnboardingContext = {
@@ -176,6 +191,13 @@ const UNAVAILABLE: OnboardingContext = {
   accountEmail: null,
   role: null,
   currentImageUrl: null,
+  imageUploadEnabled: false,
+  mls: {
+    mlsAgentId: null,
+    mlsOrganization: null,
+    mlsVerificationStatus: "unverified",
+    mlsVerifiedAt: null,
+  },
 };
 
 export async function onboardingContext(
@@ -224,6 +246,8 @@ export async function onboardingContext(
         linkedinUrl: p?.linkedinUrl ?? null,
         instagramUrl: p?.instagramUrl ?? null,
         facebookUrl: p?.facebookUrl ?? null,
+        mlsAgentId: p?.mlsAgentId ?? null,
+        mlsOrganization: p?.mlsOrganization ?? null,
       },
       // The verified Clerk address, shown read-only. Never writable here.
       accountEmail: synced.user.primaryEmail ?? user.email ?? null,
@@ -234,6 +258,13 @@ export async function onboardingContext(
         synced.image?.clerkImageUrl ??
         user.imageUrl ??
         null,
+      // Both gates, exactly as the upload route checks them, so the UI cannot
+      // offer a control the route would refuse.
+      imageUploadEnabled:
+        professionalProfileUiEnabled(env) && profileImageUploadEnabled(env),
+      // Read straight off the row. The status is whatever the database says —
+      // this never upgrades it, and no user input can.
+      mls: toMlsIdentity(p),
     };
   } catch {
     // A profile problem must never become an access problem.

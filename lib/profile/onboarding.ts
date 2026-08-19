@@ -51,9 +51,14 @@ export interface OnboardingStep {
 /**
  * The ordered steps.
  *
- * `mls` and `review` persist nothing. In Release A the MLS step is purely
- * informational — there is no verified connection to store, and a column that
- * could only hold an unverified typed claim would invite treating it as one.
+ * `review` persists nothing.
+ *
+ * The `mls` step DOES persist as of Release B. Release A left it informational
+ * on the reasoning that a column holding an unverified typed claim would
+ * invite treating it as verified. That risk is real, and it is answered by
+ * `mls_verification_status` — which records the claim AS a claim — rather than
+ * by refusing to store the identity at all. Not storing it had its own cost:
+ * the user typed an identifier into a step that threw it away.
  */
 export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
   {
@@ -109,9 +114,11 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
   {
     id: "mls",
     step: 5,
-    title: "Connect your MLS identity",
-    description: "Your MLS identity will be verified before listings are connected.",
-    fields: [],
+    title: "Your MLS identity",
+    // Says what actually happens. The previous wording promised a verification
+    // ahead of connecting listings that nothing in this application performs.
+    description: "Record the MLS agent ID you already hold. FortMark stores it as provided.",
+    fields: ["mlsAgentId", "mlsOrganization"],
     skippable: true,
   },
   {
@@ -220,6 +227,9 @@ const FIELD_MESSAGE: Partial<Record<ProfileFieldKey, string>> = {
   facebookUrl: "Enter a valid web address.",
   personalWebsiteUrl: "Enter a valid web address.",
   professionalWebsiteUrl: "Enter a valid web address.",
+  mlsAgentId:
+    "Enter your MLS agent ID — 3 to 32 letters, numbers, hyphens or underscores.",
+  mlsOrganization: "Choose your MLS or board.",
 };
 
 function messageFor(key: ProfileFieldKey, fallback: string): string {

@@ -59,6 +59,10 @@ const TEXT_FIELDS: readonly ProfileFieldKey[] = [
 const PRESENCE_FIELDS: readonly ProfileFieldKey[] = [
   "professionalTitle",
   "locationDisplay",
+  // Same keys the onboarding MLS step writes, so Edit Profile shows and saves
+  // exactly what the wizard stored rather than a second, drifting copy.
+  "mlsAgentId",
+  "mlsOrganization",
   "businessEmail",
   "whatsappPhoneE164",
   "linkedinUrl",
@@ -99,6 +103,9 @@ const EMPTY: ProfileDetail = {
   professionalWebsiteUrl: null,
   whatsappPhoneE164: null,
   businessEmail: null,
+  mlsAgentId: null,
+  mlsOrganization: null,
+  mlsVerificationStatus: "unverified",
   completion: 0,
 };
 
@@ -126,9 +133,12 @@ type SaveState =
 export function ProfileEditor({
   initial,
   onSaved,
+  imageUploadEnabled = true,
 }: {
   initial: ProfileDetail | null;
   onSaved: (profile: ProfileDetail | null) => void;
+  /** Server-reported. Off ⇒ the photo control says so instead of failing. */
+  imageUploadEnabled?: boolean;
 }) {
   const [form, setForm] = React.useState<FormState>(() => toForm(initial));
   const [completion, setCompletion] = React.useState(initial?.completion ?? 0);
@@ -231,6 +241,7 @@ export function ProfileEditor({
         displayName={form.preferredDisplayName || "FortMark"}
         onUploaded={setImageUrl}
         disabled={saving}
+        uploadEnabled={imageUploadEnabled}
       />
 
       <div className="space-y-1.5">

@@ -28,6 +28,7 @@ import {
   isSystemAssignedField,
 } from "@/lib/profile/fields";
 import { FORTMARK_BROKERAGE_NAME } from "@/lib/profile/normalize";
+import { mlsBoardLabel, mlsStatusLabel, type MlsIdentity } from "@/lib/profile/mls";
 import {
   type OnboardingStep,
   type ProfileFieldKey,
@@ -50,6 +51,10 @@ export interface OnboardingWizardProps {
   role: string | null;
   /** Current active profile image, for the step 1 preview. */
   currentImageUrl?: string | null;
+  /** Server-resolved. Off ⇒ the photo control is disabled and says so. */
+  imageUploadEnabled?: boolean;
+  /** Stored MLS identity and its verification state. */
+  mls?: MlsIdentity;
 }
 
 /** Server contract: field name -> messages. Same shape the editor consumes. */
@@ -62,6 +67,8 @@ export function OnboardingWizard({
   accountEmail,
   role,
   currentImageUrl = null,
+  imageUploadEnabled = false,
+  mls,
 }: OnboardingWizardProps) {
   const router = useRouter();
   const [current, setCurrent] = React.useState<OnboardingStep>(
@@ -275,6 +282,7 @@ export function OnboardingWizard({
             displayName={stored.preferredDisplayName || accountEmail || "FortMark"}
             onUploaded={setImageUrl}
             disabled={saving}
+            uploadEnabled={imageUploadEnabled}
           />
         )}
 
@@ -282,7 +290,7 @@ export function OnboardingWizard({
           <ReadOnlyField
             label="Account email"
             value={accountEmail}
-            hint="Your verified sign-in address. It cannot be changed here, and is not published unless you enter it below."
+            hint="Connected to your FortMark account. It cannot be changed here. If you leave the alternative email blank, this is the address shown on your profile and digital card."
           />
         )}
 
@@ -305,16 +313,7 @@ export function OnboardingWizard({
           </p>
         )}
 
-        {current.id === "mls" && (
-          <div className="rounded-panel border border-border bg-foreground/[0.03] p-4">
-            <p className="text-[13px] font-semibold text-foreground">Not connected</p>
-            <p className="mt-1 text-[12px] leading-snug text-foreground/70">
-              Connecting your MLS identity will bring your own listings into the
-              dashboard. Verification and connection arrive in the next release —
-              nothing is stored or claimed on your behalf yet.
-            </p>
-          </div>
-        )}
+        {current.id === "mls" && <MlsStatusPanel mls={mls} />}
 
         {current.id === "review" && (
           <ReviewSummary values={stored} accountEmail={accountEmail} />
@@ -446,6 +445,54 @@ function ReviewSummary({
         These fields appear on My FortMark and your digital card. Anything left
         blank simply does not appear, and none of them is required to finish —
         you can add or update optional details later from Edit Profile.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The MLS identity status.
+ *
+ * Says exactly what has happened and nothing more. The identifier is stored;
+ * no MLS was contacted. The previous copy promised a verification step ahead
+ * of connecting listings — a process that exists nowhere in this application
+ * — and it sat above a step that then discarded whatever was typed.
+ *
+ * `verified` is rendered only if the database says so. No client state, and no
+ * user action on this screen, can produce it.
+ */
+function MlsStatusPanel({ mls }: { mls?: MlsIdentity }) {
+  const status = mls?.mlsVerificationStatus ?? "unverified";
+  const verified = status === "verified";
+  const board = mlsBoardLabel(mls?.mlsOrganization);
+
+  return (
+    <div className="rounded-panel border border-border bg-foreground/[0.03] p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={cn(
+            "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold",
+            verified
+              ? "bg-foreground/10 text-foreground"
+              : "border border-border text-foreground/70"
+          )}
+        >
+          {mlsStatusLabel(status)}
+        </span>
+        {mls?.mlsAgentId && (
+          <span className="text-[12px] text-foreground/70">
+            {mls.mlsAgentId}
+            {board ? ` · ${board}` : ""}
+          </span>
+        )}
+      </div>
+      <p className="mt-2 text-[12px] leading-snug text-foreground/70">
+        FortMark stores your MLS agent ID exactly as you enter it. It is not
+        checked against your MLS or board, so it stays marked{" "}
+        <span className="font-medium text-foreground">Not verified</span> until a
+        verified connection exists. Recording it now means your listings can be
+        matched to you when that connection is built — nothing is claimed on
+        your behalf in the meantime.
       </p>
     </div>
   );

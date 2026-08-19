@@ -68,6 +68,29 @@ const RELEASE_1_1_PROFILE_COLUMNS = [
  */
 const RELEASE_A_ONBOARDING_COLUMNS = ["business_email", "onboarding_step"];
 
+/**
+ * Release B MLS-identity columns on professional_profiles.
+ *
+ * Same reasoning as the two lists above — Drizzle names every schema column in
+ * its SELECTs, so a build whose migration did not land fails on the first
+ * profile read, and the service swallows it into a silent degrade.
+ *
+ * `mls_verification_status` is the one column here that is intentionally NOT
+ * NULL: it carries a default of 'unverified', so every pre-existing row gets a
+ * truthful value without a backfill, and "no opinion recorded" is not a state
+ * this release should be able to represent. It is therefore checked for
+ * presence but excluded from the nullability assertion.
+ */
+const RELEASE_B_MLS_COLUMNS = [
+  "mls_agent_id",
+  "mls_organization",
+  "mls_verification_status",
+  "mls_verified_at",
+];
+
+/** The subset that must stay nullable — every user-supplied MLS value. */
+const RELEASE_B_MLS_NULLABLE = ["mls_agent_id", "mls_organization", "mls_verified_at"];
+
 const force = process.argv.includes("--force");
 
 /**
@@ -291,6 +314,24 @@ try {
   }
   console.log(
     `[migrate] all ${RELEASE_A_ONBOARDING_COLUMNS.length} Release A onboarding columns present and nullable`
+  );
+
+  const missingMls = RELEASE_B_MLS_COLUMNS.filter((c) => !cols.has(c));
+  if (missingMls.length > 0) {
+    bail(`MISSING Release B MLS columns: ${missingMls.join(", ")}`);
+  }
+  const mlsNotNullable = RELEASE_B_MLS_NULLABLE.filter((c) => cols.get(c) !== "YES");
+  if (mlsNotNullable.length > 0) {
+    bail(`Release B MLS columns must stay nullable: ${mlsNotNullable.join(", ")}`);
+  }
+  // Asserted explicitly rather than assumed: if this column were ever made
+  // nullable, an unverified row could read as null and a display that treats
+  // null as "no answer yet" would stop saying "Not verified" out loud.
+  if (cols.get("mls_verification_status") !== "NO") {
+    bail("mls_verification_status must be NOT NULL so no row can omit its status");
+  }
+  console.log(
+    `[migrate] all ${RELEASE_B_MLS_COLUMNS.length} Release B MLS columns present (status NOT NULL, rest nullable)`
   );
 
   console.log(`[migrate] professional_profiles column count: ${cols.size}`);
