@@ -27,6 +27,7 @@ import {
   Globe,
   Instagram,
   Linkedin,
+  LogOut,
   Mail,
   MessageCircle,
   SquarePen,
@@ -50,6 +51,7 @@ import { buildContactBlock, formatPhoneDisplay, toWhatsApp } from "@/lib/profile
 import { safeLinkUrl } from "@/lib/profile/display";
 import { buildVCard, vCardFilename } from "@/lib/profile/vcard";
 import { ROUTES } from "@/lib/routes";
+import { SignOutLink } from "@/components/layout/sign-out-link";
 import { cn, initials } from "@/lib/utils";
 
 /**
@@ -168,10 +170,29 @@ export function DigitalBusinessCard({
   data,
   open,
   onOpenChange,
+  onEdit,
+  showSignOut = false,
 }: {
   data: HomeIdentityCardData;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Edit in place instead of navigating to Settings.
+   *
+   * Home leaves this unset, so its card keeps linking to the settings page.
+   * The account drawer passes it, because there the card IS the profile
+   * surface and sending someone to another page to change one field is a
+   * detour back to where they already are.
+   */
+  onEdit?: () => void;
+  /**
+   * Offer sign out from the card.
+   *
+   * Only the account drawer sets this: that card is "you", so signing out
+   * belongs on it. Home's card is a shareable artefact and must not carry an
+   * account action.
+   */
+  showSignOut?: boolean;
 }) {
   const [copied, setCopied] = React.useState(false);
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -385,12 +406,25 @@ export function DigitalBusinessCard({
             <Download />
             Download vCard
           </Button>
-          <Button asChild size="sm" variant="ghost">
-            <Link href={`${ROUTES.settings}?tab=profile`}>
+          {onEdit ? (
+            <Button size="sm" variant="ghost" onClick={onEdit}>
               <SquarePen />
               Edit profile
-            </Link>
-          </Button>
+            </Button>
+          ) : (
+            <Button asChild size="sm" variant="ghost">
+              <Link href={`${ROUTES.settings}?tab=profile`}>
+                <SquarePen />
+                Edit profile
+              </Link>
+            </Button>
+          )}
+          {showSignOut && (
+            <SignOutLink className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold transition-colors hover:bg-accent">
+              <LogOut aria-hidden className="size-4 shrink-0" />
+              Sign out
+            </SignOutLink>
+          )}
           <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
             Close
           </Button>

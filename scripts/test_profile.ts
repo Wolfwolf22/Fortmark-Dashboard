@@ -3668,10 +3668,13 @@ const ALLOWED_ENV = {
     // Account actions moved here from the rail's bottom corner.
     check("the drawer offers sign out", drawer.includes("<SignOutLink"));
     check("the drawer offers the digital card", drawer.includes("<DigitalBusinessCard"));
-    check("the digital card is disabled until its data has loaded",
-      /disabled=\{state\.status !== "ready" \|\| !state\.card\}/.test(drawer));
-    check("the card renders outside the drawer's focus trap",
-      drawer.indexOf("</SheetContent>") < drawer.indexOf("<DigitalBusinessCard"));
+    // Same guarantees as before, restated for the card-first structure:
+    // the card is never offered without data, and the two surfaces are
+    // siblings rather than nested, so their focus traps cannot fight.
+    check("the digital card action only appears once its data exists",
+      /\{ready && card && \([\s\S]{0,400}Digital card/.test(drawer));
+    check("the card is a sibling of the sheet, never nested inside it",
+      drawer.indexOf("<DigitalBusinessCard") < drawer.indexOf("<Sheet"));
 
     // One account control, not two.
     const rail = readFileSync("components/layout/nav-rail.tsx", "utf8");
@@ -3680,24 +3683,41 @@ const ALLOWED_ENV = {
     check("the rail keeps its other bottom actions",
       rail.includes("NotificationsBell") && rail.includes('href="/settings"'));
 
-    // The drawer opens on a RECORD, not a form. Landing on the editor made a
-    // finished profile look like onboarding starting over.
-    check("the drawer opens in view mode",
-      /React\.useState<"view" \| "edit">\("view"\)/.test(drawer));
-    check("a fresh open always resets to the summary",
-      /if \(open\) setMode\("view"\)/.test(drawer));
-    check("the editor is reached deliberately, behind Edit profile",
-      drawer.includes("onEdit={() => setMode(\"edit\")}") &&
-        drawer.includes("<ProfileEditor"));
-    check("saving returns to the record instead of leaving a form open",
-      /setMode\("view"\);[\s\S]{0,80}\}\}/.test(drawer));
-    check("the summary omits empty fields rather than listing blanks",
-      /if \(!value\) return null;/.test(drawer));
-    check("the summary reuses the shared card projection for title and email",
-      drawer.includes("card?.professionalTitle") &&
-        drawer.includes("card?.publicContactEmail"));
-    check("MLS on the summary still says it is unverified",
-      drawer.includes("mlsStatusLabel(") && /self-reported/.test(drawer));
+    // The avatar opens the DIGITAL CARD. The card already is the finished
+    // presentation of the profile, so a separate read-only field list in
+    // between was a third rendering of the same data with no job of its own.
+    check("the drawer opens on the card",
+      /React\.useState<"card" \| "edit">\("card"\)/.test(drawer));
+    check("a fresh open always resets to the card",
+      /if \(open\) setMode\("card"\)/.test(drawer));
+    check("editing is reached from the card",
+      drawer.includes("onEdit={() => setMode(\"edit\")}"));
+    check("saving returns to the card rather than leaving a form open",
+      /setMode\("card"\);/.test(drawer));
+    check("the card and the editor sheet are never open at once",
+      drawer.includes("open={open && showCard}") &&
+        drawer.includes("open={open && !showCard}"));
+    check("closing either surface closes the drawer",
+      (drawer.match(/if \(!next\) onOpenChange\(false\);/g) ?? []).length >= 2);
+    check("the card only renders once its data exists",
+      /const showCard = ready && card !== null && mode === "card"/.test(drawer));
+    check("the intermediate summary list is gone",
+      !drawer.includes("ProfileSummary"));
+
+    // Sign out must survive on whichever surface is showing, since the rail's
+    // account menu was removed.
+    check("sign out is offered on the card", drawer.includes("showSignOut"));
+    check("sign out is also offered while editing", drawer.includes("<SignOutLink"));
+
+    // Home's card is a shareable artefact — it must not gain account actions.
+    const dcardSrc = readFileSync("components/profile/digital-business-card.tsx", "utf8");
+    check("sign out on the card is opt-in, not default",
+      /showSignOut = false/.test(dcardSrc));
+    check("in-place editing is opt-in, so Home still links to settings",
+      dcardSrc.includes("onEdit ? (") && dcardSrc.includes("ROUTES.settings"));
+    const home = readFileSync("components/home/home-identity-card.tsx", "utf8");
+    check("the Home card passes neither account action",
+      !home.includes("showSignOut") && !home.includes("onEdit="));
 
     // The card must come from the SAME projection Home uses, or the two
     // surfaces can disagree about which email and title are published.

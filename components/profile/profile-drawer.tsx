@@ -27,9 +27,7 @@ import { ProfileEditor } from "@/components/profile/profile-editor";
 import { DigitalBusinessCard } from "@/components/profile/digital-business-card";
 import { SignOutLink } from "@/components/layout/sign-out-link";
 import { Button } from "@/components/ui/button";
-import { IdCard, LogOut, Pencil } from "lucide-react";
-import { formatPhoneDisplay } from "@/lib/profile/links";
-import { mlsBoardLabel, mlsStatusLabel } from "@/lib/profile/mls";
+import { IdCard, LogOut } from "lucide-react";
 import type { ProfileDetail, ProfileDisplay } from "@/lib/profile/display";
 import type { HomeIdentityCard } from "@/lib/profile/home-card";
 import { apiPath } from "@/lib/routes";
@@ -65,13 +63,13 @@ export function ProfileDrawer({
    * like onboarding all over again — every field sitting empty-ish in an input
    * box reads as a task list, not as a record.
    */
-  const [mode, setMode] = React.useState<"view" | "edit">("view");
+  const [mode, setMode] = React.useState<"card" | "edit">("card");
 
   // A fresh open always starts on the summary, even if the last visit ended
   // mid-edit; otherwise the drawer silently remembers a mode the user did not
   // choose this time.
   React.useEffect(() => {
-    if (open) setMode("view");
+    if (open) setMode("card");
   }, [open]);
 
   /**
@@ -135,46 +133,63 @@ export function ProfileDrawer({
     };
   }, [open]);
 
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        // 400–460px on desktop; full-bleed below sm where a fixed panel would
-        // overflow. `sm:max-w-sm` from the primitive is overridden explicitly.
-        className="flex w-full flex-col gap-0 p-0 sm:max-w-none sm:w-[400px] lg:w-[440px] xl:w-[460px]"
-        aria-label="Your professional profile"
-      >
-        <SheetHeader className="flex-row items-center gap-3 border-b border-border p-5 pr-12">
-          <Avatar className="h-12 w-12 shrink-0">
-            {display.imageUrl && <AvatarImage src={display.imageUrl} alt="" />}
-            <AvatarFallback>{initials(display.displayName)}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <SheetTitle className="truncate">{display.displayName}</SheetTitle>
-            <SheetDescription className="truncate">
-              {[display.roleLabel, display.licenseLabel].filter(Boolean).join(" · ")}
-            </SheetDescription>
-          </div>
-        </SheetHeader>
+  const ready = state.status === "ready";
+  const card = ready ? state.card : null;
 
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="p-5">
-            {state.status === "loading" || state.status === "idle" ? (
-              <p className="text-sm text-muted-foreground" role="status">
-                Loading your profile…
-              </p>
-            ) : state.status === "error" ? (
-              <p className="text-sm text-muted-foreground" role="status">
-                Your profile could not be loaded right now. Everything else in the
-                dashboard is unaffected — try again in a moment.
-              </p>
-            ) : (
-              mode === "view" ? (
-                <ProfileSummary
-                  card={state.card}
-                  profile={state.profile}
-                  onEdit={() => setMode("edit")}
-                />
+  // The card is the default surface, but it needs data. Until that arrives —
+  // or if it never does — the sheet below carries the loading and error
+  // states, and the editor, which works from `profile` alone.
+  const showCard = ready && card !== null && mode === "card";
+
+  return (
+    <>
+      {card && (
+        <DigitalBusinessCard
+          data={card}
+          open={open && showCard}
+          onOpenChange={(next) => {
+            if (!next) onOpenChange(false);
+          }}
+          onEdit={() => setMode("edit")}
+          showSignOut
+        />
+      )}
+
+      <Sheet
+        open={open && !showCard}
+        onOpenChange={(next) => {
+          if (!next) onOpenChange(false);
+        }}
+      >
+        <SheetContent
+          side="right"
+          className="flex w-full flex-col gap-0 p-0 sm:max-w-none sm:w-[400px] lg:w-[440px] xl:w-[460px]"
+          aria-label="Your professional profile"
+        >
+          <SheetHeader className="flex-row items-center gap-3 border-b border-border p-5 pr-12">
+            <Avatar className="h-12 w-12 shrink-0">
+              {display.imageUrl && <AvatarImage src={display.imageUrl} alt="" />}
+              <AvatarFallback>{initials(display.displayName)}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+              <SheetTitle className="truncate">{display.displayName}</SheetTitle>
+              <SheetDescription className="truncate">
+                {[display.roleLabel, display.licenseLabel].filter(Boolean).join(" · ")}
+              </SheetDescription>
+            </div>
+          </SheetHeader>
+
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="p-5">
+              {state.status === "loading" || state.status === "idle" ? (
+                <p className="text-sm text-muted-foreground" role="status">
+                  Loading your profile…
+                </p>
+              ) : state.status === "error" ? (
+                <p className="text-sm text-muted-foreground" role="status">
+                  Your profile could not be loaded right now. Everything else in the
+                  dashboard is unaffected — try again in a moment.
+                </p>
               ) : (
                 <ProfileEditor
                   initial={state.profile}
@@ -186,146 +201,35 @@ export function ProfileDrawer({
                       imageUploadEnabled: state.imageUploadEnabled,
                       card: state.card,
                     });
-                    // Back to the record once it is saved, so the drawer ends
-                    // where it started rather than leaving a form open.
-                    setMode("view");
+                    // Back to the card once saved, so editing ends on the
+                    // record rather than leaving a form open.
+                    setMode("card");
                   }}
                 />
-              )
+              )}
+            </div>
+          </ScrollArea>
+
+          {/* Only shown while editing or degraded. The card carries its own
+              actions, including sign out, when it is the visible surface. */}
+          <div className="flex shrink-0 items-center gap-2 border-t border-border p-5">
+            {ready && card && (
+              <Button
+                variant="outline"
+                className="h-10 min-w-0 flex-1 border-foreground/45 px-3 text-[13px]"
+                onClick={() => setMode("card")}
+              >
+                <IdCard aria-hidden />
+                <span className="truncate">Digital card</span>
+              </Button>
             )}
+            <SignOutLink className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-foreground/45 px-3 text-[13px] font-semibold transition-colors hover:bg-accent">
+              <LogOut aria-hidden className="size-4 shrink-0" />
+              <span className="truncate">Sign out</span>
+            </SignOutLink>
           </div>
-        </ScrollArea>
-
-        {/* Account actions. Sign out lives here because this strip is now the
-            only account control — the duplicate menu in the nav rail's bottom
-            corner was removed. */}
-        <div className="flex shrink-0 items-center gap-2 border-t border-border p-5">
-          <Button
-            variant="outline"
-            className="h-10 min-w-0 flex-1 border-foreground/45 px-3 text-[13px]"
-            onClick={() => setCardOpen(true)}
-            disabled={state.status !== "ready" || !state.card}
-          >
-            <IdCard aria-hidden />
-            <span className="truncate">Digital card</span>
-          </Button>
-          <SignOutLink className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-foreground/45 px-3 text-[13px] font-semibold transition-colors hover:bg-accent">
-            <LogOut aria-hidden className="size-4 shrink-0" />
-            <span className="truncate">Sign out</span>
-          </SignOutLink>
-        </div>
-      </SheetContent>
-
-      {/* Rendered outside SheetContent so the card is not nested inside the
-          drawer's focus trap — two stacked traps fight over focus. */}
-      {state.status === "ready" && state.card && (
-        <DigitalBusinessCard
-          data={state.card}
-          open={cardOpen}
-          onOpenChange={setCardOpen}
-        />
-      )}
-    </Sheet>
-  );
-}
-
-/** One labelled read-only value. Renders nothing when there is nothing to say. */
-function Detail({ label, value }: { label: string; value: string | null }) {
-  if (!value) return null;
-  return (
-    <div className="min-w-0">
-      <dt className="text-[10px] font-semibold uppercase tracking-[0.09em] text-foreground/55">
-        {label}
-      </dt>
-      <dd className="mt-0.5 break-words text-[13px] font-medium text-foreground">{value}</dd>
-    </div>
-  );
-}
-
-/**
- * The read-only record.
- *
- * Built from the same `HomeIdentityCard` projection the Home card and the
- * Digital Card use, so the title label and the published email shown here
- * cannot disagree with what those surfaces show. MLS comes off the detail
- * projection, which is the only one carrying it.
- *
- * Empty fields are omitted rather than rendered as "Not added" rows: this is a
- * record of what someone HAS, and a column of blanks is what made the editor
- * feel like an unfinished form.
- */
-function ProfileSummary({
-  card,
-  profile,
-  onEdit,
-}: {
-  card: HomeIdentityCard | null;
-  profile: ProfileDetail | null;
-  onEdit: () => void;
-}) {
-  const completion = card?.completion ?? profile?.completion ?? null;
-  const licence = [profile?.licenseState, profile?.licenseNumber]
-    .filter(Boolean)
-    .join(" ") || null;
-  const mlsId = profile?.mlsAgentId ?? null;
-  const board = mlsBoardLabel(profile?.mlsOrganization);
-
-  return (
-    <div className="space-y-5">
-      {typeof completion === "number" && (
-        <div>
-          <div className="flex items-baseline justify-between">
-            <span className="text-sm font-semibold">Profile completion</span>
-            <span className="text-sm tabular-nums text-muted-foreground">{completion}%</span>
-          </div>
-          <div
-            className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
-            role="progressbar"
-            aria-valuenow={completion}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label="Profile completion"
-          >
-            <div
-              className="h-full rounded-full bg-primary transition-[width] duration-300"
-              style={{ width: `${completion}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      <dl className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
-        <Detail label="Professional title" value={card?.professionalTitle ?? null} />
-        <Detail label="Brokerage" value={card?.brokerageOffice ?? null} />
-        <Detail label="Location" value={card?.locationDisplay ?? null} />
-        <Detail label="Email" value={card?.publicContactEmail ?? null} />
-        <Detail label="Phone" value={formatPhoneDisplay(card?.phoneE164)} />
-        <Detail label="Licence" value={licence} />
-        <Detail label="NRDS ID" value={profile?.nrdsNumber ?? null} />
-        <Detail label="MLS agent ID" value={mlsId} />
-        <Detail label="MLS or board" value={board} />
-      </dl>
-
-      {/* Stated plainly wherever the identity appears. Recording an MLS id is
-          not the same as having verified it, and this surface must not imply
-          otherwise by staying quiet. */}
-      {mlsId && (
-        <p className="text-[12px] text-foreground/55">
-          MLS identity is self-reported —{" "}
-          <span className="font-medium text-foreground">
-            {mlsStatusLabel(profile?.mlsVerificationStatus ?? "unverified")}
-          </span>
-          .
-        </p>
-      )}
-
-      <Button
-        className="h-10 w-full min-w-0 px-3 text-[13px]"
-        onClick={onEdit}
-      >
-        <Pencil aria-hidden />
-        <span className="truncate">Edit profile</span>
-      </Button>
-    </div>
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }
