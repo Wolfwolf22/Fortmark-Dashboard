@@ -27,7 +27,9 @@ import { ProfileEditor } from "@/components/profile/profile-editor";
 import { DigitalBusinessCard } from "@/components/profile/digital-business-card";
 import { SignOutLink } from "@/components/layout/sign-out-link";
 import { Button } from "@/components/ui/button";
-import { IdCard, LogOut } from "lucide-react";
+import { IdCard, LogOut, Pencil } from "lucide-react";
+import { formatPhoneDisplay } from "@/lib/profile/links";
+import { mlsBoardLabel, mlsStatusLabel } from "@/lib/profile/mls";
 import type { ProfileDetail, ProfileDisplay } from "@/lib/profile/display";
 import type { HomeIdentityCard } from "@/lib/profile/home-card";
 import { apiPath } from "@/lib/routes";
@@ -55,6 +57,22 @@ export function ProfileDrawer({
 }) {
   const [state, setState] = React.useState<LoadState>({ status: "idle" });
   const [cardOpen, setCardOpen] = React.useState(false);
+  /**
+   * The drawer opens on a READ-ONLY summary.
+   *
+   * Clicking your own avatar is a "who am I here" question, not "let me fill
+   * in a form". Opening straight onto the editor made a finished profile look
+   * like onboarding all over again — every field sitting empty-ish in an input
+   * box reads as a task list, not as a record.
+   */
+  const [mode, setMode] = React.useState<"view" | "edit">("view");
+
+  // A fresh open always starts on the summary, even if the last visit ended
+  // mid-edit; otherwise the drawer silently remembers a mode the user did not
+  // choose this time.
+  React.useEffect(() => {
+    if (open) setMode("view");
+  }, [open]);
 
   /**
    * Load the profile whenever the drawer opens.
@@ -151,18 +169,29 @@ export function ProfileDrawer({
                 dashboard is unaffected — try again in a moment.
               </p>
             ) : (
-              <ProfileEditor
-                initial={state.profile}
-                imageUploadEnabled={state.imageUploadEnabled}
-                onSaved={(profile) =>
-                  setState({
-                    status: "ready",
-                    profile,
-                    imageUploadEnabled: state.imageUploadEnabled,
-                    card: state.card,
-                  })
-                }
-              />
+              mode === "view" ? (
+                <ProfileSummary
+                  card={state.card}
+                  profile={state.profile}
+                  onEdit={() => setMode("edit")}
+                />
+              ) : (
+                <ProfileEditor
+                  initial={state.profile}
+                  imageUploadEnabled={state.imageUploadEnabled}
+                  onSaved={(profile) => {
+                    setState({
+                      status: "ready",
+                      profile,
+                      imageUploadEnabled: state.imageUploadEnabled,
+                      card: state.card,
+                    });
+                    // Back to the record once it is saved, so the drawer ends
+                    // where it started rather than leaving a form open.
+                    setMode("view");
+                  }}
+                />
+              )
             )}
           </div>
         </ScrollArea>
@@ -197,5 +226,106 @@ export function ProfileDrawer({
         />
       )}
     </Sheet>
+  );
+}
+
+/** One labelled read-only value. Renders nothing when there is nothing to say. */
+function Detail({ label, value }: { label: string; value: string | null }) {
+  if (!value) return null;
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.09em] text-foreground/55">
+        {label}
+      </dt>
+      <dd className="mt-0.5 break-words text-[13px] font-medium text-foreground">{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * The read-only record.
+ *
+ * Built from the same `HomeIdentityCard` projection the Home card and the
+ * Digital Card use, so the title label and the published email shown here
+ * cannot disagree with what those surfaces show. MLS comes off the detail
+ * projection, which is the only one carrying it.
+ *
+ * Empty fields are omitted rather than rendered as "Not added" rows: this is a
+ * record of what someone HAS, and a column of blanks is what made the editor
+ * feel like an unfinished form.
+ */
+function ProfileSummary({
+  card,
+  profile,
+  onEdit,
+}: {
+  card: HomeIdentityCard | null;
+  profile: ProfileDetail | null;
+  onEdit: () => void;
+}) {
+  const completion = card?.completion ?? profile?.completion ?? null;
+  const licence = [profile?.licenseState, profile?.licenseNumber]
+    .filter(Boolean)
+    .join(" ") || null;
+  const mlsId = profile?.mlsAgentId ?? null;
+  const board = mlsBoardLabel(profile?.mlsOrganization);
+
+  return (
+    <div className="space-y-5">
+      {typeof completion === "number" && (
+        <div>
+          <div className="flex items-baseline justify-between">
+            <span className="text-sm font-semibold">Profile completion</span>
+            <span className="text-sm tabular-nums text-muted-foreground">{completion}%</span>
+          </div>
+          <div
+            className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuenow={completion}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Profile completion"
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-300"
+              style={{ width: `${completion}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      <dl className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
+        <Detail label="Professional title" value={card?.professionalTitle ?? null} />
+        <Detail label="Brokerage" value={card?.brokerageOffice ?? null} />
+        <Detail label="Location" value={card?.locationDisplay ?? null} />
+        <Detail label="Email" value={card?.publicContactEmail ?? null} />
+        <Detail label="Phone" value={formatPhoneDisplay(card?.phoneE164)} />
+        <Detail label="Licence" value={licence} />
+        <Detail label="NRDS ID" value={profile?.nrdsNumber ?? null} />
+        <Detail label="MLS agent ID" value={mlsId} />
+        <Detail label="MLS or board" value={board} />
+      </dl>
+
+      {/* Stated plainly wherever the identity appears. Recording an MLS id is
+          not the same as having verified it, and this surface must not imply
+          otherwise by staying quiet. */}
+      {mlsId && (
+        <p className="text-[12px] text-foreground/55">
+          MLS identity is self-reported —{" "}
+          <span className="font-medium text-foreground">
+            {mlsStatusLabel(profile?.mlsVerificationStatus ?? "unverified")}
+          </span>
+          .
+        </p>
+      )}
+
+      <Button
+        className="h-10 w-full min-w-0 px-3 text-[13px]"
+        onClick={onEdit}
+      >
+        <Pencil aria-hidden />
+        <span className="truncate">Edit profile</span>
+      </Button>
+    </div>
   );
 }

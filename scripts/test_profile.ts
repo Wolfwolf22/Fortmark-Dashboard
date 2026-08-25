@@ -3680,6 +3680,25 @@ const ALLOWED_ENV = {
     check("the rail keeps its other bottom actions",
       rail.includes("NotificationsBell") && rail.includes('href="/settings"'));
 
+    // The drawer opens on a RECORD, not a form. Landing on the editor made a
+    // finished profile look like onboarding starting over.
+    check("the drawer opens in view mode",
+      /React\.useState<"view" \| "edit">\("view"\)/.test(drawer));
+    check("a fresh open always resets to the summary",
+      /if \(open\) setMode\("view"\)/.test(drawer));
+    check("the editor is reached deliberately, behind Edit profile",
+      drawer.includes("onEdit={() => setMode(\"edit\")}") &&
+        drawer.includes("<ProfileEditor"));
+    check("saving returns to the record instead of leaving a form open",
+      /setMode\("view"\);[\s\S]{0,80}\}\}/.test(drawer));
+    check("the summary omits empty fields rather than listing blanks",
+      /if \(!value\) return null;/.test(drawer));
+    check("the summary reuses the shared card projection for title and email",
+      drawer.includes("card?.professionalTitle") &&
+        drawer.includes("card?.publicContactEmail"));
+    check("MLS on the summary still says it is unverified",
+      drawer.includes("mlsStatusLabel(") && /self-reported/.test(drawer));
+
     // The card must come from the SAME projection Home uses, or the two
     // surfaces can disagree about which email and title are published.
     const route = readFileSync("app/api/profile/route.ts", "utf8");
