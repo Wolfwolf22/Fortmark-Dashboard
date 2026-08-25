@@ -170,21 +170,11 @@ export function DigitalBusinessCard({
   data,
   open,
   onOpenChange,
-  onEdit,
   showSignOut = false,
 }: {
   data: HomeIdentityCardData;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /**
-   * Edit in place instead of navigating to Settings.
-   *
-   * Home leaves this unset, so its card keeps linking to the settings page.
-   * The account drawer passes it, because there the card IS the profile
-   * surface and sending someone to another page to change one field is a
-   * detour back to where they already are.
-   */
-  onEdit?: () => void;
   /**
    * Offer sign out from the card.
    *
@@ -414,19 +404,19 @@ export function DigitalBusinessCard({
             <Download />
             <span className="truncate">Download vCard</span>
           </Button>
-          {onEdit ? (
-            <Button size="sm" variant="outline" className="w-full justify-center" onClick={onEdit}>
+          {/* Always the settings page. Editing lives in exactly one place, so
+              a field cannot exist on one surface with different rules on
+              another — and closing the sheet as we navigate stops it hanging
+              over the page we just moved to. */}
+          <Button asChild size="sm" variant="outline" className="w-full justify-center">
+            <Link
+              href={`${ROUTES.settings}?tab=profile`}
+              onClick={() => onOpenChange(false)}
+            >
               <SquarePen />
               <span className="truncate">Edit profile</span>
-            </Button>
-          ) : (
-            <Button asChild size="sm" variant="outline" className="w-full justify-center">
-              <Link href={`${ROUTES.settings}?tab=profile`}>
-                <SquarePen />
-                <span className="truncate">Edit profile</span>
-              </Link>
-            </Button>
-          )}
+            </Link>
+          </Button>
           {showSignOut && (
             /* Matches the Button outline + sm classes exactly, so it sits in
                the grid as an equal rather than an approximation. */

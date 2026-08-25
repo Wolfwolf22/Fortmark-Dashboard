@@ -3668,11 +3668,8 @@ const ALLOWED_ENV = {
     // Account actions moved here from the rail's bottom corner.
     check("the drawer offers sign out", drawer.includes("<SignOutLink"));
     check("the drawer offers the digital card", drawer.includes("<DigitalBusinessCard"));
-    // Same guarantees as before, restated for the card-first structure:
-    // the card is never offered without data, and the two surfaces are
-    // siblings rather than nested, so their focus traps cannot fight.
-    check("the digital card action only appears once its data exists",
-      /\{ready && card && \([\s\S]{0,400}Digital card/.test(drawer));
+    // The two surfaces are siblings rather than nested, so their focus traps
+    // cannot fight over focus.
     check("the card is a sibling of the sheet, never nested inside it",
       drawer.indexOf("<DigitalBusinessCard") < drawer.indexOf("<Sheet"));
 
@@ -3683,59 +3680,51 @@ const ALLOWED_ENV = {
     check("the rail keeps its other bottom actions",
       rail.includes("NotificationsBell") && rail.includes('href="/settings"'));
 
-    // The avatar opens the DIGITAL CARD. The card already is the finished
-    // presentation of the profile, so a separate read-only field list in
-    // between was a third rendering of the same data with no job of its own.
-    check("the drawer opens on the card",
-      /React\.useState<"card" \| "edit">\("card"\)/.test(drawer));
-    check("a fresh open always resets to the card",
-      /if \(open\) setMode\("card"\)/.test(drawer));
-    check("editing is reached from the card",
-      drawer.includes("onEdit={() => setMode(\"edit\")}"));
-    check("saving returns to the card rather than leaving a form open",
-      /setMode\("card"\);/.test(drawer));
-    check("the card and the editor sheet are never open at once",
+    // The avatar opens the DIGITAL CARD, and the drawer does not edit.
+    check("the drawer renders the card", drawer.includes("<DigitalBusinessCard"));
+    check("the drawer no longer embeds a second editor",
+      !drawer.includes("<ProfileEditor"));
+    check("the card only renders once its data exists",
+      /const showCard = card !== null/.test(drawer));
+    check("the card and the fallback sheet are never open at once",
       drawer.includes("open={open && showCard}") &&
         drawer.includes("open={open && !showCard}"));
     check("closing either surface closes the drawer",
       (drawer.match(/if \(!next\) onOpenChange\(false\);/g) ?? []).length >= 2);
-    check("the card only renders once its data exists",
-      /const showCard = ready && card !== null && mode === "card"/.test(drawer));
-    check("the intermediate summary list is gone",
-      !drawer.includes("ProfileSummary"));
 
-    // Sign out must survive on whichever surface is showing, since the rail's
-    // account menu was removed.
+    // Sign out survives on whichever surface shows, since the rail menu is gone.
     check("sign out is offered on the card", drawer.includes("showSignOut"));
-    check("sign out is also offered while editing", drawer.includes("<SignOutLink"));
+    check("sign out is also offered on the fallback sheet",
+      drawer.includes("<SignOutLink"));
 
-    // Card actions are one even 2x2 block: same weight, width and height, so
-    // nothing floats out of line. A mix of outlined and borderless buttons
-    // read as misaligned even when their boxes were not.
-    {
-      const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
-      const actions = dcard.slice(dcard.indexOf('grid grid-cols-2 gap-2 border-t'));
-      check("the redundant Close action is gone",
-        !/>\s*Close\s*</.test(actions));
-      check("every action shares the same variant and size",
-        (actions.match(/size="sm" variant="outline"/g) ?? []).length >= 3);
-      check("every action fills and centres its cell",
-        (actions.match(/w-full justify-center/g) ?? []).length >= 3);
-      check("sign out matches the button classes rather than approximating them",
-        /h-8 w-full items-center justify-center[\s\S]{0,120}border border-input/.test(actions));
-      check("action labels truncate rather than overflowing their cell",
-        (actions.match(/<span className="truncate">/g) ?? []).length >= 4);
-    }
-
-    // Home's card is a shareable artefact — it must not gain account actions.
+    // ONE editor. Every entry point routes to the settings page.
     const dcardSrc = readFileSync("components/profile/digital-business-card.tsx", "utf8");
-    check("sign out on the card is opt-in, not default",
-      /showSignOut = false/.test(dcardSrc));
-    check("in-place editing is opt-in, so Home still links to settings",
-      dcardSrc.includes("onEdit ? (") && dcardSrc.includes("ROUTES.settings"));
+    check("the card's edit action always routes to settings",
+      dcardSrc.includes("`${ROUTES.settings}?tab=profile`") &&
+        !dcardSrc.includes("onEdit"));
+    check("navigating to the editor closes the sheet behind it",
+      /href=\{`\$\{ROUTES\.settings\}\?tab=profile`\}[\s\S]{0,120}onOpenChange\(false\)/.test(dcardSrc));
     const home = readFileSync("components/home/home-identity-card.tsx", "utf8");
-    check("the Home card passes neither account action",
-      !home.includes("showSignOut") && !home.includes("onEdit="));
+    check("the Home card's edit action routes to the same page",
+      home.includes("`${ROUTES.settings}?tab=profile`"));
+    const section = readFileSync("components/settings/profile-section.tsx", "utf8");
+    check("the settings page hosts the one editor",
+      section.includes("<ProfileEditor"));
+    check("the settings editor loads the profile itself",
+      section.includes('apiPath("/api/profile")'));
+    check("its load effect cannot abort itself",
+      /\}, \[\]\);/.test(section) && section.includes("let cancelled = false"));
+    check("a disabled profile feature reads as unavailable, not broken",
+      section.includes('status: "unavailable"') && section.includes("response.status === 404"));
+
+    // The two records stay distinguishable. Both labelled "Name" showing
+    // different values is what made an edit look like it had not saved.
+    check("the account name is labelled as the account's",
+      section.includes('label="Account name"'));
+    check("the account block explains it is separate from the display name",
+      /Separate from your preferred display name/.test(section));
+    check("account fields stay read-only on this page",
+      section.includes("<ReadOnlyField") && section.includes("accountUrl()"));
 
     // The card must come from the SAME projection Home uses, or the two
     // surfaces can disagree about which email and title are published.
