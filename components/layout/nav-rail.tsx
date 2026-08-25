@@ -53,10 +53,23 @@ export function NavRail() {
              previously rendered the plain string "FORTMARK" in a display font
              beside the mark, which is a lookalike rather than the logo.
 
-          Intrinsic sizes are the assets' own ratios — logomark 1568×700
-          (2.24:1), wordmark 1756×512 (3.43:1) — so nothing is stretched. They
-          were previously forced into a 28×28 square, squashing a wide mark to
-          44% of its width. Fixed width/height also means no layout shift.
+          Sizes are derived from each asset's INK, not its canvas, and that
+          distinction is the whole reason these look balanced.
+
+          The logomark is 1568×700 with zero padding, so its canvas height IS
+          its letterform height. The wordmark is 1756×512 but carries 94px of
+          transparent padding on every side, so its actual type is only
+          1568×324 — 63% of the canvas height. Sizing both by canvas made the
+          wordmark render at ~10px of visible type beside a 20px mark, which
+          read as a caption rather than a logo.
+
+          So the wordmark box is deliberately TALLER than the mark: at 32px of
+          canvas its type is 32 × 324/512 ≈ 20px, matching the mark's 20px.
+          The padding is symmetric, so `items-center` centres the ink itself
+          and the two align optically without a manual nudge.
+
+          Both keep their true aspect ratios (2.24:1 and 3.43:1), so nothing is
+          stretched, and fixed width/height means no layout shift.
 
           `alt=""` is deliberate and IS the accessible choice here: the link
           already carries `aria-label="FortMark home"`, so describing the
@@ -65,7 +78,9 @@ export function NavRail() {
       <div className={cn("flex h-16 shrink-0 items-center", expanded ? "px-5" : "justify-center")}>
         <Link
           href="/"
-          className="flex items-center gap-3 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+          // gap-2 rather than gap-3: the wordmark carries its own horizontal
+          // padding, so a larger gap reads as a gap-and-a-half.
+          className="flex items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
           aria-label="FortMark home"
         >
           <Image
@@ -89,17 +104,17 @@ export function NavRail() {
               <Image
                 src={assetPath("/brand/fortmark-wordmark-black.png")}
                 alt=""
-                width={55}
-                height={16}
-                className="h-4 w-auto dark:hidden"
+                width={110}
+                height={32}
+                className="h-8 w-auto dark:hidden"
                 priority
               />
               <Image
                 src={assetPath("/brand/fortmark-wordmark-white.png")}
                 alt=""
-                width={55}
-                height={16}
-                className="hidden h-4 w-auto dark:block"
+                width={110}
+                height={32}
+                className="hidden h-8 w-auto dark:block"
                 priority
               />
             </>

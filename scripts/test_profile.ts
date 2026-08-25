@@ -3300,10 +3300,32 @@ const ALLOWED_ENV = {
       railSrc.includes("fortmark-wordmark-white.png"));
   check("the rail no longer renders the brand as plain text",
     !/>FORTMARK</.test(railSrc));
-  // 1568x700 and 1756x512 forced into a square is what squashed the mark.
-  check("brand images keep their intrinsic aspect ratio",
-    railSrc.includes("width={45}") && railSrc.includes("height={20}") &&
-      railSrc.includes("width={55}") && railSrc.includes("height={16}"));
+  // Sizing is derived from each asset's INK, not its canvas.
+  //
+  // The logomark (1568x700) has no padding, so canvas height == type height.
+  // The wordmark (1756x512) carries 94px of transparent padding on all sides,
+  // so its visible type is only 1568x324 — 63% of the canvas. Sizing both by
+  // canvas rendered ~10px of type beside a 20px mark, which read as a caption.
+  // The wordmark box is therefore intentionally TALLER than the mark.
+  check("the logomark keeps its true 2.24:1 ratio",
+    railSrc.includes("width={45}") && railSrc.includes("height={20}"));
+  check("the wordmark keeps its true 3.43:1 ratio",
+    railSrc.includes("width={110}") && railSrc.includes("height={32}"));
+  {
+    // The arithmetic that makes them match, asserted rather than trusted.
+    const markInk = 20;                      // 20px canvas, no padding
+    const wordInk = 32 * (324 / 512);        // 32px canvas, 324/512 is ink
+    check("wordmark type height matches the mark height within 1px",
+      Math.abs(wordInk - markInk) <= 1);
+    check("the logomark width follows its ratio",
+      Math.abs(45 - 20 * (1568 / 700)) <= 1);
+    check("the wordmark width follows its ratio",
+      Math.abs(110 - 32 * (1756 / 512)) <= 1);
+    // Both must fit the expanded rail: w-60 (240px) less px-5 (40px).
+    check("the brand lockup fits the expanded rail", 45 + 8 + 110 <= 200);
+  }
+  check("the wordmark box is taller than the mark to compensate for padding",
+    railSrc.includes("h-8 w-auto") && railSrc.includes("h-5 w-auto"));
   check("brand images are not stretched by a square box",
     !/width=\{28\}[\s\S]{0,40}height=\{28\}/.test(railSrc));
   check("both themes are covered",
