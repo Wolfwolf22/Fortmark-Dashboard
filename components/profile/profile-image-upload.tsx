@@ -17,6 +17,7 @@
  * only one that counts.
  */
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Camera, Loader2, Upload } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,16 @@ export interface ProfileImageUploadProps {
   /** Called with the new URL after the SERVER confirmed activation. */
   onUploaded?: (url: string) => void;
   disabled?: boolean;
+  /**
+   * Whether uploads can actually succeed, resolved server-side.
+   *
+   * Defaults to `true` so existing callers keep the old behaviour of finding
+   * out from the server. When a caller DOES know — the onboarding wizard and
+   * the settings editor both receive it from `onboardingContext` — passing
+   * `false` makes the control's appearance match what the route would do,
+   * instead of offering a button whose only possible outcome is a 404.
+   */
+  uploadEnabled?: boolean;
 }
 
 export function ProfileImageUpload({
@@ -59,7 +70,9 @@ export function ProfileImageUpload({
   displayName,
   onUploaded,
   disabled,
+  uploadEnabled = true,
 }: ProfileImageUploadProps) {
+  const router = useRouter();
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const [activeUrl, setActiveUrl] = React.useState<string | null>(currentUrl);
@@ -67,7 +80,10 @@ export function ProfileImageUpload({
   const [error, setError] = React.useState<string | null>(null);
   // Latches once the server answers 404. The flag cannot change mid-session, so
   // re-offering the control would only produce the same refusal again.
-  const [unavailable, setUnavailable] = React.useState(false);
+  // Starts latched when the server already told us the feature is off, so the
+  // very first render is honest rather than becoming honest after a failed
+  // round trip.
+  const [unavailable, setUnavailable] = React.useState(!uploadEnabled);
   const objectUrlRef = React.useRef<string | null>(null);
 
   /** Replace the preview, revoking whatever it displaced. */
@@ -84,6 +100,12 @@ export function ProfileImageUpload({
     objectUrlRef.current = url;
     setPreviewUrl(url);
   }, []);
+
+  // A server-side "off" always wins. This never re-enables the control after a
+  // 404 — the latch only ever moves toward unavailable.
+  React.useEffect(() => {
+    if (!uploadEnabled) setUnavailable(true);
+  }, [uploadEnabled]);
 
   // Revoke on unmount too: leaving the wizard mid-upload would otherwise hold
   // the blob for the lifetime of the document.
@@ -148,6 +170,11 @@ export function ProfileImageUpload({
         setActiveUrl(url);
         setPreview(null);
         onUploaded?.(url);
+        // `revalidatePath` on the server clears the CACHE; it does not make an
+        // already-rendered client tree re-request it. The top bar lives in the
+        // layout, so without this the new photo appears on the page but the
+        // avatar in the corner keeps the old one until a hard reload.
+        router.refresh();
       }
     } catch {
       setError("That upload did not finish. Please try again.");
@@ -201,7 +228,7 @@ export function ProfileImageUpload({
           </Button>
           <p id="profile-image-hint" className="text-[12px] text-foreground/55">
             {unavailable
-              ? "Your existing photo is unaffected."
+              ? "Photo uploads are turned off for this environment. Your existing photo is unaffected."
               : "JPEG, PNG or WebP, up to 4 MB."}
           </p>
         </div>

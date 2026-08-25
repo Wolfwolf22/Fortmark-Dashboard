@@ -13,6 +13,7 @@
  * "(954) 555-0100" comes back as "+19545550100".
  */
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Lock } from "lucide-react";
@@ -59,6 +60,10 @@ const TEXT_FIELDS: readonly ProfileFieldKey[] = [
 const PRESENCE_FIELDS: readonly ProfileFieldKey[] = [
   "professionalTitle",
   "locationDisplay",
+  // Same keys the onboarding MLS step writes, so Edit Profile shows and saves
+  // exactly what the wizard stored rather than a second, drifting copy.
+  "mlsAgentId",
+  "mlsOrganization",
   "businessEmail",
   "whatsappPhoneE164",
   "linkedinUrl",
@@ -99,6 +104,9 @@ const EMPTY: ProfileDetail = {
   professionalWebsiteUrl: null,
   whatsappPhoneE164: null,
   businessEmail: null,
+  mlsAgentId: null,
+  mlsOrganization: null,
+  mlsVerificationStatus: "unverified",
   completion: 0,
 };
 
@@ -126,10 +134,14 @@ type SaveState =
 export function ProfileEditor({
   initial,
   onSaved,
+  imageUploadEnabled = true,
 }: {
   initial: ProfileDetail | null;
   onSaved: (profile: ProfileDetail | null) => void;
+  /** Server-reported. Off ⇒ the photo control says so instead of failing. */
+  imageUploadEnabled?: boolean;
 }) {
+  const router = useRouter();
   const [form, setForm] = React.useState<FormState>(() => toForm(initial));
   const [completion, setCompletion] = React.useState(initial?.completion ?? 0);
   const [save, setSave] = React.useState<SaveState>({ status: "idle" });
@@ -194,6 +206,9 @@ export function ProfileEditor({
       setCompletion(body.completion);
       setSave({ status: "saved", licenseReset: body.licenseReset });
       onSaved(body.profile);
+      // Same reason as the photo: the layout's identity strip will not pick up
+      // a new display name until the client re-requests the tree.
+      router.refresh();
     } catch {
       setSave({
         status: "error",
@@ -231,6 +246,7 @@ export function ProfileEditor({
         displayName={form.preferredDisplayName || "FortMark"}
         onUploaded={setImageUrl}
         disabled={saving}
+        uploadEnabled={imageUploadEnabled}
       />
 
       <div className="space-y-1.5">

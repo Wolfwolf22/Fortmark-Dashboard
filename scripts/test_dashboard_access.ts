@@ -7,6 +7,7 @@
  *
  * Run: npm run test:auth
  */
+import { readFileSync } from "node:fs";
 import {
   decideAccess,
   hasClerkKeys,
@@ -15,7 +16,9 @@ import {
   userRef,
 } from "../lib/auth/dashboard-access.ts";
 import {
+  ACCOUNT_PATH,
   BASE_PATH,
+  accountUrl,
   FALLBACK_PLATE,
   apiPath,
   assetPath,
@@ -156,6 +159,81 @@ check("api chat path gains the basePath prefix", apiPath("/api/chat") === "/dash
 check("already-prefixed api path is untouched", apiPath("/dashboard/api/profile") === "/dashboard/api/profile");
 check("relative api path is not mangled", apiPath("api/profile") === "api/profile");
 check("api path is basePath-consistent", apiPath("/api/x").startsWith(`${BASE_PATH}/`));
+
+// --- Account management links leave the zone correctly ---------------------
+{
+  const section = readFileSync("components/settings/profile-section.tsx", "utf8");
+  check("account settings links to the account route, not the landing page",
+    section.includes("accountUrl()") && !section.includes("portalUrl()"));
+  check("the account path is the one the portal actually serves",
+    ACCOUNT_PATH === "/account");
+  // The dashboard basePath must NOT be applied — /account is a portal route.
+  check("the account url is not prefixed with the dashboard basePath",
+    !accountUrl().includes(BASE_PATH));
+  check("the account url ends at the account route",
+    accountUrl().endsWith(ACCOUNT_PATH));
+  check("an unset origin still yields a portal-root-relative path",
+    accountUrl().startsWith("/") || /^https?:\/\//.test(accountUrl()));
+}
+
+// --- Middleware survives an unverifiable session ---------------------------
+//
+// The failure this covers actually happened in Preview: a browser presented a
+// Clerk cookie minted by a different instance than the deployment's secret key
+// belonged to, Clerk threw `jwk-kid-mismatch`, the throw escaped the
+// middleware, and Vercel turned it into MIDDLEWARE_INVOCATION_FAILED — a 500
+// on every route, including ones needing no session.
+//
+// Structural assertions: the recovery path cannot be exercised without a real
+// Clerk instance, so this pins the SHAPE that makes the crash impossible.
+{
+  const mw = readFileSync("middleware.ts", "utf8");
+
+  check("clerk's handler is wrapped rather than exported directly",
+    mw.includes("const clerkHandler = clerkMiddleware(") &&
+      /export default async function middleware\(/.test(mw));
+  check("the wrapper catches a throw from clerk",
+    /try \{[\s\S]{0,200}await clerkHandler\(req, event\)[\s\S]{0,200}\} catch/.test(mw));
+  check("a verification failure recovers instead of propagating",
+    mw.includes("return recoverFromAuthFailure(req)"));
+
+  // The recovery must fail CLOSED — signed out, never through to content.
+  check("recovery only ever redirects to sign-in or errors",
+    mw.includes("NextResponse.redirect(") && mw.includes("status: 503"));
+  check("recovery never calls next()",
+    !/recoverFromAuthFailure[\s\S]{0,900}NextResponse\.next\(\)/.test(mw));
+
+  // Clearing the JWT alone leaves Clerk's client-side hints claiming a session
+  // still exists, which is its own loop.
+  for (const cookie of ["__session", "__client_uat", "__clerk_db_jwt"]) {
+    check(`recovery clears ${cookie}`, mw.includes(`"${cookie}"`));
+  }
+  check("all clerk session cookies are cleared together",
+    /CLERK_SESSION_COOKIES[\s\S]{0,200}response\.cookies\.delete/.test(mw));
+
+  // Loop guard: a browser that keeps re-presenting a bad cookie must not be
+  // bounced forever.
+  check("a reset marker guards against a redirect loop",
+    mw.includes("RESET_MARKER") && mw.includes("req.cookies.get(RESET_MARKER)"));
+  check("the second failure stops redirecting and explains itself",
+    /req\.cookies\.get\(RESET_MARKER\)[\s\S]{0,400}status: 503/.test(mw));
+  check("the marker expires so a later failure is treated as new",
+    /maxAge: \d+/.test(mw));
+  check("the marker is httpOnly so the page cannot forge it",
+    /RESET_MARKER[\s\S]{0,300}httpOnly: true/.test(mw));
+
+  // The error text can carry instance identifiers and the token's key id.
+  check("the caught error is never logged or inspected",
+    !/catch \(\s*\w+\s*\)[\s\S]{0,300}console\./.test(mw));
+  check("recovery responses are never cached",
+    (mw.match(/Cache-Control": "no-store/g) ?? []).length >= 2);
+
+  // The authorization rules themselves must be untouched by the wrapper.
+  check("the allowlist/session rules still run inside clerk's handler",
+    /clerkHandler = clerkMiddleware\([\s\S]{0,600}const \{ userId \} = await auth\(\)/.test(mw));
+  check("authorized parties are still passed to clerk",
+    mw.includes("authorizedParties: getAuthorizedParties()"));
+}
 
 // --- Summary ---------------------------------------------------------------
 const total = passed + failures.length;

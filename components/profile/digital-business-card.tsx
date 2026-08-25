@@ -27,6 +27,7 @@ import {
   Globe,
   Instagram,
   Linkedin,
+  LogOut,
   Mail,
   MessageCircle,
   SquarePen,
@@ -50,6 +51,7 @@ import { buildContactBlock, formatPhoneDisplay, toWhatsApp } from "@/lib/profile
 import { safeLinkUrl } from "@/lib/profile/display";
 import { buildVCard, vCardFilename } from "@/lib/profile/vcard";
 import { ROUTES } from "@/lib/routes";
+import { SignOutLink } from "@/components/layout/sign-out-link";
 import { cn, initials } from "@/lib/utils";
 
 /**
@@ -168,10 +170,19 @@ export function DigitalBusinessCard({
   data,
   open,
   onOpenChange,
+  showSignOut = false,
 }: {
   data: HomeIdentityCardData;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Offer sign out from the card.
+   *
+   * Only the account drawer sets this: that card is "you", so signing out
+   * belongs on it. Home's card is a shareable artefact and must not carry an
+   * account action.
+   */
+  showSignOut?: boolean;
 }) {
   const [copied, setCopied] = React.useState(false);
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -180,8 +191,12 @@ export function DigitalBusinessCard({
 
   // Carried on the card rather than scraped from `links`: the Home self-card
   // hides the email/phone entries, and this card must not lose them with it.
-  // `businessEmail` is the ONLY address published here — never the account one.
-  const email = data.businessEmail;
+  //
+  // The RESOLVED public address: the alternative email when the user entered
+  // one, otherwise their account email. Selected once in
+  // `publicContactEmail` so this card, the vCard and the clipboard block
+  // cannot disagree about which address is published.
+  const email = data.publicContactEmail ?? data.businessEmail;
   const phone = data.phoneE164;
   const whatsapp = toWhatsApp(data.whatsappPhoneE164);
 
@@ -372,24 +387,44 @@ export function DigitalBusinessCard({
           </div>
         </ScrollArea>
 
+        {/* An even 2x2 block. Every action gets the same weight, width and
+            height, so nothing floats out of line — a mix of outlined and
+            borderless buttons read as misaligned even when their boxes were
+            not.
+
+            There is no "Close": the sheet already has a close control in its
+            corner, and a second one only competed with the actions people
+            actually came here for. */}
         <div className="grid grid-cols-2 gap-2 border-t border-border p-4">
-          <Button size="sm" variant="outline" onClick={copyContact}>
+          <Button size="sm" variant="outline" className="w-full justify-center" onClick={copyContact}>
             {copied ? <Check /> : <Copy />}
-            {copied ? "Copied" : "Copy contact"}
+            <span className="truncate">{copied ? "Copied" : "Copy contact"}</span>
           </Button>
-          <Button size="sm" variant="outline" onClick={downloadVCard}>
+          <Button size="sm" variant="outline" className="w-full justify-center" onClick={downloadVCard}>
             <Download />
-            Download vCard
+            <span className="truncate">Download vCard</span>
           </Button>
-          <Button asChild size="sm" variant="ghost">
-            <Link href={`${ROUTES.settings}?tab=profile`}>
+          {/* Always the settings page. Editing lives in exactly one place, so
+              a field cannot exist on one surface with different rules on
+              another — and closing the sheet as we navigate stops it hanging
+              over the page we just moved to. */}
+          <Button asChild size="sm" variant="outline" className="w-full justify-center">
+            <Link
+              href={`${ROUTES.settings}?tab=profile&edit=1`}
+              onClick={() => onOpenChange(false)}
+            >
               <SquarePen />
-              Edit profile
+              <span className="truncate">Edit profile</span>
             </Link>
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-            Close
-          </Button>
+          {showSignOut && (
+            /* Matches the Button outline + sm classes exactly, so it sits in
+               the grid as an equal rather than an approximation. */
+            <SignOutLink className="inline-flex h-8 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-input bg-card px-3 text-[13px] font-semibold text-foreground transition-colors hover:bg-accent">
+              <LogOut aria-hidden className="size-4 shrink-0" />
+              <span className="truncate">Sign out</span>
+            </SignOutLink>
+          )}
           <p aria-live="polite" className="sr-only">
             {copied ? "Contact information copied to the clipboard" : ""}
           </p>

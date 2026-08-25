@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
 import { decideAccess, isConfigFailure } from "@/lib/auth/dashboard-access";
-import { professionalProfileUiEnabled } from "@/lib/flags";
+import { professionalProfileUiEnabled, profileImageUploadEnabled } from "@/lib/flags";
 import { toProfileDetail } from "@/lib/profile/display";
+import { getSession } from "@/lib/auth/session";
+import { getHomeIdentityCard } from "@/lib/profile/shell";
 import { getOwnProfile, updateOwnProfile } from "@/lib/profile/service";
 
 export const runtime = "nodejs";
@@ -53,6 +56,11 @@ function featureOff(): NextResponse {
   return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
 }
 
+/** Exactly the pair `POST /api/profile/image` gates on. */
+function imageUploadAvailable(): boolean {
+  return professionalProfileUiEnabled() && profileImageUploadEnabled();
+}
+
 export async function GET() {
   if (!professionalProfileUiEnabled()) return featureOff();
 
@@ -60,14 +68,37 @@ export async function GET() {
   if (!caller.ok) return caller.response;
 
   const record = await getOwnProfile(caller.clerkUserId);
+
+  /**
+   * The same card projection Home renders.
+   *
+   * Served from here so the drawer's Digital Card and the Home card cannot
+   * disagree — one projection, one set of rules about which email is
+   * published and which title label is shown. `getHomeIdentityCard` never
+   * throws and never returns null; it degrades to the session-only card.
+   */
+  const session = await getSession();
+  const card = session ? await getHomeIdentityCard(session.user) : null;
+
   if (!record) {
     // No row yet, or the database is unreachable. Either way the drawer shows
     // an empty editable form rather than an error.
-    return NextResponse.json({ profile: null }, { headers: NO_STORE });
+    return NextResponse.json(
+      { profile: null, card, imageUploadEnabled: imageUploadAvailable() },
+      { headers: NO_STORE }
+    );
   }
 
   return NextResponse.json(
-    { profile: toProfileDetail(record.profile) },
+    {
+      profile: toProfileDetail(record.profile),
+      card,
+      // So the editor's photo control can match what the upload route would
+      // actually do. Reported by the SERVER rather than inferred client-side,
+      // and it discloses nothing sensitive: a caller can already learn the
+      // same fact by posting and reading the status.
+      imageUploadEnabled: imageUploadAvailable(),
+    },
     { headers: NO_STORE }
   );
 }
@@ -100,6 +131,15 @@ export async function PATCH(request: NextRequest) {
   }
 
   const record = await getOwnProfile(caller.clerkUserId);
+
+  // The identity strip in the top bar is rendered by the LAYOUT, which is
+  // shared across every page. Without this the display name and avatar there
+  // keep whatever the layout rendered on first load, so a save appears to
+  // work everywhere except the corner the user is looking at. The image route
+  // already did this; a profile edit changes the same projection.
+  revalidatePath("/");
+  revalidatePath("/settings");
+
   return NextResponse.json(
     {
       profile: record ? toProfileDetail(record.profile) : null,

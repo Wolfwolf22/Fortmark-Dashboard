@@ -7,8 +7,8 @@ import { usePathname } from "next/navigation";
 import { Pin, PinOff, Settings } from "lucide-react";
 import { NAV_ITEMS } from "./nav-items";
 import { NotificationsBell } from "./notifications-bell";
-import { UserMenu } from "./user-menu";
 import { useUiStore } from "@/lib/stores/ui";
+import { assetPath } from "@/lib/routes";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -38,31 +38,85 @@ export function NavRail() {
         expanded ? "w-60 shadow-pop" : "w-16"
       )}
     >
-      {/* Brand */}
+      {/* Brand ------------------------------------------------------------
+          Two corrections live here.
+
+          1. Every `src` goes through `assetPath`. `next/image` does NOT apply
+             the zone `basePath` to a plain string src, and `unoptimized: true`
+             in next.config.ts means the optimizer — which would have added it
+             — never runs. The emitted URL was therefore `/brand/…`, which
+             resolves against the portal zone at the origin root and 404s.
+             That 404 was the broken-image icon in this corner.
+
+          2. The wordmark is the real asset, not letterforms. The expanded rail
+             previously rendered the plain string "FORTMARK" in a display font
+             beside the mark, which is a lookalike rather than the logo.
+
+          Sizes are derived from each asset's INK, not its canvas, and that
+          distinction is the whole reason these look balanced.
+
+          The logomark is 1568×700 with zero padding, so its canvas height IS
+          its letterform height. The wordmark is 1756×512 but carries 94px of
+          transparent padding on every side, so its actual type is only
+          1568×324 — 63% of the canvas height. Sizing both by canvas made the
+          wordmark render at ~10px of visible type beside a 20px mark, which
+          read as a caption rather than a logo.
+
+          So the wordmark box is deliberately TALLER than the mark: at 32px of
+          canvas its type is 32 × 324/512 ≈ 20px, matching the mark's 20px.
+          The padding is symmetric, so `items-center` centres the ink itself
+          and the two align optically without a manual nudge.
+
+          Both keep their true aspect ratios (2.24:1 and 3.43:1), so nothing is
+          stretched, and fixed width/height means no layout shift.
+
+          `alt=""` is deliberate and IS the accessible choice here: the link
+          already carries `aria-label="FortMark home"`, so describing the
+          images too would announce the brand three times to a screen reader.
+          The accessible name lives on the link, once. */}
       <div className={cn("flex h-16 shrink-0 items-center", expanded ? "px-5" : "justify-center")}>
         <Link
           href="/"
-          className="flex items-center gap-3 rounded-md"
+          // gap-2 rather than gap-3: the wordmark carries its own horizontal
+          // padding, so a larger gap reads as a gap-and-a-half.
+          className="flex items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
           aria-label="FortMark home"
         >
           <Image
-            src="/brand/fortmark-logomark-black.png"
+            src={assetPath("/brand/fortmark-logomark-black.png")}
             alt=""
-            width={28}
-            height={28}
-            className="dark:hidden"
+            width={45}
+            height={20}
+            className="h-5 w-auto dark:hidden"
             priority
           />
           <Image
-            src="/brand/fortmark-logomark-white.png"
+            src={assetPath("/brand/fortmark-logomark-white.png")}
             alt=""
-            width={28}
-            height={28}
-            className="hidden dark:block"
+            width={45}
+            height={20}
+            className="hidden h-5 w-auto dark:block"
             priority
           />
           {expanded && (
-            <span className="font-display text-sm tracking-[0.06em]">FORTMARK</span>
+            <>
+              <Image
+                src={assetPath("/brand/fortmark-wordmark-black.png")}
+                alt=""
+                width={110}
+                height={32}
+                className="h-8 w-auto dark:hidden"
+                priority
+              />
+              <Image
+                src={assetPath("/brand/fortmark-wordmark-white.png")}
+                alt=""
+                width={110}
+                height={32}
+                className="hidden h-8 w-auto dark:block"
+                priority
+              />
+            </>
           )}
         </Link>
       </div>
@@ -145,7 +199,10 @@ export function NavRail() {
           </Link>
         </RailAction>
 
-        <UserMenu expanded={expanded} />
+        {/* The account control lives in the top bar's identity strip, which
+            carries the avatar, the profile drawer, the Digital Card and sign
+            out. A second one down here was a duplicate route to the same
+            actions in a corner people do not look for them. */}
       </div>
     </aside>
   );

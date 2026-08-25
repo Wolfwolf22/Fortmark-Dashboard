@@ -219,6 +219,17 @@ export interface ProfileDetail {
    * to the account, not the profile, and is never editable from here.
    */
   businessEmail: string | null;
+  /** Self-reported MLS agent identifier. Never verified by FortMark. */
+  mlsAgentId: string | null;
+  /** Board or MLS the identifier belongs to. */
+  mlsOrganization: string | null;
+  /**
+   * Server-assigned verification state, projected read-only.
+   *
+   * Present so the editor can DISPLAY the state; it is not part of the update
+   * contract, so echoing this object back cannot change it.
+   */
+  mlsVerificationStatus: "unverified" | "verified";
   completion: number;
 }
 
@@ -266,9 +277,43 @@ export function toProfileDetail(profile: DetailSourceProfile | null | undefined)
     professionalWebsiteUrl: safeLinkUrl(profile?.professionalWebsiteUrl),
     whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164),
     businessEmail: trimmed(profile?.businessEmail),
+    mlsAgentId: trimmed(profile?.mlsAgentId),
+    mlsOrganization: trimmed(profile?.mlsOrganization),
+    mlsVerificationStatus:
+      profile?.mlsVerificationStatus === "verified" ? "verified" : "unverified",
     completion:
       typeof completion === "number" && Number.isFinite(completion)
         ? Math.max(0, Math.min(100, Math.round(completion)))
         : 0,
   };
+}
+
+/**
+ * The address FortMark publishes for a professional.
+ *
+ * The hierarchy is: alternative email if one was entered, otherwise the
+ * account email.
+ *
+ * This is a deliberate CHANGE from the previous rule, which published
+ * `business_email` alone and fell back to nothing. That rule protected the
+ * sign-in address on the reasoning that it was given to authenticate rather
+ * than to publish. The trade-off is now made the other way — a professional
+ * card with no way to email the professional is a worse default for this
+ * product — and it is made safe by being visible rather than silent: the
+ * alternative-email field says outright that leaving it blank publishes the
+ * account email, so the fallback is a choice the user can see and override.
+ *
+ * The two values stay separate everywhere. This function only SELECTS; it
+ * never writes, and nothing in the write path copies one into the other, so
+ * the account email cannot be overwritten by the alternative and the
+ * alternative can always be cleared to return to the default.
+ */
+export function publicContactEmail(
+  alternativeEmail: string | null | undefined,
+  accountEmail: string | null | undefined
+): string | null {
+  const alt = typeof alternativeEmail === "string" ? alternativeEmail.trim() : "";
+  if (alt.length > 0) return alt;
+  const account = typeof accountEmail === "string" ? accountEmail.trim() : "";
+  return account.length > 0 ? account : null;
 }

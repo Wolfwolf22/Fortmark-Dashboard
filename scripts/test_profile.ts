@@ -114,6 +114,27 @@ import {
 } from "../lib/profile/image-storage.ts";
 import { z as zod } from "zod";
 import { toEmail } from "../lib/profile/normalize.ts";
+import {
+  PROFESSIONAL_TITLES,
+  canonicalizeTitle,
+  isKnownTitleValue,
+  titleLabel,
+  titleOptionsFor,
+} from "../lib/profile/titles.ts";
+import {
+  DEFAULT_MLS_VERIFICATION,
+  MLS_BOARDS,
+  canonicalizeMlsBoard,
+  hasMlsIdentity,
+  listingsForMlsIdentity,
+  mlsBoardLabel,
+  mlsBoardOptionsFor,
+  mlsStatusLabel,
+  toMlsAgentId,
+  toMlsIdentity,
+} from "../lib/profile/mls.ts";
+import { publicContactEmail } from "../lib/profile/display.ts";
+import { assetPath } from "../lib/routes.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -686,25 +707,38 @@ check(
     card.businessEmail === "published@example.com");
   check("the mailto uses the business email, not the account email",
     card.links[1].href === "mailto:published@example.com");
-  check("the account email appears nowhere in the projection",
+  // Still true, and now it is the more interesting assertion: when an
+  // alternative IS set it wins outright, so the account address is not
+  // published even though a fallback exists.
+  check("the account email appears nowhere when an alternative is set",
     !JSON.stringify(card).includes("daniel@example.com") &&
       !JSON.stringify(card).includes(SESSION.email ?? "@@none@@"));
 
   {
-    // Same profile, no business email: no address is published and no mailto
-    // is manufactured from the account one.
-    const noBiz = toHomeIdentityCard(
+    // Same profile, no alternative email.
+    //
+    // BEHAVIOUR CHANGE (Release B, requested explicitly): the account email is
+    // now the documented fallback for public contact, where previously no
+    // address was published at all. The earlier rule is preserved in spirit by
+    // the two invariants asserted below — the alternative and the account
+    // address stay SEPARATE values, and the account address is never written
+    // into the profile — so a user can always override or clear the fallback.
+    const noAlt = toHomeIdentityCard(
       SESSION,
       { createdAt: "2026-07-15T12:00:00.000Z", primaryEmail: "daniel@example.com", status: "active" },
       { preferredDisplayName: "Daniel Wolf", phoneE164: "+19545550100" },
       null,
       new Date("2026-07-30T00:00:00Z")
     );
-    check("no business email means no published email", noBiz.businessEmail === null);
-    check("no business email means no mailto link",
-      !noBiz.links.some((l) => l.kind === "email"));
-    check("the account email is not substituted",
-      !JSON.stringify(noBiz).includes("daniel@example.com"));
+    check("no alternative email leaves the stored value null", noAlt.businessEmail === null);
+    check("no alternative email falls back to the account address",
+      noAlt.publicContactEmail === "daniel@example.com");
+    check("the fallback produces a mailto link",
+      noAlt.links.some((l) => l.kind === "email" && l.href === "mailto:daniel@example.com"));
+    // The distinction that keeps the fallback safe: the account address is
+    // SELECTED for display, never copied into the profile's own column.
+    check("the fallback never populates the stored alternative",
+      noAlt.businessEmail === null && noAlt.publicContactEmail !== noAlt.businessEmail);
   }
   check(
     "card never carries a clerk id",
@@ -720,14 +754,14 @@ check(
 {
   const bare = toHomeIdentityCard(SESSION, null, null, null);
   check("bare card uses the session name", bare.displayName === "Daniel Wolf");
-  // A bare card offers NO email. The session address is verified sign-in
-  // identity rather than something the user chose to publish, and with no
-  // profile row there is no business email to publish instead. This assertion
-  // used to require the opposite; that was the privacy defect.
-  check("a bare card publishes no email link",
-    !bare.links.some((l) => l.kind === "email"));
-  check("a bare card does not carry the account email",
-    bare.businessEmail === null && !JSON.stringify(bare).includes("@example.com"));
+  // With no profile row there is no alternative address, so the documented
+  // hierarchy resolves to the account email. The stored column stays null —
+  // that is what makes the fallback reversible rather than a silent write.
+  check("a bare card stores no alternative address", bare.businessEmail === null);
+  check("a bare card falls back to the account address",
+    bare.publicContactEmail === SESSION.email);
+  check("a bare card publishes the fallback as a mailto",
+    bare.links.some((l) => l.kind === "email"));
   const anonymousish = toHomeIdentityCard(
     { name: "A B", role: "Member" },
     null,
@@ -1636,8 +1670,13 @@ const ALLOWED_ENV = {
     ONBOARDING_STEPS.every((s, i) => s.step === i + 1));
   check("first and last constants match the table",
     FIRST_STEP === 1 && LAST_STEP === 6);
-  check("informational steps persist nothing",
-    step(5).fields.length === 0 && step(6).fields.length === 0);
+  // Review alone is informational now. Step 5 (MLS) persists as of Release B —
+  // it previously discarded whatever the user typed into it.
+  check("the review step persists nothing", step(6).fields.length === 0);
+  check("the MLS step persists its identity fields",
+    step(5).fields.includes("mlsAgentId") && step(5).fields.includes("mlsOrganization"));
+  check("the MLS step cannot write a verification status",
+    !step(5).fields.some((f) => String(f).toLowerCase().includes("verif")));
   check("the review step cannot be skipped", step(6).skippable === false);
 
   // A step can only ever write fields the shared contract already permits.
@@ -1660,12 +1699,33 @@ const ALLOWED_ENV = {
     check("a step writes only its own fields", !keys.includes("licenseNumber"));
     check("a step strips role", !keys.includes("role"));
     check("a step strips a clerk id", !keys.includes("clerkUserId"));
-    check("a step keeps its own field", out.professionalTitle === "Broker Associate");
+    // Canonicalised: the label posted by the client is stored as the stable
+    // catalogue value, so re-wording a title never needs a data migration.
+    check("a step keeps its own field", out.professionalTitle === "broker_associate");
     check("a step payload never carries a clerk id",
       !JSON.stringify(out).includes("user_2aaaaaaaaaaaaaaaaaaa"));
   }
   check("an informational step normalises to nothing",
-    Object.keys(normalizeStep(step(5), { professionalTitle: "x" })).length === 0);
+    Object.keys(normalizeStep(step(6), { professionalTitle: "x" })).length === 0);
+  // And the MLS step narrows to its OWN fields, exactly like every other step.
+  {
+    const mlsOut = normalizeStep(step(5), {
+      mlsAgentId: " 30-12345 ",
+      mlsOrganization: "MIAMI REALTORS",
+      licenseNumber: "BK999999",
+      mlsVerificationStatus: "verified",
+    });
+    const mlsKeys = Object.keys(mlsOut);
+    check("the MLS step keeps its agent id", mlsOut.mlsAgentId === "30-12345");
+    check("the MLS step canonicalises the board",
+      mlsOut.mlsOrganization === "miami_realtors");
+    check("the MLS step strips a licence number", !mlsKeys.includes("licenseNumber"));
+    // The invariant that matters most on this step: no request shape can set
+    // the verification status, because it is not in the schema at all.
+    check("the MLS step strips a self-asserted verification status",
+      !mlsKeys.includes("mlsVerificationStatus") &&
+        !JSON.stringify(mlsOut).includes("verified"));
+  }
 
   // Shared normalisation: the wizard cannot validate differently -------------
   {
@@ -1768,8 +1828,11 @@ const ALLOWED_ENV = {
   // Account email vs business email ----------------------------------------
   check("business email is a profile field", "businessEmail" in PROFILE_FIELDS);
   check("business email appears publicly", PUBLIC_SURFACE_FIELDS.includes("businessEmail"));
-  check("the business email hint distinguishes it from the account email",
-    /account sign-in email/i.test(PROFILE_FIELDS.businessEmail.hint ?? ""));
+  check("the alternative email is labelled as an alternative",
+    /alternative/i.test(PROFILE_FIELDS.businessEmail.label));
+  check("the alternative email hint explains the account-email fallback",
+    /account email/i.test(PROFILE_FIELDS.businessEmail.hint ?? "") &&
+      /blank/i.test(PROFILE_FIELDS.businessEmail.hint ?? ""));
   // The verified address is not a writable profile field at all.
   check("the account email is not writable through any step",
     !allStepFields.some((f) => String(f).toLowerCase().includes("primary")));
@@ -1877,8 +1940,16 @@ const ALLOWED_ENV = {
   check("the wizard sends three request bodies", bodies.length === 3);
   check("the account email is never submitted",
     bodies.every((b) => !b.includes("accountEmail")));
-  check("the MLS step claims nothing",
-    /Not connected/.test(wizard) && !/verified/i.test(wizard.slice(wizard.indexOf('current.id === "mls"'), wizard.indexOf('current.id === "mls"') + 700)));
+  // The step now stores an identity, so "claims nothing" is asserted on the
+  // meaning rather than the absence of the word: it must state plainly that
+  // nothing is verified, and must not promise a verification that will happen.
+  check("the MLS panel says the identity is not verified",
+    /Not verified/.test(wizard));
+  check("the MLS panel does not promise future verification",
+    !/will be verified/i.test(wizard));
+  check("the MLS panel says FortMark does not check the identity",
+    // `\s+` because JSX wraps this sentence across source lines.
+    /not\s+checked\s+against\s+your\s+MLS\s+or\s+board/i.test(wizard));
 
   // Route guards ------------------------------------------------------------
   check("the wizard route requires the UI flag",
@@ -2285,6 +2356,79 @@ const ALLOWED_ENV = {
     !/bytea|blob\(|imageBytes/.test(schema));
 }
 
+// --- Release B: MLS identity migration is additive and backward compatible --
+//
+// The earlier migrations are asserted against a blanket "no NOT NULL" rule.
+// That rule cannot be applied verbatim here, because this migration
+// legitimately needs one — and relaxing the guard to "NOT NULL is fine now"
+// would throw away the protection entirely. So it is made PRECISE instead:
+// a NOT NULL is permitted only in the exact shape that is safe on a populated
+// table, namely a NEW column that also carries a DEFAULT, which Postgres
+// backfills without rewriting existing rows or failing on them.
+{
+  const sql = readFileSync("lib/db/migrations/0004_blue_lorna_dane.sql", "utf8");
+  const upper = sql.toUpperCase();
+
+  for (const col of [
+    "mls_agent_id",
+    "mls_organization",
+    "mls_verification_status",
+    "mls_verified_at",
+  ]) {
+    check(`the MLS migration adds ${col}`, sql.includes(`ADD COLUMN "${col}"`));
+  }
+  check("the MLS migration creates the verification enum",
+    /CREATE TYPE "public"\."profile_mls_verification_status" AS ENUM\('unverified', 'verified'\)/.test(sql));
+
+  // Genuinely destructive verbs stay forbidden outright.
+  for (const forbidden of ["DROP", "TRUNCATE", "DELETE", "RENAME", "ALTER COLUMN"]) {
+    check(`the MLS migration contains no ${forbidden}`, !upper.includes(forbidden));
+  }
+  check("the MLS migration only ever ADDs columns",
+    (sql.match(/ALTER TABLE/g) ?? []).length === (sql.match(/ADD COLUMN/g) ?? []).length);
+  check("the MLS migration only touches professional_profiles",
+    (sql.match(/ALTER TABLE "professional_profiles"/g) ?? []).length ===
+      (sql.match(/ALTER TABLE/g) ?? []).length);
+
+  // The precise NOT NULL rule.
+  const notNullStatements = sql
+    .split("--> statement-breakpoint")
+    .filter((st) => /NOT NULL/i.test(st));
+  check("exactly one statement is NOT NULL", notNullStatements.length === 1);
+  check("the only NOT NULL is on a newly added column",
+    notNullStatements.every((st) => /ADD COLUMN/i.test(st)));
+  check("the only NOT NULL carries a DEFAULT, so existing rows backfill safely",
+    notNullStatements.every((st) => /DEFAULT '[^']+'/i.test(st)));
+  check("that column is the verification status, not a user-supplied value",
+    notNullStatements.every((st) => st.includes('"mls_verification_status"')));
+  check("its default is the unverified state",
+    notNullStatements.every((st) => /DEFAULT 'unverified'/.test(st)));
+
+  // Every value a USER supplies must remain nullable — an existing profile has
+  // none of them, and onboarding is skippable.
+  const schemaSrc = readFileSync("lib/db/schema.ts", "utf8");
+  check("the MLS agent id column is nullable",
+    /mlsAgentId: text\("mls_agent_id"\),/.test(schemaSrc));
+  check("the MLS organization column is nullable",
+    /mlsOrganization: text\("mls_organization"\),/.test(schemaSrc));
+  check("the verified timestamp is nullable",
+    /mlsVerifiedAt: timestamp\("mls_verified_at", \{ withTimezone: true \}\),/.test(schemaSrc));
+  check("the verification status defaults to unverified in the schema",
+    /mls_verification_status"\)\s*\n?\s*\.notNull\(\)\s*\n?\s*\.default\("unverified"\)/.test(schemaSrc));
+  // No unique index: verification is not real yet, so uniqueness would only
+  // enforce first-come-first-served on an unverified claim.
+  check("the MLS agent id is not made unique while it is unverified",
+    !/uniqueIndex\([^)]*mls/i.test(schemaSrc));
+
+  // The build guard must know about the new columns, or a partial migration
+  // degrades silently on the first profile read.
+  const migrateSrc = readFileSync("scripts/migrate.mjs", "utf8");
+  check("the build guard verifies the MLS columns",
+    migrateSrc.includes("RELEASE_B_MLS_COLUMNS") && migrateSrc.includes("mls_agent_id"));
+  check("the build guard asserts the status column stays NOT NULL",
+    migrateSrc.includes('cols.get("mls_verification_status") !== "NO"'));
+}
+
 // --- Image upload gate: token presence must never enable uploads -----------
 //
 // Vercel's managed Blob connection scopes BLOB_READ_WRITE_TOKEN to Production
@@ -2689,8 +2833,8 @@ const ALLOWED_ENV = {
   check("the self-card no longer scrapes mailto:/tel: out of links",
     !/kind === "email"\)\?\.href\.replace/.test(card) &&
       !/kind === "phone"\)\?\.href\.replace/.test(card));
-  check("the Digital Card reads the carried business email and phone",
-    dcard.includes("const email = data.businessEmail;") &&
+  check("the Digital Card reads the carried resolved email and phone",
+    dcard.includes("const email = data.publicContactEmail ?? data.businessEmail;") &&
       dcard.includes("const phone = data.phoneE164;"));
   check("the Digital Card does NOT filter self-contact away",
     !dcard.includes("selfCardLinks"));
@@ -3014,8 +3158,8 @@ const ALLOWED_ENV = {
     /buildVCard\(\{[\s\S]{0,420}email,\s*\n\s*phoneE164: phone,/.test(dcard));
   check("the contact block reads the carried email and phone",
     /buildContactBlock\(\{[\s\S]{0,420}email,\s*\n\s*phoneE164: phone,/.test(dcard));
-  check("the exported email is still the business address only",
-    dcard.includes("const email = data.businessEmail;"));
+  check("the exported email is the single resolved public address",
+    dcard.includes("const email = data.publicContactEmail ?? data.businessEmail;"));
 
   // The Home self-card is untouched by this pass.
   const card = readFileSync("components/home/home-identity-card.tsx", "utf8");
@@ -3113,8 +3257,584 @@ const ALLOWED_ENV = {
 }
 
 // --- Summary ---------------------------------------------------------------
+// ===========================================================================
+// Release B — Onboarding Steps 1-4
+//
+// Static and pure-function coverage, matching this harness's existing scope.
+// Anything requiring a live database, a Blob store or a browser is asserted
+// STRUCTURALLY here (the code path exists and is shaped correctly) and is
+// listed for manual QA rather than claimed as verified.
+// ===========================================================================
+{
+  const wizardSrc = readFileSync("components/profile/onboarding-wizard.tsx", "utf8");
+  const uploadSrc = readFileSync("components/profile/profile-image-upload.tsx", "utf8");
+  const fieldSrc = readFileSync("components/profile/profile-field.tsx", "utf8");
+  const railSrc = readFileSync("components/layout/nav-rail.tsx", "utf8");
+  const rootLayoutSrc = readFileSync("app/layout.tsx", "utf8");
+  const imageRouteSrc = readFileSync("app/api/profile/image/route.ts", "utf8");
+  const shellSrc = readFileSync("lib/profile/shell.ts", "utf8");
+  const editorSrc = readFileSync("components/profile/profile-editor.tsx", "utf8");
+
+  // --- STEP 1: branding assets --------------------------------------------
+  // The defect: `next/image` does not apply the zone basePath to a string src,
+  // and `unoptimized: true` means the optimizer that would have added it never
+  // runs — so `/brand/…` resolved against the portal zone and 404ed.
+  check("the nav rail resolves brand assets through assetPath",
+    railSrc.includes('assetPath("/brand/fortmark-logomark-black.png")') &&
+      railSrc.includes('assetPath("/brand/fortmark-logomark-white.png")'));
+  check("no brand asset is referenced without the basePath helper",
+    !/src="\/brand\//.test(railSrc));
+  check("the favicon is basePath-prefixed too",
+    rootLayoutSrc.includes('assetPath("/brand/fortmark-logomark-black.png")'));
+  check("assetPath actually produces the dashboard-scoped URL",
+    assetPath("/brand/fortmark-logomark-black.png") ===
+      "/dashboard/brand/fortmark-logomark-black.png");
+  check("assetPath is idempotent",
+    assetPath(assetPath("/brand/x.png")) === "/dashboard/brand/x.png");
+  check("assetPath leaves absolute URLs alone",
+    assetPath("https://cdn.example.com/a.png") === "https://cdn.example.com/a.png");
+
+  // The wordmark is the real asset, not letterforms in a display font.
+  check("the expanded rail renders the official wordmark asset",
+    railSrc.includes("fortmark-wordmark-black.png") &&
+      railSrc.includes("fortmark-wordmark-white.png"));
+  check("the rail no longer renders the brand as plain text",
+    !/>FORTMARK</.test(railSrc));
+  // Sizing is derived from each asset's INK, not its canvas.
+  //
+  // The logomark (1568x700) has no padding, so canvas height == type height.
+  // The wordmark (1756x512) carries 94px of transparent padding on all sides,
+  // so its visible type is only 1568x324 — 63% of the canvas. Sizing both by
+  // canvas rendered ~10px of type beside a 20px mark, which read as a caption.
+  // The wordmark box is therefore intentionally TALLER than the mark.
+  check("the logomark keeps its true 2.24:1 ratio",
+    railSrc.includes("width={45}") && railSrc.includes("height={20}"));
+  check("the wordmark keeps its true 3.43:1 ratio",
+    railSrc.includes("width={110}") && railSrc.includes("height={32}"));
+  {
+    // The arithmetic that makes them match, asserted rather than trusted.
+    const markInk = 20;                      // 20px canvas, no padding
+    const wordInk = 32 * (324 / 512);        // 32px canvas, 324/512 is ink
+    check("wordmark type height matches the mark height within 1px",
+      Math.abs(wordInk - markInk) <= 1);
+    check("the logomark width follows its ratio",
+      Math.abs(45 - 20 * (1568 / 700)) <= 1);
+    check("the wordmark width follows its ratio",
+      Math.abs(110 - 32 * (1756 / 512)) <= 1);
+    // Both must fit the expanded rail: w-60 (240px) less px-5 (40px).
+    check("the brand lockup fits the expanded rail", 45 + 8 + 110 <= 200);
+  }
+  check("the wordmark box is taller than the mark to compensate for padding",
+    railSrc.includes("h-8 w-auto") && railSrc.includes("h-5 w-auto"));
+  check("brand images are not stretched by a square box",
+    !/width=\{28\}[\s\S]{0,40}height=\{28\}/.test(railSrc));
+  check("both themes are covered",
+    railSrc.includes("dark:hidden") && railSrc.includes("hidden h-5 w-auto dark:block"));
+  check("the brand link keeps a single accessible name",
+    railSrc.includes('aria-label="FortMark home"') &&
+      (railSrc.match(/alt=""/g) ?? []).length >= 4);
+  check("the brand link has a visible focus state",
+    railSrc.includes("focus-visible:ring-2"));
+
+  // --- STEP 1: profile image ----------------------------------------------
+  check("the upload control accepts a server-resolved flag",
+    uploadSrc.includes("uploadEnabled") && wizardSrc.includes("uploadEnabled={imageUploadEnabled}"));
+  check("a disabled environment latches the control off from first render",
+    uploadSrc.includes("React.useState(!uploadEnabled)"));
+  check("the latch never re-enables the control",
+    uploadSrc.includes("if (!uploadEnabled) setUnavailable(true);"));
+  check("the disabled control explains itself instead of blaming the file",
+    /turned off for this environment/.test(uploadSrc));
+  check("the 404 path is still handled as defence in depth",
+    uploadSrc.includes("res.status === 404"));
+  check("the onboarding context resolves the image flag server-side",
+    shellSrc.includes("professionalProfileUiEnabled(env) && profileImageUploadEnabled(env)"));
+  check("the editor receives the flag from the profile GET",
+    editorSrc.includes("uploadEnabled={imageUploadEnabled}"));
+
+  // Client-side limits mirror the server's, and the server re-checks bytes.
+  check("the client enforces 4 MB", uploadSrc.includes("4 * 1024 * 1024"));
+  check("the client accepts only JPEG, PNG and WebP",
+    uploadSrc.includes("image/jpeg,image/png,image/webp"));
+  check("the server re-derives size from the buffer, not File.size",
+    imageRouteSrc.includes("bytes.byteLength"));
+  check("the server inspects the actual bytes",
+    imageRouteSrc.includes("checkProfileImage(") && imageRouteSrc.includes("bytes,"));
+  check("the storage path is derived from the session, never the request",
+    imageRouteSrc.includes("ownDashboardUserId(caller.clerkUserId)") &&
+      imageRouteSrc.includes("profileImagePath(dashboardUserId, randomUUID(), check.format)"));
+  check("the client filename never reaches the storage path",
+    !/file\.name/.test(imageRouteSrc));
+  check("both flags gate the upload route",
+    imageRouteSrc.includes("!professionalProfileUiEnabled() || !profileImageUploadEnabled()"));
+
+  // IDOR: one user cannot write into, or delete from, another's prefix.
+  {
+    const mine = "11111111-1111-4111-8111-111111111111";
+    const theirs = "22222222-2222-4222-8222-222222222222";
+    check("a pathname outside the caller's prefix is refused",
+      !ownsPathname(mine, profileImagePath(theirs, "abc", "jpeg")));
+    check("a pathname inside the caller's prefix is accepted",
+      ownsPathname(mine, profileImagePath(mine, "abc", "jpeg")));
+    check("traversal is refused outright",
+      !ownsPathname(mine, `${userPrefix(mine)}../${theirs}/x.jpg`));
+    check("an empty pathname is refused", !ownsPathname(mine, ""));
+    check("the prefix is keyed by the internal uuid, not a clerk id",
+      userPrefix(mine).startsWith(`${PROFILE_IMAGE_ROOT}/`) &&
+        !userPrefix(mine).includes("user_"));
+  }
+
+  // Persistence across navigation/refresh is SERVER-backed, not React state.
+  check("the wizard seeds its image from a server-resolved value",
+    wizardSrc.includes("currentImageUrl") && shellSrc.includes("currentImageUrl:"));
+  check("the resolved image prefers the stored active upload over the Clerk avatar",
+    /processedImageUrl\s*\?\?[\s\S]{0,80}activeImageUrl\s*\?\?[\s\S]{0,80}clerkImageUrl/.test(shellSrc));
+  check("the wizard keeps image state out of any global store",
+    !/useLayoutStore|useUiStore|useProfileStore/.test(wizardSrc));
+
+  // --- STEP 2: professional title -----------------------------------------
+  check("professional title is a select", PROFILE_FIELDS.professionalTitle.kind === "select");
+  check("the title select carries the catalogue",
+    (PROFILE_FIELDS.professionalTitle.options?.length ?? 0) === PROFESSIONAL_TITLES.length);
+  check("the field component renders a real select control",
+    fieldSrc.includes('meta.kind === "select"') && fieldSrc.includes("<select"));
+  check("the select is a native control so FormData sees it",
+    fieldSrc.includes("appearance-none") && fieldSrc.includes("<option"));
+  check("the select offers an empty choice so a field stays optional",
+    fieldSrc.includes('<option value="">'));
+
+  for (const t of PROFESSIONAL_TITLES) {
+    check(`title ${t.value} round-trips by value`, canonicalizeTitle(t.value) === t.value);
+    check(`title ${t.value} round-trips by label`, canonicalizeTitle(t.label) === t.value);
+  }
+  check("the required titles are all offered", [
+    "Real Estate Sales Associate", "Broker Associate", "Broker", "Managing Broker",
+    "Principal Broker", "Transaction Manager", "Commercial Real Estate Advisor",
+    "Residential Real Estate Advisor", "Real Estate Advisor",
+  ].every((label) => PROFESSIONAL_TITLES.some((t) => t.label === label)));
+  check("no two titles share a value",
+    new Set(PROFESSIONAL_TITLES.map((t) => t.value)).size === PROFESSIONAL_TITLES.length);
+  check("no two titles share a label",
+    new Set(PROFESSIONAL_TITLES.map((t) => t.label.toLowerCase())).size === PROFESSIONAL_TITLES.length);
+  check("title matching is case-insensitive",
+    canonicalizeTitle("bRoKeR aSsOcIaTe") === "broker_associate");
+
+  // Backward compatibility: a legacy free-text title must survive untouched.
+  check("a legacy title is preserved, not blanked",
+    canonicalizeTitle("Realtor\u00ae, GRI") === "Realtor\u00ae, GRI");
+  check("a legacy title is not mistaken for a catalogue value",
+    !isKnownTitleValue("Realtor\u00ae, GRI"));
+  check("a legacy title still renders as itself",
+    titleLabel("Realtor\u00ae, GRI") === "Realtor\u00ae, GRI");
+  check("a catalogue value renders as its label",
+    titleLabel("broker_associate") === "Broker Associate");
+  check("a legacy title is added to the options so it stays selected",
+    titleOptionsFor("Realtor\u00ae, GRI")[0]?.value === "Realtor\u00ae, GRI" &&
+      titleOptionsFor("Realtor\u00ae, GRI").length === PROFESSIONAL_TITLES.length + 1);
+  check("a known title does not duplicate the option list",
+    titleOptionsFor("broker_associate").length === PROFESSIONAL_TITLES.length);
+  check("an empty stored title yields the plain catalogue",
+    titleOptionsFor("").length === PROFESSIONAL_TITLES.length);
+  check("the select widens generically for any legacy value",
+    fieldSrc.includes("widenOptions("));
+
+  // A title is display text. It must never be an authorization input.
+  check("a title never resolves to a privileged role",
+    PROFESSIONAL_TITLES.every((t) => resolveDbRole(t.label) === "member" || t.label === "Broker"));
+  check("the admin role cannot be reached through a title",
+    PROFESSIONAL_TITLES.every((t) => resolveDbRole(t.value) !== "admin"));
+  check("the title hint says it does not affect permissions",
+    /permission/i.test(PROFILE_FIELDS.professionalTitle.hint ?? ""));
+
+  // Stored value vs displayed label. Getting this wrong printed the raw
+  // catalogue key at a human on the Home card and the digital card.
+  {
+    const card = toHomeIdentityCard(
+      SESSION,
+      { createdAt: "2026-08-01T00:00:00.000Z", primaryEmail: "a@example.com", status: "active" },
+      { preferredDisplayName: "Test Test", professionalTitle: "real_estate_sales_associate" },
+      null,
+      new Date("2026-08-25T00:00:00Z")
+    );
+    check("the card renders the title label, not the stored key",
+      card.professionalTitle === "Real Estate Sales Associate");
+    check("no underscore key leaks into the card projection",
+      !JSON.stringify(card).includes("real_estate_sales_associate"));
+
+    const legacy = toHomeIdentityCard(
+      SESSION,
+      { createdAt: "2026-08-01T00:00:00.000Z", primaryEmail: "a@example.com", status: "active" },
+      { preferredDisplayName: "Test Test", professionalTitle: "Realtor\u00ae, GRI" },
+      null,
+      new Date("2026-08-25T00:00:00Z")
+    );
+    check("a legacy free-text title still renders as typed",
+      legacy.professionalTitle === "Realtor\u00ae, GRI");
+
+    // The editor and wizard need the RAW value so the select can match it.
+    check("the editor projection keeps the raw stored value",
+      toProfileDetail({ professionalTitle: "broker_associate" }).professionalTitle ===
+        "broker_associate");
+  }
+
+  // Step 2 saves what it should, and nothing else.
+  {
+    const out = normalizeStep(stepByNumber(2)!, {
+      professionalTitle: "Managing Broker",
+      locationDisplay: "  Fort   Lauderdale, FL ",
+      biography: "  Twenty years in South Florida.  ",
+      brokerageOffice: "Some Other Brokerage",
+      role: "admin",
+    });
+    check("step 2 stores the canonical title", out.professionalTitle === "managing_broker");
+    check("step 2 saves the location", out.locationDisplay === "Fort Lauderdale, FL");
+    check("step 2 saves the biography", out.biography === "Twenty years in South Florida.");
+    check("step 2 strips a role", !Object.keys(out).includes("role"));
+  }
+  // Brokerage is refused loudly rather than silently dropped.
+  check("a client cannot change the brokerage",
+    isBrokerageTampering({ brokerageOffice: "Some Other Brokerage" }));
+  check("echoing the assigned brokerage back is not tampering",
+    !isBrokerageTampering({ brokerageOffice: FORTMARK_BROKERAGE_NAME }));
+  check("a blank brokerage is not tampering", !isBrokerageTampering({ brokerageOffice: "" }));
+  check("brokerage is never an input field",
+    !Object.keys(profileUpdateSchema.shape).includes("brokerageOffice"));
+  check("brokerage is repaired on every write",
+    normalizeProfileUpdate({}).brokerageOffice === FORTMARK_BROKERAGE_NAME);
+  check("the wizard renders brokerage as text, not a disabled input",
+    wizardSrc.includes("LockedBrokerageField") && !/name="brokerageOffice"/.test(wizardSrc));
+
+  // --- STEP 3: account email vs alternative email --------------------------
+  check("the account email comes from the authenticated identity",
+    shellSrc.includes("accountEmail: synced.user.primaryEmail ?? user.email ?? null"));
+  check("the account email is rendered read-only",
+    wizardSrc.includes("<ReadOnlyField") && wizardSrc.includes('label="Account email"'));
+  check("the account email is described as account-managed",
+    /Connected to your FortMark account/.test(wizardSrc));
+  check("the account email is not a writable profile field",
+    !Object.keys(profileUpdateSchema.shape).some((k) => k.toLowerCase().includes("primary")));
+  check("no step writes an email other than the alternative one",
+    ONBOARDING_STEPS.flatMap((st) => st.fields)
+      .filter((f) => String(f).toLowerCase().includes("email")).join() === "businessEmail");
+
+  check("the alternative email is optional",
+    normalizeStep(stepByNumber(4)!, {}).businessEmail === null);
+  check("a valid alternative email persists, lowercased",
+    normalizeStep(stepByNumber(4)!, { businessEmail: " Broker@Example.COM " }).businessEmail ===
+      "broker@example.com");
+  for (const bad of ["not-an-email", "a@b", "two@@at.com", "spaces in@x.com", "x@y..com"]) {
+    check(`an invalid alternative email is rejected: ${bad}`, toEmail(bad) === null);
+  }
+  check("an invalid alternative email is reported, not silently dropped",
+    Object.keys(
+      droppedValueErrors({ businessEmail: "nope" },
+        { businessEmail: null }, ["businessEmail"])
+    ).includes("businessEmail"));
+
+  // The hierarchy, and the invariant that keeps it reversible.
+  check("the alternative email wins when set",
+    publicContactEmail("alt@example.com", "account@example.com") === "alt@example.com");
+  check("the account email is the fallback",
+    publicContactEmail(null, "account@example.com") === "account@example.com");
+  check("a blank alternative falls back too",
+    publicContactEmail("   ", "account@example.com") === "account@example.com");
+  check("neither present yields nothing",
+    publicContactEmail(null, null) === null);
+  check("the selector never mutates either input",
+    publicContactEmail("alt@example.com", "account@example.com") !== "account@example.com");
+  check("the alternative email is not the login identity",
+    !Object.keys(profileUpdateSchema.shape).includes("primaryEmail"));
+
+  // --- STEP 4: MLS identity ------------------------------------------------
+  const mlsStep = stepByNumber(5)!;
+  check("the MLS step persists a real identity", mlsStep.fields.length > 0);
+  check("MLS fields are part of the shared update contract",
+    mlsStep.fields.every((f) => Object.keys(profileUpdateSchema.shape).includes(String(f))));
+  check("MLS identity persists through the step normaliser",
+    normalizeStep(mlsStep, { mlsAgentId: "3012345" }).mlsAgentId === "3012345");
+  check("an MLS agent id is uppercased for stable comparison",
+    toMlsAgentId("bk-1234a") === "BK-1234A");
+  check("whitespace inside an MLS id is removed", toMlsAgentId(" 301 2345 ") === "3012345");
+  for (const bad of ["ab", "x".repeat(33), "has space!", "-leading", "semi;colon", ""]) {
+    check(`an invalid MLS id is refused: ${JSON.stringify(bad)}`, toMlsAgentId(bad) === null);
+  }
+  check("an unusable MLS id is reported rather than silently dropped",
+    Object.keys(
+      droppedValueErrors({ mlsAgentId: "!!" }, { mlsAgentId: null }, ["mlsAgentId"])
+    ).includes("mlsAgentId"));
+  check("the MLS board canonicalises by label",
+    canonicalizeMlsBoard("MIAMI REALTORS") === "miami_realtors");
+  check("the MLS board canonicalises by value",
+    canonicalizeMlsBoard("beaches_mls") === "beaches_mls");
+  check("an unknown board is preserved, not blanked",
+    canonicalizeMlsBoard("Some Regional Board") === "Some Regional Board");
+  check("an unknown board stays selectable",
+    mlsBoardOptionsFor("Some Regional Board").length === MLS_BOARDS.length + 1);
+  check("a known board renders its label", mlsBoardLabel("miami_realtors") === "MIAMI REALTORS");
+  check("the board list uses the terminology already in the codebase",
+    MLS_BOARDS.some((b) => b.label === "Beaches MLS"));
+
+  // NO FAKE VERIFICATION — the central guarantee of this step.
+  check("the default verification state is unverified",
+    DEFAULT_MLS_VERIFICATION === "unverified");
+  check("a fresh identity reads unverified",
+    toMlsIdentity({ mlsAgentId: "3012345" }).mlsVerificationStatus === "unverified");
+  check("typing an id does not stamp a verification time",
+    toMlsIdentity({ mlsAgentId: "3012345" }).mlsVerifiedAt === null);
+  check("an unrecognised status degrades to unverified",
+    toMlsIdentity({ mlsVerificationStatus: "totally_verified" }).mlsVerificationStatus ===
+      "unverified");
+  check("the verification status is not a writable field",
+    !Object.keys(profileUpdateSchema.shape).includes("mlsVerificationStatus"));
+  check("the verification timestamp is not a writable field",
+    !Object.keys(profileUpdateSchema.shape).includes("mlsVerifiedAt"));
+  check("a client cannot post itself verified",
+    !Object.keys(
+      normalizeStep(mlsStep, { mlsAgentId: "3012345", mlsVerificationStatus: "verified" })
+    ).includes("mlsVerificationStatus"));
+  check("the unverified label says so plainly",
+    mlsStatusLabel("unverified") === "Not verified");
+
+  // Identity presence, and the honest listing-linkage seam.
+  check("a board alone is not an identity", !hasMlsIdentity({ mlsAgentId: null }));
+  check("an agent id is an identity", hasMlsIdentity({ mlsAgentId: "3012345" }));
+  {
+    const noId = listingsForMlsIdentity({ mlsAgentId: null }, []);
+    check("linkage reports a missing identity", noId.reason === "no_identity" && !noId.linkable);
+    const noField = listingsForMlsIdentity(
+      { mlsAgentId: "3012345" },
+      [{ id: "l1", mlsNumber: "A1", agentId: "agent-1" } as never]
+    );
+    // The listing model carries no listing-agent MLS id, so a match is
+    // impossible. Reporting that is the point: an empty list alone would read
+    // as "you have no listings".
+    check("linkage reports the missing listing field, not an empty result",
+      noField.reason === "no_listing_agent_mls_field" && !noField.linkable);
+    check("linkage never guesses a match from the property's MLS number",
+      noField.listings.length === 0);
+    const linked = listingsForMlsIdentity(
+      { mlsAgentId: "3012345" },
+      [
+        { id: "l1", listingAgentMlsId: "3012345" } as never,
+        { id: "l2", listingAgentMlsId: "9999999" } as never,
+      ]
+    );
+    check("linkage matches once the listing model carries the field",
+      linked.linkable && linked.listings.length === 1 &&
+        (linked.listings[0] as { id: string }).id === "l1");
+  }
+
+  // Edit Profile receives the same values the wizard wrote.
+  check("the editor renders the MLS fields",
+    editorSrc.includes('"mlsAgentId"') && editorSrc.includes('"mlsOrganization"'));
+  check("MLS values reach the wizard from the server",
+    shellSrc.includes("mlsAgentId: p?.mlsAgentId ?? null"));
+  check("MLS fields are marked self-reported",
+    SELF_REPORTED_FIELDS.includes("mlsAgentId") && SELF_REPORTED_FIELDS.includes("mlsOrganization"));
+  check("the MLS id hint says FortMark does not verify it",
+    /does not verify/i.test(PROFILE_FIELDS.mlsAgentId.hint ?? ""));
+
+  // Licence identity stays separate from account authorization.
+  check("licence fields are not account fields",
+    !Object.keys(profileUpdateSchema.shape).some((k) =>
+      ["role", "status", "onboardingComplete"].includes(k)));
+  check("no onboarding step writes a role or status",
+    !ONBOARDING_STEPS.flatMap((st) => st.fields).some((f) =>
+      ["role", "status"].includes(String(f))));
+
+  // --- Profile drawer must be able to finish loading -----------------------
+  //
+  // The drawer sat on "Loading your profile…" forever. The effect called
+  // setState({status:"loading"}) while `state.status` was in its own
+  // dependency array: the state change re-ran the effect, React fired the
+  // previous cleanup, the cleanup aborted the in-flight fetch, the catch
+  // swallowed the AbortError as "the drawer closed", and the re-run bailed
+  // because status was no longer "idle". It aborted its own request every
+  // time and could never recover.
+  {
+    const drawer = readFileSync("components/profile/profile-drawer.tsx", "utf8");
+
+    check("the load effect depends only on `open`",
+      /\}, \[open\]\);/.test(drawer));
+    check("the effect no longer depends on the state it sets",
+      !/\}, \[open, state\.status\]\);/.test(drawer));
+    check("a teardown flag distinguishes cancelled from failed",
+      drawer.includes("let cancelled = false") && drawer.includes("cancelled = true"));
+    check("a genuine failure still surfaces as an error",
+      /if \(cancelled \|\| \(error as Error\)\?\.name === "AbortError"\) return;[\s\S]{0,120}setState\(\{ status: "error" \}\)/.test(drawer));
+    check("a reopen does not flash a spinner over loaded data",
+      /prev\.status === "ready" \? prev : \{ status: "loading" \}/.test(drawer));
+
+    // Account actions moved here from the rail's bottom corner.
+    check("the drawer offers sign out", drawer.includes("<SignOutLink"));
+    check("the drawer offers the digital card", drawer.includes("<DigitalBusinessCard"));
+    // The two surfaces are siblings rather than nested, so their focus traps
+    // cannot fight over focus.
+    check("the card is a sibling of the sheet, never nested inside it",
+      drawer.indexOf("<DigitalBusinessCard") < drawer.indexOf("<Sheet"));
+
+    // One account control, not two.
+    const rail = readFileSync("components/layout/nav-rail.tsx", "utf8");
+    check("the duplicate account menu is gone from the rail",
+      !rail.includes("<UserMenu") && !rail.includes('from "./user-menu"'));
+    check("the rail keeps its other bottom actions",
+      rail.includes("NotificationsBell") && rail.includes('href="/settings"'));
+
+    // The avatar opens the DIGITAL CARD, and the drawer does not edit.
+    check("the drawer renders the card", drawer.includes("<DigitalBusinessCard"));
+    check("the drawer no longer embeds a second editor",
+      !drawer.includes("<ProfileEditor"));
+    check("the card only renders once its data exists",
+      /const showCard = card !== null/.test(drawer));
+    check("the card and the fallback sheet are never open at once",
+      drawer.includes("open={open && showCard}") &&
+        drawer.includes("open={open && !showCard}"));
+    check("closing either surface closes the drawer",
+      (drawer.match(/if \(!next\) onOpenChange\(false\);/g) ?? []).length >= 2);
+
+    // Sign out survives on whichever surface shows, since the rail menu is gone.
+    check("sign out is offered on the card", drawer.includes("showSignOut"));
+    check("sign out is also offered on the fallback sheet",
+      drawer.includes("<SignOutLink"));
+
+    // ONE editor. Every entry point routes to the settings page.
+    const dcardSrc = readFileSync("components/profile/digital-business-card.tsx", "utf8");
+    check("the card's edit action always routes to settings",
+      dcardSrc.includes("${ROUTES.settings}?tab=profile") &&
+        !dcardSrc.includes("onEdit"));
+    check("navigating to the editor closes the sheet behind it",
+      /href=\{`\$\{ROUTES\.settings\}\?tab=profile[^`]*`\}[\s\S]{0,120}onOpenChange\(false\)/.test(dcardSrc));
+    const home = readFileSync("components/home/home-identity-card.tsx", "utf8");
+    check("the Home card's edit action routes to the same page",
+      home.includes("${ROUTES.settings}?tab=profile"));
+    const section = readFileSync("components/settings/profile-section.tsx", "utf8");
+    check("the settings page hosts the one editor",
+      section.includes("<ProfileEditor"));
+
+    // Editing is a MODE. A finished save must collapse back to the record,
+    // or the form sits on top of what it just wrote and looks unfinished.
+    check("the page shows the record by default",
+      section.includes("<ProfileRecord"));
+    check("arriving from an Edit button opens edit mode",
+      /searchParams\.get\("edit"\) === "1"/.test(section));
+    check("saving leaves edit mode",
+      /onSaved=\{\(profile\) => \{[\s\S]{0,240}finishEditing\(\)/.test(section));
+    check("saving also clears the edit flag from the URL",
+      /router\.replace\(`\$\{ROUTES\.settings\}\?tab=profile`/.test(section));
+    check("the record offers a way back into editing",
+      /onEdit=\{\(\) => setEditing\(true\)\}/.test(section));
+    check("the record omits empty fields rather than listing blanks",
+      /if \(!value\) return null;/.test(section));
+    check("the record renders catalogue labels, not stored keys",
+      section.includes("titleLabel(") && section.includes("mlsBoardLabel("));
+    check("the record still says MLS is unverified",
+      section.includes("mlsStatusLabel("));
+
+    // Both entry points ask for edit mode, so the buttons do what they say.
+    check("the Home card's edit button opens edit mode",
+      home.includes("?tab=profile&edit=1"));
+    check("the digital card's edit button opens edit mode",
+      dcardSrc.includes("?tab=profile&edit=1"));
+    check("the settings editor loads the profile itself",
+      section.includes('apiPath("/api/profile")'));
+    check("its load effect cannot abort itself",
+      /\}, \[\]\);/.test(section) && section.includes("let cancelled = false"));
+    check("a disabled profile feature reads as unavailable, not broken",
+      section.includes('status: "unavailable"') && section.includes("response.status === 404"));
+
+    // The two records stay distinguishable. Both labelled "Name" showing
+    // different values is what made an edit look like it had not saved.
+    check("the account name is labelled as the account's",
+      section.includes('label="Account name"'));
+    check("the account block explains it is separate from the display name",
+      /Separate from your preferred display name/.test(section));
+    check("account fields stay read-only on this page",
+      section.includes("<ReadOnlyField") && section.includes("accountUrl()"));
+
+    // The card must come from the SAME projection Home uses, or the two
+    // surfaces can disagree about which email and title are published.
+    const route = readFileSync("app/api/profile/route.ts", "utf8");
+    check("the profile route serves the shared card projection",
+      route.includes("getHomeIdentityCard(session.user)") && route.includes("card,"));
+  }
+
+  // --- A save must reach the top bar, not just the page --------------------
+  //
+  // The identity strip is rendered by the LAYOUT, which Next reuses across
+  // client navigations. A client-side fetch updates the page but leaves the
+  // layout showing whatever it rendered on first load — so a new photo or
+  // display name appeared everywhere except the corner the user was watching.
+  //
+  // Both halves are needed: revalidatePath clears the server cache, and
+  // router.refresh makes the already-rendered client tree re-request it.
+  {
+    const profileRoute = readFileSync("app/api/profile/route.ts", "utf8");
+    const imageRoute = readFileSync("app/api/profile/image/route.ts", "utf8");
+    const upload = readFileSync("components/profile/profile-image-upload.tsx", "utf8");
+    const editor = readFileSync("components/profile/profile-editor.tsx", "utf8");
+
+    check("a profile edit revalidates the layout's route",
+      profileRoute.includes('revalidatePath("/")'));
+    check("a photo upload revalidates the layout's route",
+      imageRoute.includes('revalidatePath("/")'));
+    check("both write paths also revalidate settings",
+      profileRoute.includes('revalidatePath("/settings")') &&
+        imageRoute.includes('revalidatePath("/settings")'));
+
+    check("a successful upload refreshes the client tree",
+      /onUploaded\?\.\(url\);[\s\S]{0,400}router\.refresh\(\)/.test(upload));
+    check("a successful save refreshes the client tree",
+      /onSaved\(body\.profile\);[\s\S]{0,300}router\.refresh\(\)/.test(editor));
+    check("neither refreshes on a failed write",
+      !/setState\(\{ status: "error" \}\)[\s\S]{0,120}router\.refresh/.test(upload) &&
+        !/status: "error"[\s\S]{0,160}router\.refresh/.test(editor));
+
+    // The two surfaces must agree on WHICH image wins, or a refresh would
+    // just show a different stale answer.
+    const display = readFileSync("lib/profile/display.ts", "utf8");
+    check("the uploaded image outranks the Clerk avatar",
+      /image\.activeImageUrl[\s\S]{0,200}image\.clerkImageUrl[\s\S]{0,200}session\.imageUrl/.test(display));
+    const homeCard = readFileSync("lib/profile/home-card.ts", "utf8");
+    check("the home card resolves the image through the same function",
+      homeCard.includes("resolveImageUrl(image, session)"));
+  }
+
+  // --- Wizard lifecycle ----------------------------------------------------
+  check("a step only advances after the server confirms",
+    wizardSrc.includes("if (!ok) return; // never advance past a failed write"));
+  check("every control is disabled while saving",
+    wizardSrc.includes("disabled={saving}"));
+  check("double submission is prevented by the saving latch",
+    wizardSrc.includes("setSaving(true)") && wizardSrc.includes("disabled={saving}"));
+  check("Complete later still leaves onboarding incomplete",
+    wizardSrc.includes("onCompleteLater") && !/complete: true[\s\S]{0,200}onCompleteLater/.test(wizardSrc));
+  check("Complete later saves the current step first",
+    /async function onCompleteLater[\s\S]{0,240}await saveCurrent\(\)/.test(wizardSrc));
+  check("resume comes from the persisted step, not client state",
+    shellSrc.includes("resumeStep(p?.onboardingStep ?? null, role).step"));
+  check("the resume point only moves forward",
+    readFileSync("lib/profile/service.ts", "utf8")
+      .includes("Math.max(current.profile.onboardingStep ?? 0, step.step)"));
+
+  // --- Step count ----------------------------------------------------------
+  // Six are DECLARED; a non-licensed role is shown five because `credentials`
+  // is licensedOnly. That is why the UI reads "STEP 1 OF 5" for an admin.
+  check("six steps remain declared", ONBOARDING_STEPS.length === 6);
+  check("a non-licensed role walks five steps", stepsForRole("member").length === 5);
+  check("a licensed role walks all six", stepsForRole("agent").length === 6);
+  check("the step the admin does not see is the licence step",
+    !stepsForRole("admin").some((st) => st.id === "credentials"));
+  check("no sixth step was invented", ONBOARDING_STEPS.filter((st) => st.step > 6).length === 0);
+
+  // --- Step 5 (review) untouched -------------------------------------------
+  check("review is still the last step", stepByNumber(6)!.id === "review");
+  check("review still persists nothing", stepByNumber(6)!.fields.length === 0);
+  check("review still cannot be skipped", stepByNumber(6)!.skippable === false);
+}
+
 const total = passed + failures.length;
 console.log(`\n${passed}/${total} profile checks passed`);
+
 if (failures.length > 0) {
   console.log("Failures:");
   for (const f of failures) console.log(`  - ${f}`);

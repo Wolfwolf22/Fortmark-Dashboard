@@ -10,8 +10,23 @@
  * read it to build a review summary without pulling the client bundle in.
  */
 import type { ProfileFieldKey } from "./onboarding.ts";
+import { PROFESSIONAL_TITLES } from "./titles.ts";
+import { MLS_BOARDS } from "./mls.ts";
 
-export type FieldKind = "text" | "textarea" | "tel" | "email" | "url" | "date";
+export type FieldKind =
+  | "text"
+  | "textarea"
+  | "tel"
+  | "email"
+  | "url"
+  | "date"
+  | "select";
+
+/** One choice in a `select` field. `value` is what gets stored. */
+export interface FieldOption {
+  value: string;
+  label: string;
+}
 
 export interface FieldMeta {
   key: ProfileFieldKey;
@@ -23,6 +38,14 @@ export interface FieldMeta {
   /** Mirrors the Zod max so the browser and the server agree. */
   maxLength?: number;
   autoComplete?: string;
+  /**
+   * The catalogue for a `select` field.
+   *
+   * The BASE list only. A surface rendering a stored value that is not in this
+   * list must widen it (see `titleOptionsFor` / `mlsBoardOptionsFor`) so a
+   * legacy value stays selectable instead of silently resetting on first save.
+   */
+  options?: readonly FieldOption[];
 }
 
 export const PROFILE_FIELDS: Record<ProfileFieldKey, FieldMeta> = {
@@ -51,10 +74,13 @@ export const PROFILE_FIELDS: Record<ProfileFieldKey, FieldMeta> = {
   professionalTitle: {
     key: "professionalTitle",
     label: "Professional title",
-    kind: "text",
-    hint: "For example Real Estate Agent, Broker Associate or Managing Broker.",
-    placeholder: "Broker Associate",
+    kind: "select",
+    // Says what the field is FOR, because the wording matters here: a title is
+    // display text, and choosing "Managing Broker" changes nothing about what
+    // the account may do.
+    hint: "How you are introduced on FortMark. It does not affect your account permissions.",
     maxLength: 120,
+    options: PROFESSIONAL_TITLES,
   },
   brokerageOffice: {
     key: "brokerageOffice",
@@ -115,9 +141,9 @@ export const PROFILE_FIELDS: Record<ProfileFieldKey, FieldMeta> = {
   },
   businessEmail: {
     key: "businessEmail",
-    label: "Business email",
+    label: "Alternative email",
     kind: "email",
-    hint: "The address you publish. Separate from your account sign-in email.",
+    hint: "Optional. Published instead of your account email. Leave blank to publish your account email.",
     maxLength: 254,
     autoComplete: "email",
   },
@@ -151,6 +177,21 @@ export const PROFILE_FIELDS: Record<ProfileFieldKey, FieldMeta> = {
   linkedinUrl: { key: "linkedinUrl", label: "LinkedIn", kind: "url", maxLength: 400 },
   instagramUrl: { key: "instagramUrl", label: "Instagram", kind: "url", maxLength: 400 },
   facebookUrl: { key: "facebookUrl", label: "Facebook", kind: "url", maxLength: 400 },
+  mlsAgentId: {
+    key: "mlsAgentId",
+    label: "MLS agent ID",
+    kind: "text",
+    hint: "Self-reported. FortMark stores this as provided and does not verify it with any MLS.",
+    placeholder: "3012345",
+    maxLength: 32,
+  },
+  mlsOrganization: {
+    key: "mlsOrganization",
+    label: "MLS or board",
+    kind: "select",
+    maxLength: 120,
+    options: MLS_BOARDS,
+  },
   languages: { key: "languages", label: "Languages", kind: "text", maxLength: 400 },
   specialties: { key: "specialties", label: "Specialties", kind: "text", maxLength: 400 },
   serviceAreas: { key: "serviceAreas", label: "Service areas", kind: "text", maxLength: 400 },
@@ -176,6 +217,10 @@ export const SELF_REPORTED_FIELDS: readonly ProfileFieldKey[] = [
   "licenseNumber",
   "licenseExpiration",
   "nrdsNumber",
+  // Recorded from what the user typed. No MLS is contacted, so this is a
+  // claim on exactly the same footing as the licence fields above.
+  "mlsAgentId",
+  "mlsOrganization",
 ];
 
 /** Fields that appear publicly on the Home card or the digital card. */

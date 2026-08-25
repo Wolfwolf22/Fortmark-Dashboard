@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { assetPath } from "@/lib/routes";
 import { SignOutLink } from "@/components/layout/sign-out-link";
 import { portalUrl } from "@/lib/routes";
 
@@ -23,14 +24,14 @@ export function AccessDenied({
     <main className="flex min-h-screen flex-col items-center justify-center bg-background px-6 py-16">
       <div className="w-full max-w-md text-center">
         <Image
-          src="/brand/fortmark-logomark-black.png"
+          src={assetPath("/brand/fortmark-logomark-black.png")}
           alt=""
           width={32}
           height={32}
           className="mx-auto mb-8 h-8 w-auto dark:hidden"
         />
         <Image
-          src="/brand/fortmark-logomark-white.png"
+          src={assetPath("/brand/fortmark-logomark-white.png")}
           alt=""
           width={32}
           height={32}

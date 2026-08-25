@@ -47,6 +47,21 @@ export const imageProcessingStatus = pgEnum("profile_image_status", [
   "failed",
 ]);
 
+/**
+ * Whether an MLS identity has been confirmed against the issuing board.
+ *
+ * Two states only, because two is all this application can honestly
+ * distinguish: a user typed an identifier, or a real verification mechanism
+ * confirmed it. There is no `pending` — nothing is queued anywhere — and no
+ * `failed`, which would imply a check ran. Every row written today is
+ * `unverified`; `verified` exists so that a later release which DOES verify
+ * has somewhere truthful to record it, not as a state a user can reach.
+ */
+export const mlsVerificationStatus = pgEnum("profile_mls_verification_status", [
+  "unverified",
+  "verified",
+]);
+
 // --- dashboard_users -------------------------------------------------------
 
 export const dashboardUsers = pgTable(
@@ -120,6 +135,32 @@ export const professionalProfiles = pgTable(
    * not the one they log in with.
    */
   businessEmail: text("business_email"),
+  // --- Release B: MLS identity ------------------------------------------
+  /**
+   * The agent identifier issued by the user's MLS or board.
+   *
+   * SELF-REPORTED. FortMark has no connection to any MLS, so this column
+   * records a claim, not a confirmed fact — `mlsVerificationStatus` beside it
+   * is what keeps that distinction in the data rather than in a comment.
+   *
+   * Deliberately NOT unique. Two rows holding the same identifier is a data
+   * question for a human, and a unique index would turn it into a failed save
+   * for whoever typed it second — including the legitimate owner, if someone
+   * else claimed it first. Uniqueness becomes meaningful once verification is
+   * real; until then it would only enforce first-come-first-served.
+   */
+  mlsAgentId: text("mls_agent_id"),
+  /** The board or MLS the identifier belongs to. Catalogue value or free text. */
+  mlsOrganization: text("mls_organization"),
+  /**
+   * Server-assigned. Absent from `profileUpdateSchema`, so no request shape
+   * can set it — a user cannot mark their own identity verified.
+   */
+  mlsVerificationStatus: mlsVerificationStatus("mls_verification_status")
+    .notNull()
+    .default("unverified"),
+  /** Stamped only by a real verification. Null on every row this release writes. */
+  mlsVerifiedAt: timestamp("mls_verified_at", { withTimezone: true }),
   /**
    * Last onboarding step the user completed, so the wizard can resume.
    *

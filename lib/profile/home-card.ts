@@ -14,8 +14,14 @@
  * Pure by design so the fallback rules are testable: no `server-only`, no
  * database import.
  */
-import { resolveImageUrl, safeLinkUrl, type DisplaySourceImage } from "./display.ts";
+import {
+  publicContactEmail,
+  resolveImageUrl,
+  safeLinkUrl,
+  type DisplaySourceImage,
+} from "./display.ts";
 import { buildContactLinks, type ContactLink } from "./links.ts";
+import { titleLabel } from "./titles.ts";
 
 /** How a credential's trustworthiness is described to the user. */
 export type CredentialTrust =
@@ -126,16 +132,19 @@ export interface HomeIdentityCard {
    * block too — the display rule would have quietly become a data rule.
    */
   /**
-   * The PUBLISHABLE address — `professional_profiles.business_email` and
-   * nothing else.
+   * The stored ALTERNATIVE address — `professional_profiles.business_email`.
    *
-   * Never the Clerk account email. That address is verified sign-in identity:
-   * the user gave it to authenticate, not to publish, and this card feeds a
-   * shareable vCard and clipboard block. Falling back to it would disclose a
-   * private address the user never chose to share. When no business email has
-   * been entered, the card simply has no email — that is the honest state.
+   * Kept separate from `publicContactEmail` below on purpose: this is what the
+   * user actually typed, and the two must never collapse into one value or
+   * clearing the alternative could not restore the default.
    */
   businessEmail: string | null;
+  /**
+   * The address actually published: the alternative when set, otherwise the
+   * account email. See `publicContactEmail` for why the fallback exists and
+   * what makes it safe.
+   */
+  publicContactEmail: string | null;
   phoneE164: string | null;
   whatsappPhoneE164: string | null;
   /**
@@ -274,9 +283,14 @@ export function fallbackHomeIdentityCard(session: HomeCardSession): HomeIdentity
     // Authenticated and allowlisted, which is the only authority that exists
     // without a row — and it is exactly what syncCurrentUser would record.
     profileStatus: "active",
-    // No profile row means no business email. The account address is NOT a
-    // substitute — publishing it is precisely what must not happen.
+    // No profile row at all — the database is off or unreachable. The
+    // alternative/account hierarchy deliberately does NOT apply here: it
+    // describes what a professional profile publishes, and there is no
+    // profile. The degraded card keeps publishing nothing, matching the empty
+    // `links` below, so a database outage never starts disclosing an address
+    // the user has not been shown the setting for.
     businessEmail: null,
+    publicContactEmail: null,
     phoneE164: null,
     whatsappPhoneE164: null,
     completion: null,
@@ -312,7 +326,19 @@ export function toHomeIdentityCard(
     source: "database",
     greetingName: greetingNameFor(profile, session),
     displayName: trimmed(profile?.preferredDisplayName) ?? session.name,
-    professionalTitle: trimmed(profile?.professionalTitle),
+    // The stored value is a stable catalogue key ("broker_associate"), so it
+    // must be rendered through the catalogue on the way out. Without this the
+    // card, the digital card and the vCard all printed the raw key at a
+    // human — "real_estate_sales_associate" instead of "Real Estate Sales
+    // Associate".
+    //
+    // Only the DISPLAY projections translate. `toProfileDetail` and the
+    // onboarding context deliberately keep the raw value, because the editor
+    // and the wizard feed it back into a <select> that matches on value.
+    //
+    // A legacy free-text title is returned unchanged, so rows written before
+    // the catalogue existed still read as whatever their owner typed.
+    professionalTitle: titleLabel(trimmed(profile?.professionalTitle)),
     roleLabel: session.role,
     brokerageOffice: trimmed(profile?.brokerageOffice),
     locationDisplay: trimmed(profile?.locationDisplay),
@@ -327,6 +353,10 @@ export function toHomeIdentityCard(
     credentialTrust: credentialTrustFor(profile, user, now),
     profileStatus: profileStatusFor(user),
     businessEmail: trimmed(profile?.businessEmail),
+    publicContactEmail: publicContactEmail(
+      trimmed(profile?.businessEmail),
+      trimmed(user?.primaryEmail) ?? session.email
+    ),
     phoneE164: trimmed(profile?.phoneE164),
     whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164),
     completion:
@@ -339,9 +369,13 @@ export function toHomeIdentityCard(
       facebookUrl: safeLinkUrl(profile?.facebookUrl),
       personalWebsiteUrl: safeLinkUrl(profile?.personalWebsiteUrl),
       professionalWebsiteUrl: safeLinkUrl(profile?.professionalWebsiteUrl),
-      // Business email only, for the same reason: these links are the source
-      // of the shareable contact block.
-      email: trimmed(profile?.businessEmail),
+      // The RESOLVED public address, so the shareable contact block, the
+      // vCard and the card icons all agree on one answer rather than each
+      // re-deciding the hierarchy.
+      email: publicContactEmail(
+        trimmed(profile?.businessEmail),
+        trimmed(user?.primaryEmail) ?? session.email
+      ),
       phoneE164: trimmed(profile?.phoneE164),
       whatsappPhoneE164: trimmed(profile?.whatsappPhoneE164),
     }),
