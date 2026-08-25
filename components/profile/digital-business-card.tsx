@@ -410,7 +410,7 @@ export function DigitalBusinessCard({
               over the page we just moved to. */}
           <Button asChild size="sm" variant="outline" className="w-full justify-center">
             <Link
-              href={`${ROUTES.settings}?tab=profile`}
+              href={`${ROUTES.settings}?tab=profile&edit=1`}
               onClick={() => onOpenChange(false)}
             >
               <SquarePen />

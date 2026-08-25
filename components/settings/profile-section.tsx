@@ -22,7 +22,9 @@
  * added.
  */
 import * as React from "react";
-import { ExternalLink } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ExternalLink, Pencil } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -34,7 +36,10 @@ import {
 import { useSessionUser } from "@/components/layout/session-user";
 import { ProfileEditor } from "@/components/profile/profile-editor";
 import type { ProfileDetail } from "@/lib/profile/display";
-import { accountUrl, apiPath } from "@/lib/routes";
+import { accountUrl, apiPath, ROUTES } from "@/lib/routes";
+import { titleLabel } from "@/lib/profile/titles";
+import { mlsBoardLabel, mlsStatusLabel } from "@/lib/profile/mls";
+import { formatPhoneDisplay } from "@/lib/profile/links";
 
 /** One read-only field, styled to match the Input height it replaces. */
 function ReadOnlyField({
@@ -62,9 +67,50 @@ type LoadState =
   /** The profile feature is off for this environment — a 404 from the route. */
   | { status: "unavailable" };
 
+/** One read-only professional field. Renders nothing when unset. */
+function Detail({ label, value }: { label: string; value: string | null }) {
+  if (!value) return null;
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="mt-0.5 break-words text-sm font-medium text-foreground">{value}</dd>
+    </div>
+  );
+}
+
 export function ProfileSection() {
   const user = useSessionUser();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [state, setState] = React.useState<LoadState>({ status: "loading" });
+
+  /**
+   * Edit is a mode, and arriving from an "Edit profile" button opens it.
+   *
+   * Home's card and the digital card both link here with `edit=1`, so those
+   * buttons do what they say instead of landing on a read-only page. Reaching
+   * Settings through the nav shows the record first, which is the right
+   * default for a page you may have opened to read rather than change.
+   */
+  const [editing, setEditing] = React.useState(
+    () => searchParams.get("edit") === "1"
+  );
+
+  /**
+   * Leave edit mode after a save, and drop the `edit` flag from the URL.
+   *
+   * Without clearing it, the form stayed open on top of the record it had
+   * just written, and a refresh would reopen it — so a finished save kept
+   * looking unfinished.
+   */
+  const finishEditing = React.useCallback(() => {
+    setEditing(false);
+    if (searchParams.get("edit")) {
+      router.replace(`${ROUTES.settings}?tab=profile`, { scroll: false });
+    }
+  }, [router, searchParams]);
 
   // Depends on nothing, so it runs once and cannot abort itself — the mistake
   // that left the profile drawer spinning forever.
@@ -130,17 +176,23 @@ export function ProfileSection() {
               Your profile could not be loaded right now. Everything else in the
               dashboard is unaffected — try again in a moment.
             </p>
-          ) : (
+          ) : editing ? (
             <ProfileEditor
               initial={state.profile}
               imageUploadEnabled={state.imageUploadEnabled}
-              onSaved={(profile) =>
+              onSaved={(profile) => {
                 setState({
                   status: "ready",
                   profile,
                   imageUploadEnabled: state.imageUploadEnabled,
-                })
-              }
+                });
+                finishEditing();
+              }}
+            />
+          ) : (
+            <ProfileRecord
+              profile={state.profile}
+              onEdit={() => setEditing(true)}
             />
           )}
         </CardContent>
@@ -187,6 +239,95 @@ export function ProfileSection() {
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+/**
+ * The collapsed record.
+ *
+ * Shows what the profile HAS. Empty fields are omitted rather than listed as
+ * blanks — a column of "Not added" rows is what makes a finished profile read
+ * as an unfinished form.
+ *
+ * Values are rendered through the same catalogues the public surfaces use, so
+ * a stored key like `broker_associate` never reaches a human here either.
+ */
+function ProfileRecord({
+  profile,
+  onEdit,
+}: {
+  profile: ProfileDetail | null;
+  onEdit: () => void;
+}) {
+  const licence =
+    [profile?.licenseState, profile?.licenseNumber].filter(Boolean).join(" ") || null;
+  const mlsId = profile?.mlsAgentId ?? null;
+
+  return (
+    <div className="space-y-5">
+      {typeof profile?.completion === "number" && (
+        <div>
+          <div className="flex items-baseline justify-between">
+            <span className="text-sm font-semibold">Profile completion</span>
+            <span className="text-sm tabular-nums text-muted-foreground">
+              {profile.completion}%
+            </span>
+          </div>
+          <div
+            className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuenow={profile.completion}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Profile completion"
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-300"
+              style={{ width: `${profile.completion}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      <dl className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
+        <Detail label="Preferred display name" value={profile?.preferredDisplayName ?? null} />
+        <Detail label="Professional title" value={titleLabel(profile?.professionalTitle)} />
+        <Detail label="Brokerage" value={profile?.brokerageOffice ?? null} />
+        <Detail label="Location" value={profile?.locationDisplay ?? null} />
+        <Detail label="Phone" value={formatPhoneDisplay(profile?.phoneE164)} />
+        <Detail label="Alternative email" value={profile?.businessEmail ?? null} />
+        <Detail label="Licence" value={licence} />
+        <Detail label="NRDS ID" value={profile?.nrdsNumber ?? null} />
+        <Detail label="MLS agent ID" value={mlsId} />
+        <Detail label="MLS or board" value={mlsBoardLabel(profile?.mlsOrganization)} />
+      </dl>
+
+      {profile?.biography && (
+        <div>
+          <dt className="text-[10px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">
+            Biography
+          </dt>
+          <dd className="mt-0.5 whitespace-pre-wrap text-sm text-foreground">
+            {profile.biography}
+          </dd>
+        </div>
+      )}
+
+      {mlsId && (
+        <p className="text-[12px] text-muted-foreground">
+          MLS identity is self-reported —{" "}
+          <span className="font-medium text-foreground">
+            {mlsStatusLabel(profile?.mlsVerificationStatus ?? "unverified")}
+          </span>
+          .
+        </p>
+      )}
+
+      <Button className="h-10 w-full min-w-0 px-3 text-[13px] sm:w-auto" onClick={onEdit}>
+        <Pencil aria-hidden />
+        <span className="truncate">Edit profile</span>
+      </Button>
     </div>
   );
 }

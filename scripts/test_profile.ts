@@ -3700,16 +3700,41 @@ const ALLOWED_ENV = {
     // ONE editor. Every entry point routes to the settings page.
     const dcardSrc = readFileSync("components/profile/digital-business-card.tsx", "utf8");
     check("the card's edit action always routes to settings",
-      dcardSrc.includes("`${ROUTES.settings}?tab=profile`") &&
+      dcardSrc.includes("${ROUTES.settings}?tab=profile") &&
         !dcardSrc.includes("onEdit"));
     check("navigating to the editor closes the sheet behind it",
-      /href=\{`\$\{ROUTES\.settings\}\?tab=profile`\}[\s\S]{0,120}onOpenChange\(false\)/.test(dcardSrc));
+      /href=\{`\$\{ROUTES\.settings\}\?tab=profile[^`]*`\}[\s\S]{0,120}onOpenChange\(false\)/.test(dcardSrc));
     const home = readFileSync("components/home/home-identity-card.tsx", "utf8");
     check("the Home card's edit action routes to the same page",
-      home.includes("`${ROUTES.settings}?tab=profile`"));
+      home.includes("${ROUTES.settings}?tab=profile"));
     const section = readFileSync("components/settings/profile-section.tsx", "utf8");
     check("the settings page hosts the one editor",
       section.includes("<ProfileEditor"));
+
+    // Editing is a MODE. A finished save must collapse back to the record,
+    // or the form sits on top of what it just wrote and looks unfinished.
+    check("the page shows the record by default",
+      section.includes("<ProfileRecord"));
+    check("arriving from an Edit button opens edit mode",
+      /searchParams\.get\("edit"\) === "1"/.test(section));
+    check("saving leaves edit mode",
+      /onSaved=\{\(profile\) => \{[\s\S]{0,240}finishEditing\(\)/.test(section));
+    check("saving also clears the edit flag from the URL",
+      /router\.replace\(`\$\{ROUTES\.settings\}\?tab=profile`/.test(section));
+    check("the record offers a way back into editing",
+      /onEdit=\{\(\) => setEditing\(true\)\}/.test(section));
+    check("the record omits empty fields rather than listing blanks",
+      /if \(!value\) return null;/.test(section));
+    check("the record renders catalogue labels, not stored keys",
+      section.includes("titleLabel(") && section.includes("mlsBoardLabel("));
+    check("the record still says MLS is unverified",
+      section.includes("mlsStatusLabel("));
+
+    // Both entry points ask for edit mode, so the buttons do what they say.
+    check("the Home card's edit button opens edit mode",
+      home.includes("?tab=profile&edit=1"));
+    check("the digital card's edit button opens edit mode",
+      dcardSrc.includes("?tab=profile&edit=1"));
     check("the settings editor loads the profile itself",
       section.includes('apiPath("/api/profile")'));
     check("its load effect cannot abort itself",

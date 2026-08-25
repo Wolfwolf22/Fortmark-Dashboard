@@ -248,7 +248,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
             // making the same request lower down — one ask, not two.
             hasMeasuredCompletion && (
               <Link
-                href={`${ROUTES.settings}?tab=profile`}
+                href={`${ROUTES.settings}?tab=profile&edit=1`}
                 className="mt-1 block truncate text-[13px] text-foreground/70 underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Complete your professional profile
@@ -352,7 +352,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
       {hasMeasuredCompletion ? (
         // STATE B — a real, non-zero score from the completion service.
         <Link
-          href={`${ROUTES.settings}?tab=profile`}
+          href={`${ROUTES.settings}?tab=profile&edit=1`}
           className="group -mx-1 rounded-lg px-1 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="flex items-baseline justify-between text-[13px]">
@@ -383,7 +383,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
         // STATE A — no record, or a genuine zero. A callout, never an empty
         // track: a 0%-wide bar reads as broken rather than as a measurement.
         <Link
-          href={`${ROUTES.settings}?tab=profile`}
+          href={`${ROUTES.settings}?tab=profile&edit=1`}
           className="block rounded-panel border border-border bg-foreground/[0.03] p-4 transition-colors hover:border-foreground/45 hover:bg-foreground/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="flex items-center gap-2 text-[13px] font-semibold text-foreground">
@@ -408,7 +408,7 @@ export function HomeIdentityCard({ data }: { data: HomeIdentityCardData }) {
             pinned rail at 1280px, which leaves each of these about 130px. */}
         <div className="grid grid-cols-2 gap-2">
           <Button asChild size="lg" className="h-10 min-w-0 px-3 text-[13px]">
-            <Link href={`${ROUTES.settings}?tab=profile`}>
+            <Link href={`${ROUTES.settings}?tab=profile&edit=1`}>
               <SquarePen />
               <span className="truncate">Edit profile</span>
             </Link>
