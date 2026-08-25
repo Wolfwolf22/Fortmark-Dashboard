@@ -1,5 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 import { signInUrl } from "@/lib/routes";
 
 /**
@@ -59,7 +59,77 @@ function getAuthorizedParties(): string[] {
   return Array.from(parties);
 }
 
-export default clerkMiddleware(
+/**
+ * Clerk cookies cleared when a session cannot be verified.
+ *
+ * `__session` carries the JWT itself; the other two are the client-side hints
+ * Clerk uses to decide whether it believes a session exists. Clearing the JWT
+ * alone leaves those hints behind, and the browser is then told it is signed
+ * in while every request is rejected — which is its own kind of loop.
+ */
+const CLERK_SESSION_COOKIES = ["__session", "__client_uat", "__clerk_db_jwt"];
+
+/**
+ * Marks that we have already cleared a bad session for this browser.
+ *
+ * Without it, an unverifiable cookie that the browser keeps re-presenting
+ * would bounce between here and sign-in forever. One reset is a repair; a
+ * second means clearing did not help, and continuing to redirect would be a
+ * loop rather than a fix.
+ */
+const RESET_MARKER = "fm_auth_reset";
+
+/**
+ * Recover from an authentication failure instead of crashing.
+ *
+ * Clerk throws when it cannot verify the session token it was handed — most
+ * commonly a `jwk-kid-mismatch`, where the cookie was minted by a different
+ * Clerk instance than the one this deployment's secret key belongs to. That is
+ * a foreseeable state: keys get rotated, environments get re-pointed, and a
+ * browser can hold a cookie from any of them.
+ *
+ * Before this, the throw escaped the middleware, and Vercel surfaced it as
+ * `MIDDLEWARE_INVOCATION_FAILED` — a hard 500 on EVERY route, including ones
+ * that need no session at all. An unverifiable cookie should mean "you are not
+ * signed in", never "the dashboard is down".
+ *
+ * This never widens access: the only outcomes are a signed-out redirect or an
+ * error response. No request reaches protected content because of it.
+ */
+function recoverFromAuthFailure(req: NextRequest): NextResponse {
+  // Already tried once for this browser. Clearing did not take, so redirecting
+  // again would just loop; say so plainly instead.
+  if (req.cookies.get(RESET_MARKER)) {
+    return new NextResponse(
+      "Your session could not be verified. Please close this tab, clear cookies for this site, and sign in again.",
+      { status: 503, headers: { "Cache-Control": "no-store", "Content-Type": "text/plain; charset=utf-8" } }
+    );
+  }
+
+  const returnPath = `${req.nextUrl.basePath}${req.nextUrl.pathname}${req.nextUrl.search}`;
+  const response = NextResponse.redirect(
+    new URL(signInUrl(returnPath), req.nextUrl.origin)
+  );
+
+  // Drop the unusable credentials so the retry arrives as a clean anonymous
+  // request rather than re-presenting the same rejected token.
+  for (const name of CLERK_SESSION_COOKIES) {
+    response.cookies.delete({ name, path: "/" });
+  }
+  response.cookies.set(RESET_MARKER, "1", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: req.nextUrl.protocol === "https:",
+    path: "/",
+    // Long enough to cover the sign-in round trip, short enough that a later
+    // genuine failure is treated as new rather than as a repeat.
+    maxAge: 120,
+  });
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
+
+const clerkHandler = clerkMiddleware(
   async (auth, req) => {
     if (isPublicRoute(req)) return;
 
@@ -91,6 +161,23 @@ export default clerkMiddleware(
   },
   { authorizedParties: getAuthorizedParties() }
 );
+
+/**
+ * The exported middleware.
+ *
+ * Wraps Clerk rather than replacing it, so every authorization rule above is
+ * unchanged — this only decides what happens when Clerk itself throws.
+ */
+export default async function middleware(req: NextRequest, event: NextFetchEvent) {
+  try {
+    return await clerkHandler(req, event);
+  } catch {
+    // Deliberately does not inspect or log the error: Clerk's message embeds
+    // the session token's key id and instance identifiers, and this runs on
+    // every request. The recovery is the same whatever the cause.
+    return recoverFromAuthFailure(req);
+  }
+}
 
 export const config = {
   matcher: [
