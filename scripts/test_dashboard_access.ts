@@ -16,7 +16,9 @@ import {
   userRef,
 } from "../lib/auth/dashboard-access.ts";
 import {
+  ACCOUNT_PATH,
   BASE_PATH,
+  accountUrl,
   FALLBACK_PLATE,
   apiPath,
   assetPath,
@@ -157,6 +159,22 @@ check("api chat path gains the basePath prefix", apiPath("/api/chat") === "/dash
 check("already-prefixed api path is untouched", apiPath("/dashboard/api/profile") === "/dashboard/api/profile");
 check("relative api path is not mangled", apiPath("api/profile") === "api/profile");
 check("api path is basePath-consistent", apiPath("/api/x").startsWith(`${BASE_PATH}/`));
+
+// --- Account management links leave the zone correctly ---------------------
+{
+  const section = readFileSync("components/settings/profile-section.tsx", "utf8");
+  check("account settings links to the account route, not the landing page",
+    section.includes("accountUrl()") && !section.includes("portalUrl()"));
+  check("the account path is the one the portal actually serves",
+    ACCOUNT_PATH === "/account");
+  // The dashboard basePath must NOT be applied — /account is a portal route.
+  check("the account url is not prefixed with the dashboard basePath",
+    !accountUrl().includes(BASE_PATH));
+  check("the account url ends at the account route",
+    accountUrl().endsWith(ACCOUNT_PATH));
+  check("an unset origin still yields a portal-root-relative path",
+    accountUrl().startsWith("/") || /^https?:\/\//.test(accountUrl()));
+}
 
 // --- Middleware survives an unverifiable session ---------------------------
 //

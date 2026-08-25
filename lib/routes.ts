@@ -91,6 +91,25 @@ export function portalUrl(): string {
 }
 
 /**
+ * The portal's account-management route.
+ *
+ * Name, email and avatar are owned by the FortMark account, not the
+ * professional profile, so "change them" has to leave this zone. The dashboard
+ * previously linked to `portalUrl()` — the marketing landing page — because
+ * account management did not exist yet. It does now, so the link goes to it.
+ *
+ * Falls back to a root-relative path when NEXT_PUBLIC_APP_URL is unset, which
+ * is correct rather than merely tolerable: the portal and this dashboard share
+ * one origin, and the dashboard's basePath does not apply to an absolute path,
+ * so `/account` already resolves to the portal zone.
+ */
+export const ACCOUNT_PATH = "/account";
+
+export function accountUrl(): string {
+  return `${portalOrigin()}${ACCOUNT_PATH}`;
+}
+
+/**
  * Prefixes a repo-root-relative public asset path with the zone `basePath`.
  *
  * Next rewrites `<Link href>`, `router.push()` and `next/image` automatically,

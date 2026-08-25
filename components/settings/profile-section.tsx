@@ -21,7 +21,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useSessionUser } from "@/components/layout/session-user";
-import { portalUrl } from "@/lib/routes";
+import { accountUrl } from "@/lib/routes";
 
 /** One read-only field, styled to match the Input height it replaces. */
 function ReadOnlyField({
@@ -73,7 +73,7 @@ export function ProfileSection() {
           </p>
 
           <a
-            href={portalUrl()}
+            href={accountUrl()}
             className="inline-flex h-9 items-center gap-2 rounded-lg border border-input bg-card px-4 text-sm font-semibold text-foreground transition-colors hover:bg-accent"
           >
             Open account settings
