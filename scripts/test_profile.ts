@@ -3758,6 +3758,47 @@ const ALLOWED_ENV = {
       route.includes("getHomeIdentityCard(session.user)") && route.includes("card,"));
   }
 
+  // --- A save must reach the top bar, not just the page --------------------
+  //
+  // The identity strip is rendered by the LAYOUT, which Next reuses across
+  // client navigations. A client-side fetch updates the page but leaves the
+  // layout showing whatever it rendered on first load — so a new photo or
+  // display name appeared everywhere except the corner the user was watching.
+  //
+  // Both halves are needed: revalidatePath clears the server cache, and
+  // router.refresh makes the already-rendered client tree re-request it.
+  {
+    const profileRoute = readFileSync("app/api/profile/route.ts", "utf8");
+    const imageRoute = readFileSync("app/api/profile/image/route.ts", "utf8");
+    const upload = readFileSync("components/profile/profile-image-upload.tsx", "utf8");
+    const editor = readFileSync("components/profile/profile-editor.tsx", "utf8");
+
+    check("a profile edit revalidates the layout's route",
+      profileRoute.includes('revalidatePath("/")'));
+    check("a photo upload revalidates the layout's route",
+      imageRoute.includes('revalidatePath("/")'));
+    check("both write paths also revalidate settings",
+      profileRoute.includes('revalidatePath("/settings")') &&
+        imageRoute.includes('revalidatePath("/settings")'));
+
+    check("a successful upload refreshes the client tree",
+      /onUploaded\?\.\(url\);[\s\S]{0,400}router\.refresh\(\)/.test(upload));
+    check("a successful save refreshes the client tree",
+      /onSaved\(body\.profile\);[\s\S]{0,300}router\.refresh\(\)/.test(editor));
+    check("neither refreshes on a failed write",
+      !/setState\(\{ status: "error" \}\)[\s\S]{0,120}router\.refresh/.test(upload) &&
+        !/status: "error"[\s\S]{0,160}router\.refresh/.test(editor));
+
+    // The two surfaces must agree on WHICH image wins, or a refresh would
+    // just show a different stale answer.
+    const display = readFileSync("lib/profile/display.ts", "utf8");
+    check("the uploaded image outranks the Clerk avatar",
+      /image\.activeImageUrl[\s\S]{0,200}image\.clerkImageUrl[\s\S]{0,200}session\.imageUrl/.test(display));
+    const homeCard = readFileSync("lib/profile/home-card.ts", "utf8");
+    check("the home card resolves the image through the same function",
+      homeCard.includes("resolveImageUrl(image, session)"));
+  }
+
   // --- Wizard lifecycle ----------------------------------------------------
   check("a step only advances after the server confirms",
     wizardSrc.includes("if (!ok) return; // never advance past a failed write"));

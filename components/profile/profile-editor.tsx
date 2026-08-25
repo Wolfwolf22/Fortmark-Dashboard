@@ -13,6 +13,7 @@
  * "(954) 555-0100" comes back as "+19545550100".
  */
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Lock } from "lucide-react";
@@ -140,6 +141,7 @@ export function ProfileEditor({
   /** Server-reported. Off ⇒ the photo control says so instead of failing. */
   imageUploadEnabled?: boolean;
 }) {
+  const router = useRouter();
   const [form, setForm] = React.useState<FormState>(() => toForm(initial));
   const [completion, setCompletion] = React.useState(initial?.completion ?? 0);
   const [save, setSave] = React.useState<SaveState>({ status: "idle" });
@@ -204,6 +206,9 @@ export function ProfileEditor({
       setCompletion(body.completion);
       setSave({ status: "saved", licenseReset: body.licenseReset });
       onSaved(body.profile);
+      // Same reason as the photo: the layout's identity strip will not pick up
+      // a new display name until the client re-requests the tree.
+      router.refresh();
     } catch {
       setSave({
         status: "error",

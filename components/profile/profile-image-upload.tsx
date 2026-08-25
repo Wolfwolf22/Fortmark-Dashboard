@@ -17,6 +17,7 @@
  * only one that counts.
  */
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Camera, Loader2, Upload } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,7 @@ export function ProfileImageUpload({
   disabled,
   uploadEnabled = true,
 }: ProfileImageUploadProps) {
+  const router = useRouter();
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const [activeUrl, setActiveUrl] = React.useState<string | null>(currentUrl);
@@ -168,6 +170,11 @@ export function ProfileImageUpload({
         setActiveUrl(url);
         setPreview(null);
         onUploaded?.(url);
+        // `revalidatePath` on the server clears the CACHE; it does not make an
+        // already-rendered client tree re-request it. The top bar lives in the
+        // layout, so without this the new photo appears on the page but the
+        // avatar in the corner keeps the old one until a hard reload.
+        router.refresh();
       }
     } catch {
       setError("That upload did not finish. Please try again.");

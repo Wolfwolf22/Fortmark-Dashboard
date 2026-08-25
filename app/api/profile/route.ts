@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
 import { decideAccess, isConfigFailure } from "@/lib/auth/dashboard-access";
 import { professionalProfileUiEnabled, profileImageUploadEnabled } from "@/lib/flags";
@@ -130,6 +131,15 @@ export async function PATCH(request: NextRequest) {
   }
 
   const record = await getOwnProfile(caller.clerkUserId);
+
+  // The identity strip in the top bar is rendered by the LAYOUT, which is
+  // shared across every page. Without this the display name and avatar there
+  // keep whatever the layout rendered on first load, so a save appears to
+  // work everywhere except the corner the user is looking at. The image route
+  // already did this; a profile edit changes the same projection.
+  revalidatePath("/");
+  revalidatePath("/settings");
+
   return NextResponse.json(
     {
       profile: record ? toProfileDetail(record.profile) : null,
