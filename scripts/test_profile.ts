@@ -3709,6 +3709,24 @@ const ALLOWED_ENV = {
     check("sign out is offered on the card", drawer.includes("showSignOut"));
     check("sign out is also offered while editing", drawer.includes("<SignOutLink"));
 
+    // Card actions are one even 2x2 block: same weight, width and height, so
+    // nothing floats out of line. A mix of outlined and borderless buttons
+    // read as misaligned even when their boxes were not.
+    {
+      const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
+      const actions = dcard.slice(dcard.indexOf('grid grid-cols-2 gap-2 border-t'));
+      check("the redundant Close action is gone",
+        !/>\s*Close\s*</.test(actions));
+      check("every action shares the same variant and size",
+        (actions.match(/size="sm" variant="outline"/g) ?? []).length >= 3);
+      check("every action fills and centres its cell",
+        (actions.match(/w-full justify-center/g) ?? []).length >= 3);
+      check("sign out matches the button classes rather than approximating them",
+        /h-8 w-full items-center justify-center[\s\S]{0,120}border border-input/.test(actions));
+      check("action labels truncate rather than overflowing their cell",
+        (actions.match(/<span className="truncate">/g) ?? []).length >= 4);
+    }
+
     // Home's card is a shareable artefact — it must not gain account actions.
     const dcardSrc = readFileSync("components/profile/digital-business-card.tsx", "utf8");
     check("sign out on the card is opt-in, not default",

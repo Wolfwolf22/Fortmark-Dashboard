@@ -397,37 +397,44 @@ export function DigitalBusinessCard({
           </div>
         </ScrollArea>
 
+        {/* An even 2x2 block. Every action gets the same weight, width and
+            height, so nothing floats out of line — a mix of outlined and
+            borderless buttons read as misaligned even when their boxes were
+            not.
+
+            There is no "Close": the sheet already has a close control in its
+            corner, and a second one only competed with the actions people
+            actually came here for. */}
         <div className="grid grid-cols-2 gap-2 border-t border-border p-4">
-          <Button size="sm" variant="outline" onClick={copyContact}>
+          <Button size="sm" variant="outline" className="w-full justify-center" onClick={copyContact}>
             {copied ? <Check /> : <Copy />}
-            {copied ? "Copied" : "Copy contact"}
+            <span className="truncate">{copied ? "Copied" : "Copy contact"}</span>
           </Button>
-          <Button size="sm" variant="outline" onClick={downloadVCard}>
+          <Button size="sm" variant="outline" className="w-full justify-center" onClick={downloadVCard}>
             <Download />
-            Download vCard
+            <span className="truncate">Download vCard</span>
           </Button>
           {onEdit ? (
-            <Button size="sm" variant="ghost" onClick={onEdit}>
+            <Button size="sm" variant="outline" className="w-full justify-center" onClick={onEdit}>
               <SquarePen />
-              Edit profile
+              <span className="truncate">Edit profile</span>
             </Button>
           ) : (
-            <Button asChild size="sm" variant="ghost">
+            <Button asChild size="sm" variant="outline" className="w-full justify-center">
               <Link href={`${ROUTES.settings}?tab=profile`}>
                 <SquarePen />
-                Edit profile
+                <span className="truncate">Edit profile</span>
               </Link>
             </Button>
           )}
           {showSignOut && (
-            <SignOutLink className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold transition-colors hover:bg-accent">
+            /* Matches the Button outline + sm classes exactly, so it sits in
+               the grid as an equal rather than an approximation. */
+            <SignOutLink className="inline-flex h-8 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-input bg-card px-3 text-[13px] font-semibold text-foreground transition-colors hover:bg-accent">
               <LogOut aria-hidden className="size-4 shrink-0" />
-              Sign out
+              <span className="truncate">Sign out</span>
             </SignOutLink>
           )}
-          <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-            Close
-          </Button>
           <p aria-live="polite" className="sr-only">
             {copied ? "Contact information copied to the clipboard" : ""}
           </p>
