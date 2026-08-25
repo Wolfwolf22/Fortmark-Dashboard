@@ -24,14 +24,24 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ProfileEditor } from "@/components/profile/profile-editor";
+import { DigitalBusinessCard } from "@/components/profile/digital-business-card";
+import { SignOutLink } from "@/components/layout/sign-out-link";
+import { Button } from "@/components/ui/button";
+import { IdCard, LogOut } from "lucide-react";
 import type { ProfileDetail, ProfileDisplay } from "@/lib/profile/display";
+import type { HomeIdentityCard } from "@/lib/profile/home-card";
 import { apiPath } from "@/lib/routes";
 import { initials } from "@/lib/utils";
 
 type LoadState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "ready"; profile: ProfileDetail | null; imageUploadEnabled: boolean }
+  | {
+      status: "ready";
+      profile: ProfileDetail | null;
+      imageUploadEnabled: boolean;
+      card: HomeIdentityCard | null;
+    }
   | { status: "error" };
 
 export function ProfileDrawer({
@@ -44,12 +54,33 @@ export function ProfileDrawer({
   display: ProfileDisplay;
 }) {
   const [state, setState] = React.useState<LoadState>({ status: "idle" });
+  const [cardOpen, setCardOpen] = React.useState(false);
 
+  /**
+   * Load the profile whenever the drawer opens.
+   *
+   * `open` is the ONLY dependency, and that is the fix for a drawer that could
+   * never finish loading. The effect previously also depended on
+   * `state.status` while calling `setState({ status: "loading" })` inside
+   * itself: the state change re-ran the effect, React fired the previous
+   * cleanup, the cleanup aborted the in-flight request, the catch swallowed
+   * the AbortError as "the drawer closed", and the re-run bailed out because
+   * the status was no longer "idle". Every open aborted its own fetch and sat
+   * on "Loading your profile…" forever.
+   *
+   * A local `cancelled` flag now distinguishes "this effect was torn down"
+   * from "the request failed", so a genuine failure still surfaces as an
+   * error rather than a permanent spinner.
+   */
   React.useEffect(() => {
-    if (!open || state.status !== "idle") return;
+    if (!open) return;
 
     const controller = new AbortController();
-    setState({ status: "loading" });
+    let cancelled = false;
+
+    // Keep whatever is already loaded on screen while refreshing, so
+    // reopening the drawer does not flash a spinner over good data.
+    setState((prev) => (prev.status === "ready" ? prev : { status: "loading" }));
 
     void (async () => {
       try {
@@ -60,25 +91,31 @@ export function ProfileDrawer({
         if (!response.ok) throw new Error(String(response.status));
         const body = (await response.json()) as {
           profile: ProfileDetail | null;
+          card?: HomeIdentityCard | null;
           imageUploadEnabled?: boolean;
         };
+        if (cancelled) return;
         setState({
           status: "ready",
           profile: body.profile ?? null,
+          card: body.card ?? null,
           // Absent means "an older server that did not report it" — assume
           // enabled and let the upload route's 404 be the answer, which is
           // exactly the pre-existing behaviour.
           imageUploadEnabled: body.imageUploadEnabled !== false,
         });
       } catch (error) {
-        // An aborted fetch is the drawer closing, not a failure.
-        if ((error as Error)?.name === "AbortError") return;
+        // Torn down, not failed — the drawer closed or the effect re-ran.
+        if (cancelled || (error as Error)?.name === "AbortError") return;
         setState({ status: "error" });
       }
     })();
 
-    return () => controller.abort();
-  }, [open, state.status]);
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [open]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -122,13 +159,43 @@ export function ProfileDrawer({
                     status: "ready",
                     profile,
                     imageUploadEnabled: state.imageUploadEnabled,
+                    card: state.card,
                   })
                 }
               />
             )}
           </div>
         </ScrollArea>
+
+        {/* Account actions. Sign out lives here because this strip is now the
+            only account control — the duplicate menu in the nav rail's bottom
+            corner was removed. */}
+        <div className="flex shrink-0 items-center gap-2 border-t border-border p-5">
+          <Button
+            variant="outline"
+            className="h-10 min-w-0 flex-1 border-foreground/45 px-3 text-[13px]"
+            onClick={() => setCardOpen(true)}
+            disabled={state.status !== "ready" || !state.card}
+          >
+            <IdCard aria-hidden />
+            <span className="truncate">Digital card</span>
+          </Button>
+          <SignOutLink className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-foreground/45 px-3 text-[13px] font-semibold transition-colors hover:bg-accent">
+            <LogOut aria-hidden className="size-4 shrink-0" />
+            <span className="truncate">Sign out</span>
+          </SignOutLink>
+        </div>
       </SheetContent>
+
+      {/* Rendered outside SheetContent so the card is not nested inside the
+          drawer's focus trap — two stacked traps fight over focus. */}
+      {state.status === "ready" && state.card && (
+        <DigitalBusinessCard
+          data={state.card}
+          open={cardOpen}
+          onOpenChange={setCardOpen}
+        />
+      )}
     </Sheet>
   );
 }

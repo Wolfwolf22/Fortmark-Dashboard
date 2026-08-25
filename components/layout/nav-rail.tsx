@@ -7,7 +7,6 @@ import { usePathname } from "next/navigation";
 import { Pin, PinOff, Settings } from "lucide-react";
 import { NAV_ITEMS } from "./nav-items";
 import { NotificationsBell } from "./notifications-bell";
-import { UserMenu } from "./user-menu";
 import { useUiStore } from "@/lib/stores/ui";
 import { assetPath } from "@/lib/routes";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -200,7 +199,10 @@ export function NavRail() {
           </Link>
         </RailAction>
 
-        <UserMenu expanded={expanded} />
+        {/* The account control lives in the top bar's identity strip, which
+            carries the avatar, the profile drawer, the Digital Card and sign
+            out. A second one down here was a duplicate route to the same
+            actions in a corner people do not look for them. */}
       </div>
     </aside>
   );

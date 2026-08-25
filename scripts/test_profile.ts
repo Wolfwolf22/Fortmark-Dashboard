@@ -3642,6 +3642,51 @@ const ALLOWED_ENV = {
     !ONBOARDING_STEPS.flatMap((st) => st.fields).some((f) =>
       ["role", "status"].includes(String(f))));
 
+  // --- Profile drawer must be able to finish loading -----------------------
+  //
+  // The drawer sat on "Loading your profile…" forever. The effect called
+  // setState({status:"loading"}) while `state.status` was in its own
+  // dependency array: the state change re-ran the effect, React fired the
+  // previous cleanup, the cleanup aborted the in-flight fetch, the catch
+  // swallowed the AbortError as "the drawer closed", and the re-run bailed
+  // because status was no longer "idle". It aborted its own request every
+  // time and could never recover.
+  {
+    const drawer = readFileSync("components/profile/profile-drawer.tsx", "utf8");
+
+    check("the load effect depends only on `open`",
+      /\}, \[open\]\);/.test(drawer));
+    check("the effect no longer depends on the state it sets",
+      !/\}, \[open, state\.status\]\);/.test(drawer));
+    check("a teardown flag distinguishes cancelled from failed",
+      drawer.includes("let cancelled = false") && drawer.includes("cancelled = true"));
+    check("a genuine failure still surfaces as an error",
+      /if \(cancelled \|\| \(error as Error\)\?\.name === "AbortError"\) return;[\s\S]{0,120}setState\(\{ status: "error" \}\)/.test(drawer));
+    check("a reopen does not flash a spinner over loaded data",
+      /prev\.status === "ready" \? prev : \{ status: "loading" \}/.test(drawer));
+
+    // Account actions moved here from the rail's bottom corner.
+    check("the drawer offers sign out", drawer.includes("<SignOutLink"));
+    check("the drawer offers the digital card", drawer.includes("<DigitalBusinessCard"));
+    check("the digital card is disabled until its data has loaded",
+      /disabled=\{state\.status !== "ready" \|\| !state\.card\}/.test(drawer));
+    check("the card renders outside the drawer's focus trap",
+      drawer.indexOf("</SheetContent>") < drawer.indexOf("<DigitalBusinessCard"));
+
+    // One account control, not two.
+    const rail = readFileSync("components/layout/nav-rail.tsx", "utf8");
+    check("the duplicate account menu is gone from the rail",
+      !rail.includes("<UserMenu") && !rail.includes('from "./user-menu"'));
+    check("the rail keeps its other bottom actions",
+      rail.includes("NotificationsBell") && rail.includes('href="/settings"'));
+
+    // The card must come from the SAME projection Home uses, or the two
+    // surfaces can disagree about which email and title are published.
+    const route = readFileSync("app/api/profile/route.ts", "utf8");
+    check("the profile route serves the shared card projection",
+      route.includes("getHomeIdentityCard(session.user)") && route.includes("card,"));
+  }
+
   // --- Wizard lifecycle ----------------------------------------------------
   check("a step only advances after the server confirms",
     wizardSrc.includes("if (!ok) return; // never advance past a failed write"));

@@ -3,6 +3,8 @@ import { auth } from "@clerk/nextjs/server";
 import { decideAccess, isConfigFailure } from "@/lib/auth/dashboard-access";
 import { professionalProfileUiEnabled, profileImageUploadEnabled } from "@/lib/flags";
 import { toProfileDetail } from "@/lib/profile/display";
+import { getSession } from "@/lib/auth/session";
+import { getHomeIdentityCard } from "@/lib/profile/shell";
 import { getOwnProfile, updateOwnProfile } from "@/lib/profile/service";
 
 export const runtime = "nodejs";
@@ -65,11 +67,23 @@ export async function GET() {
   if (!caller.ok) return caller.response;
 
   const record = await getOwnProfile(caller.clerkUserId);
+
+  /**
+   * The same card projection Home renders.
+   *
+   * Served from here so the drawer's Digital Card and the Home card cannot
+   * disagree — one projection, one set of rules about which email is
+   * published and which title label is shown. `getHomeIdentityCard` never
+   * throws and never returns null; it degrades to the session-only card.
+   */
+  const session = await getSession();
+  const card = session ? await getHomeIdentityCard(session.user) : null;
+
   if (!record) {
     // No row yet, or the database is unreachable. Either way the drawer shows
     // an empty editable form rather than an error.
     return NextResponse.json(
-      { profile: null, imageUploadEnabled: imageUploadAvailable() },
+      { profile: null, card, imageUploadEnabled: imageUploadAvailable() },
       { headers: NO_STORE }
     );
   }
@@ -77,6 +91,7 @@ export async function GET() {
   return NextResponse.json(
     {
       profile: toProfileDetail(record.profile),
+      card,
       // So the editor's photo control can match what the upload route would
       // actually do. Reported by the SERVER rather than inferred client-side,
       // and it discloses nothing sensitive: a caller can already learn the
