@@ -21,6 +21,7 @@ import {
   type DisplaySourceImage,
 } from "./display.ts";
 import { buildContactLinks, type ContactLink } from "./links.ts";
+import { titleLabel } from "./titles.ts";
 
 /** How a credential's trustworthiness is described to the user. */
 export type CredentialTrust =
@@ -325,7 +326,19 @@ export function toHomeIdentityCard(
     source: "database",
     greetingName: greetingNameFor(profile, session),
     displayName: trimmed(profile?.preferredDisplayName) ?? session.name,
-    professionalTitle: trimmed(profile?.professionalTitle),
+    // The stored value is a stable catalogue key ("broker_associate"), so it
+    // must be rendered through the catalogue on the way out. Without this the
+    // card, the digital card and the vCard all printed the raw key at a
+    // human — "real_estate_sales_associate" instead of "Real Estate Sales
+    // Associate".
+    //
+    // Only the DISPLAY projections translate. `toProfileDetail` and the
+    // onboarding context deliberately keep the raw value, because the editor
+    // and the wizard feed it back into a <select> that matches on value.
+    //
+    // A legacy free-text title is returned unchanged, so rows written before
+    // the catalogue existed still read as whatever their owner typed.
+    professionalTitle: titleLabel(trimmed(profile?.professionalTitle)),
     roleLabel: session.role,
     brokerageOffice: trimmed(profile?.brokerageOffice),
     locationDisplay: trimmed(profile?.locationDisplay),

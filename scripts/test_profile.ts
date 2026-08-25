@@ -3446,6 +3446,37 @@ const ALLOWED_ENV = {
   check("the title hint says it does not affect permissions",
     /permission/i.test(PROFILE_FIELDS.professionalTitle.hint ?? ""));
 
+  // Stored value vs displayed label. Getting this wrong printed the raw
+  // catalogue key at a human on the Home card and the digital card.
+  {
+    const card = toHomeIdentityCard(
+      SESSION,
+      { createdAt: "2026-08-01T00:00:00.000Z", primaryEmail: "a@example.com", status: "active" },
+      { preferredDisplayName: "Test Test", professionalTitle: "real_estate_sales_associate" },
+      null,
+      new Date("2026-08-25T00:00:00Z")
+    );
+    check("the card renders the title label, not the stored key",
+      card.professionalTitle === "Real Estate Sales Associate");
+    check("no underscore key leaks into the card projection",
+      !JSON.stringify(card).includes("real_estate_sales_associate"));
+
+    const legacy = toHomeIdentityCard(
+      SESSION,
+      { createdAt: "2026-08-01T00:00:00.000Z", primaryEmail: "a@example.com", status: "active" },
+      { preferredDisplayName: "Test Test", professionalTitle: "Realtor\u00ae, GRI" },
+      null,
+      new Date("2026-08-25T00:00:00Z")
+    );
+    check("a legacy free-text title still renders as typed",
+      legacy.professionalTitle === "Realtor\u00ae, GRI");
+
+    // The editor and wizard need the RAW value so the select can match it.
+    check("the editor projection keeps the raw stored value",
+      toProfileDetail({ professionalTitle: "broker_associate" }).professionalTitle ===
+        "broker_associate");
+  }
+
   // Step 2 saves what it should, and nothing else.
   {
     const out = normalizeStep(stepByNumber(2)!, {
