@@ -6,6 +6,7 @@
  * states.
  */
 import { useState } from "react";
+import { SampleNotice } from "@/components/data/sample-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,6 +50,7 @@ export function IntegrationsSection() {
         <CardDescription>
           Connect the tools this workspace draws from.
         </CardDescription>
+        <SampleNotice domain="integrations" className="mt-2" />
       </CardHeader>
       <CardContent>
         <div className="divide-y divide-border">

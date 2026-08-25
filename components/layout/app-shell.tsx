@@ -7,10 +7,13 @@
  * before any of this renders.
  */
 import * as React from "react";
+import { usePathname } from "next/navigation";
 import { NavRail } from "@/components/layout/nav-rail";
 import { TopBar } from "@/components/layout/top-bar";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { SessionUserProvider } from "@/components/layout/session-user";
+import { SampleNotice } from "@/components/data/sample-data";
+import { domainForPath } from "@/lib/data/provenance";
 import { useUiStore } from "@/lib/stores/ui";
 import type { PublicSessionUser } from "@/lib/auth/session";
 import type { ShellProfile } from "@/lib/profile/display";
@@ -25,6 +28,13 @@ export function AppShell({
   profile: ShellProfile;
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+  // One placement covers every route: the page title lives in the top bar, so
+  // this sits directly beneath it. Home and Settings deliberately return null
+  // — they mix real and sample data, so their sample parts are labelled
+  // individually rather than by a page-wide claim that would be false on the
+  // real half.
+  const sampleDomain = domainForPath(pathname);
   const railPinnedStored = useUiStore((s) => s.railPinned);
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
@@ -41,7 +51,12 @@ export function AppShell({
           )}
         >
           <TopBar profile={profile} />
-          <main className="flex min-h-0 flex-1 flex-col p-6">{children}</main>
+          <main className="flex min-h-0 flex-1 flex-col p-6">
+            {sampleDomain && (
+              <SampleNotice domain={sampleDomain} className="mb-4 shrink-0" />
+            )}
+            {children}
+          </main>
         </div>
         <CommandPalette />
       </div>

@@ -19,6 +19,7 @@ export default function PipelineValueWidget() {
 
   return (
     <WidgetCard
+      domain="transactions"
       icon={Layers}
       title="Pipeline value"
       preset={preset}

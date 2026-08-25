@@ -35,6 +35,7 @@ export default function FeaturedListingWidget() {
 
   return (
     <WidgetCard
+      domain="listings"
       icon={Building2}
       title="Featured listing"
       preset={null}

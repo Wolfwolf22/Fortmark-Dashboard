@@ -5,6 +5,7 @@
  * client-side only until the account service connects.
  */
 import { useState } from "react";
+import { SampleNotice } from "@/components/data/sample-data";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -50,6 +51,7 @@ function BrokerageForm({ brokerage }: { brokerage: BrokerageProfile }) {
         <CardDescription>
           Office details used on documents and client-facing pages.
         </CardDescription>
+        <SampleNotice domain="brokerage" className="mt-2" />
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-5">

@@ -28,7 +28,8 @@ export default function ComplianceWidget() {
   const { data, loading, error } = useQuery(() => getComplianceItems(), []);
 
   return (
-    <WidgetCard icon={ShieldAlert} title="Needs attention" preset={null}>
+    <WidgetCard
+      domain="market" icon={ShieldAlert} title="Needs attention" preset={null}>
       <ComplianceBody items={data} loading={loading} error={error} />
     </WidgetCard>
   );

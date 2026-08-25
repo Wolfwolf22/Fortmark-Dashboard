@@ -9,6 +9,15 @@
  */
 import { readFileSync } from "node:fs";
 import {
+  canWrite,
+  domainForPath,
+  isSample,
+  provenanceOf,
+  sampleDomains,
+  sampleNotice,
+  writeDisabledReason,
+} from "../lib/data/provenance.ts";
+import {
   decideAccess,
   hasClerkKeys,
   isConfigFailure,
@@ -233,6 +242,136 @@ check("api path is basePath-consistent", apiPath("/api/x").startsWith(`${BASE_PA
     /clerkHandler = clerkMiddleware\([\s\S]{0,600}const \{ userId \} = await auth\(\)/.test(mw));
   check("authorized parties are still passed to clerk",
     mw.includes("authorizedParties: getAuthorizedParties()"));
+}
+
+// --- Sample data must never pass as real -----------------------------------
+//
+// The dashboard renders a real professional profile beside fabricated
+// pipelines, listings and commissions. Rendered identically they are
+// indistinguishable, and a $10.8M pipeline looks exactly like a real business.
+// These assertions keep the labelling truthful in BOTH directions: no
+// fabricated surface unlabelled, and no real surface mislabelled.
+{
+  // The one real domain, and it must stay real.
+  check("the professional profile is live, not sample", !isSample("profile"));
+  check("the profile is never in the sample list", !sampleDomains().includes("profile"));
+  check("the profile carries no sample notice", sampleNotice("profile") === "");
+  check("the profile is writable", canWrite("profile"));
+
+  // Everything else is fabricated today and must say so.
+  for (const domain of ["transactions", "listings", "leads", "calendar",
+                        "documents", "reports", "messages", "ai", "market",
+                        "agents", "team", "brokerage", "integrations"] as const) {
+    check(`${domain} is declared sample`, isSample(domain));
+    check(`${domain} has a notice`, sampleNotice(domain).length > 0);
+    check(`${domain} refuses writes`, !canWrite(domain));
+    check(`${domain} explains why writes are refused`,
+      writeDisabledReason(domain).startsWith("Available once"));
+  }
+
+  // The notice has to state the CONSEQUENCE, not just the category.
+  check("the notice says it is not the user's live business",
+    /not your live business/.test(sampleNotice("transactions")));
+  check("the notice says nothing is saved",
+    /nothing here is saved/i.test(sampleNotice("transactions")));
+
+  // provenance and writability are the same fact, so they cannot disagree.
+  for (const domain of sampleDomains()) {
+    check(`${domain} cannot be sample and writable at once`,
+      provenanceOf(domain) === "sample" && !canWrite(domain));
+  }
+
+  // Route mapping. Mixed pages return null ON PURPOSE — a page-wide "this is
+  // sample data" claim would be false on their real half.
+  check("a fully-sample route maps to its domain",
+    domainForPath("/transactions") === "transactions");
+  check("a nested route maps too", domainForPath("/listings/abc-123") === "listings");
+  check("a trailing slash does not break the match",
+    domainForPath("/leads/") === "leads");
+  check("Home is not labelled page-wide", domainForPath("/") === null);
+  check("Settings is not labelled page-wide", domainForPath("/settings") === null);
+  check("Onboarding is never labelled", domainForPath("/onboarding") === null);
+  check("an unknown route is not labelled", domainForPath("/nope") === null);
+}
+
+// --- Every fabricated surface is wired to the labelling --------------------
+{
+  const widgets = [
+    "closed-volume", "closed", "compliance", "featured-listing", "lead-source",
+    "leaderboard", "market-pulse", "pipeline-value", "projected-commission",
+    "transactions-table", "under-contract",
+  ];
+  for (const w of widgets) {
+    const src = readFileSync(`components/home/widgets/${w}.tsx`, "utf8");
+    check(`${w} declares its data source`, /domain="[a-z]+"/.test(src));
+  }
+
+  // Required, not optional — a new widget cannot forget to declare itself.
+  const card = readFileSync("components/widgets/widget-card.tsx", "utf8");
+  check("WidgetCard requires a domain", /\n  domain: DataDomain;/.test(card));
+  check("WidgetCard renders the chip", card.includes("<SampleChip domain={domain}"));
+
+  // The chip and notice refuse to label a live domain.
+  const badge = readFileSync("components/data/sample-data.tsx", "utf8");
+  check("the chip renders nothing for a live domain",
+    (badge.match(/if \(!isSample\(domain\)\) return null;/g) ?? []).length === 2);
+
+  // One placement covers every route, directly under the page title.
+  const shell = readFileSync("components/layout/app-shell.tsx", "utf8");
+  check("the shell renders the page notice",
+    shell.includes("<SampleNotice domain={sampleDomain}") &&
+      shell.includes("domainForPath(pathname)"));
+
+  // Mixed pages label their sample parts individually.
+  for (const section of ["team", "brokerage", "integrations"]) {
+    const src = readFileSync(`components/settings/${section}-section.tsx`, "utf8");
+    check(`settings ${section} carries a notice`, src.includes("<SampleNotice"));
+  }
+  const profileSection = readFileSync("components/settings/profile-section.tsx", "utf8");
+  check("the real profile section is NOT labelled sample",
+    !profileSection.includes("SampleNotice"));
+}
+
+// --- No write can reach a sample-backed store ------------------------------
+{
+  const surfaces: Array<[string, string]> = [
+    ["components/layout/quick-create-dialog.tsx", "create"],
+    ["components/transactions/kanban-board.tsx", "drag to a new stage"],
+    ["components/transactions/transaction-drawer.tsx", "advance a stage"],
+    ["components/leads/lead-drawer.tsx", "change a lead stage"],
+    ["components/documents/documents-table.tsx", "change a document status"],
+  ];
+  for (const [path, what] of surfaces) {
+    const src = readFileSync(path, "utf8");
+    check(`${what} consults provenance`, src.includes("canWrite("));
+  }
+
+  // Guarding the handler alone would leave an enabled control that silently
+  // does nothing — worse than a disabled one, because the user believes it
+  // worked. The CONTROL must be disabled too.
+  const dialog = readFileSync("components/layout/quick-create-dialog.tsx", "utf8");
+  check("the create button is disabled, not just the handler",
+    /disabled=\{busy \|\| !canWrite\(KIND_DOMAIN\[kind\]\)\}/.test(dialog));
+  check("the create handler refuses as well",
+    /if \(!canWrite\(KIND_DOMAIN\[kind\]\)\) return;/.test(dialog));
+  check("the dialog says why it cannot save",
+    dialog.includes("writeDisabledReason(KIND_DOMAIN[kind])"));
+
+  const kanban = readFileSync("components/transactions/kanban-board.tsx", "utf8");
+  check("kanban cards are not draggable while sample-backed",
+    /useDraggable\(\{\s*\n\s*disabled: !writable,/.test(kanban));
+
+  const leadDrawer = readFileSync("components/leads/lead-drawer.tsx", "utf8");
+  check("the lead stage control is disabled",
+    /disabled=\{saving \|\| !canWrite\("leads"\)\}/.test(leadDrawer));
+
+  const txnDrawer = readFileSync("components/transactions/transaction-drawer.tsx", "utf8");
+  check("the advance control is disabled",
+    /disabled=\{advancing \|\| !canWrite\("transactions"\)\}/.test(txnDrawer));
+
+  const docs = readFileSync("components/documents/documents-table.tsx", "utf8");
+  check("document status items are disabled",
+    (docs.match(/disabled=\{!canWrite\("documents"\)\}/g) ?? []).length >= 2);
 }
 
 // --- Summary ---------------------------------------------------------------

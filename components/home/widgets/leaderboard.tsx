@@ -37,6 +37,7 @@ export default function LeaderboardWidget() {
 
   return (
     <WidgetCard
+      domain="agents"
       icon={Trophy}
       title="Agent leaderboard"
       preset={mounted ? preset : null}

@@ -28,6 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/ui/status-pill";
 import { getAgent } from "@/lib/data/adapters/agents";
 import { getLead, updateLeadStage } from "@/lib/data/adapters/leads";
+import { canWrite, writeDisabledReason } from "@/lib/data/provenance";
 import { useQuery } from "@/lib/data/hooks";
 import {
   Lead,
@@ -113,6 +114,10 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     try {
       // The adapter bumps the data version, so the drawer, the table, and
       // the summary strip all refetch on their own.
+      // A sample-backed domain accepts this write into an in-memory
+      // fixture and loses it on reload. Refuse it rather than let the
+      // change look saved.
+      if (!canWrite("leads")) return;
       await updateLeadStage(lead.id, stage);
     } finally {
       setSaving(false);
@@ -175,7 +180,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 <Select
                   value={lead.stage}
                   onValueChange={(v) => changeStage(v as LeadStage)}
-                  disabled={saving}
+                  disabled={saving || !canWrite("leads")}
                 >
                   <SelectTrigger
                     aria-label="Lead stage"
@@ -191,6 +196,11 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                     ))}
                   </SelectContent>
                 </Select>
+                {!canWrite("leads") && (
+                  <p role="note" className="mt-2 text-[12px] text-muted-foreground">
+                    {writeDisabledReason("leads")}
+                  </p>
+                )}
               </div>
               <p className="text-micro mt-6">Notes</p>
               <p

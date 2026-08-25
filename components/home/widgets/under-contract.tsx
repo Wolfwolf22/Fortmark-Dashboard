@@ -19,6 +19,7 @@ export default function UnderContractWidget() {
 
   return (
     <WidgetCard
+      domain="transactions"
       icon={FilePenLine}
       title="Under contract"
       preset={preset}

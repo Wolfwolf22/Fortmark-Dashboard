@@ -40,7 +40,8 @@ export default function MarketPulseWidget() {
   const { data, loading, error } = useQuery(() => getMarketActivity(tab), [tab]);
 
   return (
-    <WidgetCard icon={Activity} title="Market pulse" preset={null}>
+    <WidgetCard
+      domain="market" icon={Activity} title="Market pulse" preset={null}>
       <Tabs value={tab} onValueChange={(v) => setTab(v as PulseTab)}>
         <TabsList>
           <TabsTrigger value="today">Today</TabsTrigger>

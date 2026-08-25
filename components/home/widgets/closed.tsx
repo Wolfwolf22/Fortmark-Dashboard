@@ -19,6 +19,7 @@ export default function ClosedWidget() {
 
   return (
     <WidgetCard
+      domain="reports"
       icon={CircleCheck}
       title="Closed"
       preset={preset}

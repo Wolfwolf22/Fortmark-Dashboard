@@ -6,6 +6,7 @@
  * loads the file through the adapter and renders the milestone timeline.
  */
 import Link from "next/link";
+import { canWrite, writeDisabledReason } from "@/lib/data/provenance";
 import { useState, type ReactNode } from "react";
 import { ArrowUpRight, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -169,6 +170,10 @@ export function TransactionDrawer({
     try {
       // The adapter bumps the data version, so the drawer and every open
       // list refetch on their own.
+      // A sample-backed domain accepts this write into an in-memory
+      // fixture and loses it on reload. Refuse it rather than let the
+      // change look saved.
+      if (!canWrite("transactions")) return;
       await updateTransactionStage(txn.id, to);
     } finally {
       setAdvancing(false);
@@ -241,9 +246,17 @@ export function TransactionDrawer({
                 ))}
               </ol>
             </div>
+            {txn.stage !== "closed" && next && !canWrite("transactions") && (
+              <p role="note" className="mt-2 text-[12px] text-muted-foreground">
+                {writeDisabledReason("transactions")}
+              </p>
+            )}
             {txn.stage !== "closed" && next && (
               <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-                <Button onClick={() => advance(next)} disabled={advancing}>
+                <Button
+                  onClick={() => advance(next)}
+                  disabled={advancing || !canWrite("transactions")}
+                >
                   Advance to {TRANSACTION_STAGE_LABELS[next].toLowerCase()}
                 </Button>
                 {txn.stage === "clearToClose" && (

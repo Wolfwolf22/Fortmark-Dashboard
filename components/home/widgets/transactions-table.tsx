@@ -119,6 +119,7 @@ export default function TransactionsTableWidget() {
   return (
     <>
       <WidgetCard
+      domain="transactions"
         icon={Workflow}
         title="Active transactions"
         preset={mounted ? preset : null}

@@ -34,6 +34,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { updateDocumentStatus } from "@/lib/data/adapters/documents";
+import { canWrite, writeDisabledReason } from "@/lib/data/provenance";
 import {
   DOCUMENT_STATUS_LABELS,
   DocumentStatus,
@@ -136,6 +137,10 @@ export function DocumentsTable({
   async function setStatus(id: string, status: DocumentStatus) {
     setBusyId(id);
     try {
+      // A sample-backed domain accepts this write into an in-memory
+      // fixture and loses it on reload. Refuse it rather than let the
+      // change look saved.
+      if (!canWrite("documents")) return;
       await updateDocumentStatus(id, status);
     } finally {
       setBusyId(null);
@@ -274,12 +279,14 @@ export function DocumentsTable({
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem
+                              disabled={!canWrite("documents")}
                               onSelect={() => setStatus(doc.id, "executed")}
                             >
                               Mark executed
                             </DropdownMenuItem>
                             {doc.status === "missing" && (
                               <DropdownMenuItem
+                                disabled={!canWrite("documents")}
                                 onSelect={() =>
                                   setStatus(doc.id, "pendingSignature")
                                 }

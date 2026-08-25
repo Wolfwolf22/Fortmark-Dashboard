@@ -49,6 +49,7 @@ export default function ProjectedCommissionWidget() {
 
   return (
     <WidgetCard
+      domain="transactions"
       icon={BarChart3}
       title="Projected commission"
       preset={mounted ? preset : null}

@@ -26,6 +26,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/ui/status-pill";
 import { updateTransactionStage } from "@/lib/data/adapters/transactions";
+import { canWrite } from "@/lib/data/provenance";
 import {
   Transaction,
   TransactionStage,
@@ -74,7 +75,13 @@ function DraggableCard({
   onOpen: (id: string) => void;
   dragHappened: MutableRefObject<boolean>;
 }) {
+  // Dragging changes a stage, which is a write. While transactions are
+  // sample-backed the change would live in memory and vanish on reload, so the
+  // card is not draggable at all — a card that moves and then springs back is
+  // a worse answer than one that does not move.
+  const writable = canWrite("transactions");
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    disabled: !writable,
     id: txn.id,
   });
   return (
@@ -239,6 +246,10 @@ export function KanbanBoard({ transactions, loading, onOpen }: KanbanBoardProps)
     const current = overrides[txn.id] ?? txn.stage;
     if (target === current) return;
     setOverrides((prev) => ({ ...prev, [txn.id]: target }));
+    // A sample-backed domain accepts this write into an in-memory
+    // fixture and loses it on reload. Refuse it rather than let the
+    // change look saved.
+    if (!canWrite("transactions")) return;
     void updateTransactionStage(txn.id, target);
   }
 

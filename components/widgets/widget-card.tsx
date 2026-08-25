@@ -23,6 +23,8 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DateRangePreset } from "@/lib/data/types";
 import { PRESET_LABELS, PRESETS, periodSublabel } from "@/lib/dates";
+import { SampleChip } from "@/components/data/sample-data";
+import type { DataDomain } from "@/lib/data/provenance";
 import { cn } from "@/lib/utils";
 
 interface WidgetExpandContextValue {
@@ -52,6 +54,15 @@ export interface WidgetCardProps {
   contentClassName?: string;
   /** Extra header controls rendered before the standard icon buttons. */
   headerExtra?: React.ReactNode;
+  /**
+   * Where this widget's numbers come from.
+   *
+   * Required rather than optional: every widget states its provenance, so a
+   * new one cannot quietly render fabricated figures with nothing to say so.
+   * A live domain renders no chip, so this stays correct when a domain
+   * becomes real instead of leaving a stale label on real data.
+   */
+  domain: DataDomain;
   /** Disable the expand button (e.g. for the featured image card). */
   expandable?: boolean;
   dragHandle?: React.ReactNode;
@@ -72,6 +83,7 @@ export function WidgetCard({
   className,
   contentClassName,
   headerExtra,
+  domain,
   expandable = true,
   dragHandle,
 }: WidgetCardProps) {
@@ -85,6 +97,7 @@ export function WidgetCard({
         </span>
         <div className="min-w-0">
           <h3 className="truncate text-[15px] font-bold leading-tight">{title}</h3>
+          <SampleChip domain={domain} />
           {preset != null && (
             <p className="text-micro mt-0.5">{periodSublabel(preset)}</p>
           )}

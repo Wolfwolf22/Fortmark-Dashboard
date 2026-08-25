@@ -26,6 +26,7 @@ export default function ClosedVolumeWidget() {
 
   return (
     <WidgetCard
+      domain="reports"
       icon={TrendingUp}
       title="Closed volume"
       preset={preset}

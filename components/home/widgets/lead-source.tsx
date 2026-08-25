@@ -80,6 +80,7 @@ export default function LeadSourceWidget() {
 
   return (
     <WidgetCard
+      domain="leads"
       icon={PieChartIcon}
       title="Lead source"
       preset={mounted ? preset : null}

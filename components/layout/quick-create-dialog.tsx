@@ -25,11 +25,33 @@ import { createListing } from "@/lib/data/adapters/listings";
 import { createTransaction } from "@/lib/data/adapters/transactions";
 import { createLead } from "@/lib/data/adapters/leads";
 import { createEvent } from "@/lib/data/adapters/calendar";
+import {
+  canWrite,
+  writeDisabledReason,
+  type DataDomain,
+} from "@/lib/data/provenance";
 import { addDocument } from "@/lib/data/adapters/documents";
 import { getTransactions } from "@/lib/data/adapters/transactions";
 import { useQuery } from "@/lib/data/hooks";
 import { EventType, PropertyType } from "@/lib/data/types";
 import { now } from "@/lib/data/mock/db";
+
+/**
+ * Which domain each quick-create writes into.
+ *
+ * The adapters behind these DO accept a write — they mutate an in-memory
+ * fixture and bump a version counter, so the new record appears immediately
+ * and is gone on the next reload. Showing invented numbers is one problem;
+ * letting someone believe they just filed a transaction is a worse one. Until
+ * a domain has real storage, its create is refused and says why.
+ */
+const KIND_DOMAIN: Record<QuickCreateKind, DataDomain> = {
+  listing: "listings",
+  transaction: "transactions",
+  lead: "leads",
+  event: "calendar",
+  document: "documents",
+};
 
 const TITLES: Record<QuickCreateKind, { title: string; description: string; cta: string; goto: string }> = {
   listing: {
@@ -81,6 +103,9 @@ export function QuickCreateDialog() {
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!kind) return;
+    // Enforced here as well as on the control: a disabled button is a UI
+    // state, and this is the function that would actually write.
+    if (!canWrite(KIND_DOMAIN[kind])) return;
     const form = new FormData(e.currentTarget);
     const get = (name: string) => String(form.get(name) ?? "").trim();
     setBusy(true);
@@ -254,11 +279,22 @@ export function QuickCreateDialog() {
 
             {error && <p className="text-sm text-status-bad">{error}</p>}
 
+            {!canWrite(KIND_DOMAIN[kind]) && (
+              <p role="note" className="text-[12px] leading-snug text-muted-foreground">
+                {writeDisabledReason(KIND_DOMAIN[kind])} These fields are shown
+                so the form is not a mystery, but nothing entered here is
+                saved yet.
+              </p>
+            )}
+
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={close}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={busy}>
+              <Button
+                type="submit"
+                disabled={busy || !canWrite(KIND_DOMAIN[kind])}
+              >
                 {busy ? "Saving…" : meta.cta}
               </Button>
             </DialogFooter>

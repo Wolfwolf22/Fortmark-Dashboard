@@ -6,6 +6,7 @@
  * when the account service connects.
  */
 import { useState } from "react";
+import { SampleNotice } from "@/components/data/sample-data";
 import { UserPlus } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -103,6 +104,7 @@ function TeamManager({ initial }: { initial: TeamMember[] }) {
         <div className="space-y-1">
           <CardTitle>Team</CardTitle>
           <CardDescription>People with access to this workspace.</CardDescription>
+        <SampleNotice domain="team" className="mt-2" />
         </div>
         <Button onClick={openInvite}>
           <UserPlus aria-hidden />
