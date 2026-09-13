@@ -236,11 +236,34 @@ if (url && url !== "[SENSITIVE]") {
   );
   // Presence only, never a value. Production must carry the dedicated profile
   // store credential; the generic one may be a preview token there.
+  const dedicated = Boolean(process.env.PROFILE_BLOB_READ_WRITE_TOKEN?.trim());
+  const generic = Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
   console.log(
-    `[migrate] blob PROFILE_BLOB_READ_WRITE_TOKEN present=${Boolean(
-      process.env.PROFILE_BLOB_READ_WRITE_TOKEN
-    )} BLOB_READ_WRITE_TOKEN present=${Boolean(process.env.BLOB_READ_WRITE_TOKEN)}`
+    `[migrate] blob PROFILE_BLOB_READ_WRITE_TOKEN present=${dedicated} BLOB_READ_WRITE_TOKEN present=${generic}`
   );
+
+  // The two lines above are each individually fine and still describe a broken
+  // deployment when read together, which is the same gap the pooled/unpooled
+  // comparison closes for the database. `resolveBlobToken` refuses the generic
+  // credential in Production, so uploads there need the dedicated variable and
+  // nothing else substitutes for it.
+  //
+  // Without this correlation the failure first appears as an opaque 503 from
+  // /api/profile/image, long after the deploy that caused it, with two healthy
+  // "present=" lines in the build log to argue it away.
+  if (!dedicated && process.env.VERCEL_ENV === "production") {
+    if (strict("PROFILE_IMAGE_UPLOAD_ENABLED") === "on") {
+      console.log(
+        "[migrate] WARNING: uploads are ON in Production but PROFILE_BLOB_READ_WRITE_TOKEN is absent — " +
+          "every profile photo upload will fail with 503; Production never falls back to BLOB_READ_WRITE_TOKEN"
+      );
+    } else {
+      console.log(
+        "[migrate] NOTE: PROFILE_BLOB_READ_WRITE_TOKEN absent in Production — uploads are off, " +
+          "so nothing is failing today, but the flag cannot be enabled until it is set"
+      );
+    }
+  }
 }
 
 // Migrations themselves remain preview-only. Reporting is safe everywhere;

@@ -3249,11 +3249,43 @@ const ALLOWED_ENV = {
   // Build-time reporting, presence only.
   const mig = readFileSync("scripts/migrate.mjs", "utf8");
   check("the build reports both credentials by presence",
-    mig.includes("PROFILE_BLOB_READ_WRITE_TOKEN present=${Boolean("));
+    /PROFILE_BLOB_READ_WRITE_TOKEN present=\$\{dedicated\}/.test(mig) &&
+      /BLOB_READ_WRITE_TOKEN present=\$\{generic\}/.test(mig));
+  check("presence is derived from the variable, not from a literal",
+    /const dedicated = Boolean\(process\.env\.PROFILE_BLOB_READ_WRITE_TOKEN\?\.trim\(\)\)/.test(mig) &&
+      /const generic = Boolean\(process\.env\.BLOB_READ_WRITE_TOKEN\?\.trim\(\)\)/.test(mig));
   check("the build never prints a credential value",
     !/\$\{process\.env\.(PROFILE_)?BLOB_READ_WRITE_TOKEN\}/.test(mig));
   check("the new variable is documented by name only",
     /^PROFILE_BLOB_READ_WRITE_TOKEN=$/m.test(readFileSync(".env.example", "utf8")));
+
+  // Two healthy "present=" lines can still describe a broken deployment. The
+  // combination that breaks — uploads on, Production, no dedicated token — is
+  // reported as such, the same way the pooled/unpooled branch mismatch is.
+  check("the build correlates the flag with the missing production credential",
+    /!dedicated && process\.env\.VERCEL_ENV === "production"/.test(mig));
+  check("uploads on without the production credential is a WARNING",
+    /strict\("PROFILE_IMAGE_UPLOAD_ENABLED"\) === "on"[\s\S]{0,300}WARNING: uploads are ON in Production/.test(mig));
+  check("uploads off without it is a note, not a warning",
+    /NOTE: PROFILE_BLOB_READ_WRITE_TOKEN absent in Production/.test(mig));
+  check("the correlation uses the strict flag reader, not the generous one",
+    !/on\("PROFILE_IMAGE_UPLOAD_ENABLED"\)/.test(mig));
+
+  // A 503 from the upload route states no reason to the caller, correctly.
+  // That must not mean the reason is stated nowhere at all.
+  check("an unusable credential is reported to the server log",
+    code.includes("reportCredentialFailure(credential.reason)"));
+  check("both the write and the delete report it",
+    (code.match(/reportCredentialFailure\(credential\.reason\)/g) ?? []).length === 2);
+  check("the report names the variable and never a token",
+    /reportCredentialFailure[\s\S]{0,1200}PROFILE_BLOB_READ_WRITE_TOKEN is not set/.test(storage) &&
+      !/console\.error\([\s\S]{0,600}credential\.token/.test(storage) &&
+      !/console\.error\([\s\S]{0,600}process\.env\.(PROFILE_)?BLOB_READ_WRITE_TOKEN[^?]/.test(storage));
+  check("the report is once per process, not once per upload",
+    storage.includes("if (credentialFailureReported) return;") &&
+      /credentialFailureReported = true;/.test(storage));
+  check("reporting never changes what the caller is told",
+    /reportCredentialFailure\(credential\.reason\);\s*\n\s*return \{ ok: false, reason: "unconfigured" \};/.test(code));
 }
 
 // --- Summary ---------------------------------------------------------------

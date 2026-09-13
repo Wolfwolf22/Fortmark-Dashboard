@@ -106,6 +106,35 @@ export function resolveBlobToken(
 }
 
 
+/**
+ * Report an unusable credential to the server log, once per process.
+ *
+ * The caller only ever sees `unavailable` with a 503, which is right — the
+ * cause is ours and a browser can do nothing with it — but it also means a
+ * misconfigured deployment produces a failure with no stated reason anywhere.
+ * The build log names the gap at deploy time; this names it if the deployment
+ * that reaches production was configured some other way.
+ *
+ * Once per process, not per request: an unset variable stays unset, so
+ * repeating it on every upload would only bury the line it is meant to
+ * surface. Names the variable and nothing else — no token, no prefix, no
+ * length, since a credential is not made safe to print by shortening it.
+ */
+let credentialFailureReported = false;
+
+function reportCredentialFailure(reason: "missing" | "production_requires_dedicated"): void {
+  if (credentialFailureReported) return;
+  credentialFailureReported = true;
+  console.error(
+    reason === "production_requires_dedicated"
+      ? "[profile-images] PROFILE_BLOB_READ_WRITE_TOKEN is not set. Production requires it and never " +
+          "falls back to BLOB_READ_WRITE_TOKEN, which the managed Blob connection may scope from Preview. " +
+          "Profile photo uploads and deletes will fail until it is set."
+      : "[profile-images] no Blob credential available (neither PROFILE_BLOB_READ_WRITE_TOKEN nor " +
+          "BLOB_READ_WRITE_TOKEN is set). Profile photo uploads and deletes will fail until one is set."
+  );
+}
+
 export type UploadResult =
   | { ok: true; url: string; pathname: string }
   | { ok: false; reason: "disabled" | "unconfigured" | "provider_unavailable" };
@@ -130,7 +159,10 @@ export async function uploadProfileImage(input: {
   // BLOB_READ_WRITE_TOKEN from the ambient environment, which is exactly the
   // credential Production must not use.
   const credential = resolveBlobToken();
-  if (!credential.ok) return { ok: false, reason: "unconfigured" };
+  if (!credential.ok) {
+    reportCredentialFailure(credential.reason);
+    return { ok: false, reason: "unconfigured" };
+  }
   try {
     const blob = await put(input.pathname, Buffer.from(input.bytes), {
       access: "public",
@@ -167,7 +199,10 @@ export async function deleteProfileImage(
   // Same resolution as the write. A delete aimed at the wrong store is worse
   // than a failed one.
   const credential = resolveBlobToken();
-  if (!credential.ok) return false;
+  if (!credential.ok) {
+    reportCredentialFailure(credential.reason);
+    return false;
+  }
   // The ownership gate, not an optimisation: the token can delete anything in
   // the store, so this is what stops a wrong pathname destroying another
   // user's photo.
