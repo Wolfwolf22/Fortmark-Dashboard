@@ -80,6 +80,53 @@ const CLERK_SESSION_COOKIES = ["__session", "__client_uat", "__clerk_db_jwt"];
 const RESET_MARKER = "fm_auth_reset";
 
 /**
+ * Whether both Clerk keys are present and non-empty.
+ *
+ * Deliberately duplicated from `hasClerkKeys` in `lib/auth/dashboard-access`,
+ * which owns this rule for the request path. That module hashes identifiers
+ * with `node:crypto`, and importing it here breaks the build outright — the
+ * edge runtime cannot bundle `node:` schemes. Middleware has to stay
+ * dependency-free, so the rule is restated in the few lines it takes.
+ * `test_dashboard_access.ts` asserts the two copies agree.
+ */
+function clerkIsConfigured(env: Record<string, string | undefined> = process.env): boolean {
+  const nonEmpty = (v: string | undefined) => typeof v === "string" && v.trim().length > 0;
+  return nonEmpty(env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) && nonEmpty(env.CLERK_SECRET_KEY);
+}
+
+/**
+ * The response when Clerk cannot start at all.
+ *
+ * A missing key is not a bad cookie, and must not be treated as one.
+ * `clerkMiddleware()` throws `Missing publishableKey` on EVERY request when a
+ * key is absent — which the wrapper below does catch, so the zone no longer
+ * 500s either way. But routing that case into the session-recovery path would
+ * answer the wrong question: it clears cookies that were never the problem,
+ * bounces to a portal that considers the visitor signed in and sends them
+ * straight back, and then tells them to clear their cookies — advice that
+ * cannot help, for a fault that is ours and not theirs.
+ *
+ * 503 for BOTH pages and API routes, deliberately, rather than the sign-in
+ * redirect used for an ordinary signed-out visitor. Without a publishable key
+ * no session can be verified, so "you are signed out" would be a claim this
+ * code cannot make. An honest, terminal 503 denies access without lying and
+ * without looping.
+ *
+ * It never returns `NextResponse.next()`: a configuration failure must not
+ * become an access grant.
+ */
+function serviceUnavailable(req: NextRequest): NextResponse {
+  const headers = { "Cache-Control": "no-store" };
+  if (req.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.json({ error: "Service unavailable" }, { status: 503, headers });
+  }
+  return new NextResponse(
+    "The FortMark dashboard is temporarily unavailable. Please try again shortly.",
+    { status: 503, headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" } }
+  );
+}
+
+/**
  * Recover from an authentication failure instead of crashing.
  *
  * Clerk throws when it cannot verify the session token it was handed — most
@@ -166,9 +213,19 @@ const clerkHandler = clerkMiddleware(
  * The exported middleware.
  *
  * Wraps Clerk rather than replacing it, so every authorization rule above is
- * unchanged — this only decides what happens when Clerk itself throws.
+ * unchanged — this only decides what happens when Clerk cannot run.
+ *
+ * Two distinct faults, two distinct answers. The configuration check runs
+ * FIRST and never reaches Clerk: an absent key is a deployment fault that no
+ * visitor can act on, so it gets a terminal 503. The try/catch then covers
+ * everything else Clerk can throw — chiefly an unverifiable session token —
+ * where clearing the cookie and asking for a fresh sign-in is a real repair.
+ * The catch remains the backstop for a configuration fault the check cannot
+ * anticipate; it simply no longer has to stand in for the common one.
  */
 export default async function middleware(req: NextRequest, event: NextFetchEvent) {
+  if (!clerkIsConfigured()) return serviceUnavailable(req);
+
   try {
     return await clerkHandler(req, event);
   } catch {

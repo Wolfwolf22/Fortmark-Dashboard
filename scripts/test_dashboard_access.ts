@@ -8,6 +8,7 @@
  * Run: npm run test:auth
  */
 import { readFileSync } from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
 import {
   decideAccess,
   hasClerkKeys,
@@ -233,6 +234,64 @@ check("api path is basePath-consistent", apiPath("/api/x").startsWith(`${BASE_PA
     /clerkHandler = clerkMiddleware\([\s\S]{0,600}const \{ userId \} = await auth\(\)/.test(mw));
   check("authorized parties are still passed to clerk",
     mw.includes("authorizedParties: getAuthorizedParties()"));
+
+  // --- Missing Clerk configuration is a separate fault ---------------------
+  //
+  // An absent publishable key makes clerkMiddleware() throw on EVERY request.
+  // The catch above already stops that becoming a 500, but routing it into
+  // recoverFromAuthFailure answers the wrong question: it clears cookies that
+  // were never at fault, bounces to a portal that thinks the visitor is signed
+  // in and sends them back, then advises clearing cookies — which cannot help.
+  // A deployment fault gets a terminal 503 instead.
+  check("configuration is checked before clerk is invoked",
+    /if \(!clerkIsConfigured\(\)\) return serviceUnavailable\(req\);[\s\S]{0,200}await clerkHandler\(req, event\)/.test(mw));
+  check("an unconfigured deployment answers 503, not a sign-in redirect",
+    /function serviceUnavailable[\s\S]{0,600}status: 503/.test(mw));
+  check("the unconfigured response never redirects",
+    !/function serviceUnavailable[\s\S]{0,600}NextResponse\.redirect/.test(mw));
+  check("a configuration failure never becomes an access grant",
+    !/function serviceUnavailable[\s\S]{0,600}NextResponse\.next\(\)/.test(mw));
+  check("an unconfigured api route gets json rather than a text page",
+    /function serviceUnavailable[\s\S]{0,300}pathname\.startsWith\("\/api\/"\)[\s\S]{0,120}NextResponse\.json/.test(mw));
+  check("the unconfigured response is never cached",
+    /function serviceUnavailable[\s\S]{0,200}Cache-Control": "no-store/.test(mw));
+  // The catch stays as the backstop for whatever the check cannot anticipate.
+  check("the catch still recovers from a thrown verification failure",
+    mw.includes("return recoverFromAuthFailure(req)"));
+
+  // The rule is restated here because lib/auth/dashboard-access pulls in
+  // node:crypto, which the edge runtime cannot bundle. Duplication is only
+  // safe while the two copies agree, so assert that they do — against the
+  // real `hasClerkKeys`, not a second transcription of it.
+  {
+    const mwRule = mw.match(/function clerkIsConfigured\([\s\S]*?\n}/)?.[0] ?? "";
+    check("middleware states the clerk-key rule locally", mwRule.length > 0);
+    check("the local rule reads both clerk keys",
+      mwRule.includes("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY") &&
+        mwRule.includes("CLERK_SECRET_KEY"));
+    check("the local rule treats whitespace as absent", mwRule.includes(".trim()"));
+
+    // Evaluate the middleware's own source so a future edit to either copy
+    // breaks this test rather than diverging silently in production. The
+    // annotations are stripped rather than hand-transcribed, so what runs here
+    // is the shipped rule and not a paraphrase of it.
+    const localRule = new Function(
+      `${stripTypeScriptTypes(mwRule)}; return clerkIsConfigured;`
+    )() as (env: Record<string, string | undefined>) => boolean;
+
+    const cases: Record<string, string | undefined>[] = [
+      env(),
+      { CLERK_SECRET_KEY: SK },
+      { NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: PK },
+      { NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: PK, CLERK_SECRET_KEY: "   " },
+      { NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "", CLERK_SECRET_KEY: SK },
+      {},
+    ];
+    for (const [i, c] of cases.entries()) {
+      check(`middleware and dashboard-access agree on clerk keys (case ${i})`,
+        localRule(c) === hasClerkKeys(c));
+    }
+  }
 }
 
 // --- Summary ---------------------------------------------------------------
