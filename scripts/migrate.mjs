@@ -234,6 +234,24 @@ if (url && url !== "[SENSITIVE]") {
   console.log(
     `[migrate] flags PROFILE_IMAGE_UPLOAD_ENABLED=${strict("PROFILE_IMAGE_UPLOAD_ENABLED")}`
   );
+
+  // The assistant provider. Both halves are required, so report both and say
+  // which way the route will actually resolve — "flag on, key absent" is a
+  // silent fallback to the mock, and that is not obvious from two booleans.
+  {
+    const flag = strict("AI_CHAT_PROVIDER_ENABLED");
+    const key = Boolean(process.env.ANTHROPIC_API_KEY?.trim());
+    console.log(
+      `[migrate] assistant AI_CHAT_PROVIDER_ENABLED=${flag} ANTHROPIC_API_KEY present=${key} ` +
+        `-> ${flag === "on" && key ? "provider" : "mock replies"}`
+    );
+    if (flag === "on" && !key) {
+      console.log(
+        "[migrate] WARNING: the assistant provider is enabled but ANTHROPIC_API_KEY is absent — " +
+          "the assistant will serve built-in mock replies, which read as real answers"
+      );
+    }
+  }
   // Presence only, never a value. Production must carry the dedicated profile
   // store credential; the generic one may be a preview token there.
   const dedicated = Boolean(process.env.PROFILE_BLOB_READ_WRITE_TOKEN?.trim());
