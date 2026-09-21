@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiFor, chat, signInCertificationUser } from "./session";
+import { apiFor, chat, freshToken, signInCertificationUser } from "./session";
 
 /**
  * §19 — a prepared action cannot be confirmed after it expires.
@@ -16,10 +16,12 @@ test.describe.configure({ mode: "serial" });
 test("a prepared action expires and is then refused", async ({ browser }) => {
   test.setTimeout(15 * 60_000);
 
+  // The page stays open for the whole test: this run outlives a single Clerk
+  // session token, so tokens are refreshed from the live session rather than
+  // captured once.
   const page = await browser.newPage();
-  const jwt = await signInCertificationUser(page);
-  const api = apiFor(jwt);
-  await page.close();
+  let jwt = await signInCertificationUser(page);
+  let api = apiFor(jwt);
 
   const created = await api("/dashboard/api/contacts", {
     method: "POST",
@@ -48,8 +50,14 @@ test("a prepared action expires and is then refused", async ({ browser }) => {
   console.log(`[expiry] waiting ${Math.round(waitMs / 1000)}s for the real TTL to elapse`);
   await new Promise((resolve) => setTimeout(resolve, waitMs));
 
+  // The token captured before the wait has since expired — that is Clerk
+  // behaving correctly, not a failure. Refresh from the live session.
+  jwt = await freshToken(page);
+  api = apiFor(jwt);
+
   // It should no longer be offered...
   const after = await api("/dashboard/api/ai/actions");
+  expect(after.status, "the refreshed session is accepted").toBe(200);
   const stillPending = (after.body.actions as Record<string, unknown>[]).some(
     (a) => a.actionId === actionId
   );
@@ -69,4 +77,5 @@ test("a prepared action expires and is then refused", async ({ browser }) => {
   const contact = await api(`/dashboard/api/contacts/${contactId}`);
   expect((contact.body.contact as Record<string, unknown>).nextFollowUpDate).toBeUndefined();
   console.log(`[expiry] contact untouched after refused confirmation`);
+  await page.close();
 });

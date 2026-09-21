@@ -64,6 +64,29 @@ export async function signInCertificationUser(page: Page): Promise<string> {
   return token.jwt;
 }
 
+/**
+ * A fresh session token from the live browser session.
+ *
+ * Clerk session tokens are deliberately short-lived, so a token captured once
+ * cannot be reused across a long-running test — the ten-minute expiry run
+ * outlives it. Clerk refreshes the session in the background, so asking the
+ * still-open page for a token again yields a current one. The page must stay
+ * open for the life of the test.
+ */
+export async function freshToken(page: Page): Promise<string> {
+  await page.waitForFunction(
+    () => Boolean((window as unknown as { Clerk?: { session?: unknown } }).Clerk?.session),
+    undefined,
+    { timeout: 30_000 }
+  );
+  const jwt = await page.evaluate(async () => {
+    const w = window as unknown as { Clerk?: { session?: { getToken: () => Promise<string | null> } } };
+    return (await w.Clerk?.session?.getToken()) ?? null;
+  });
+  if (!jwt) throw new Error("Clerk returned no session token on refresh");
+  return jwt;
+}
+
 /** An authenticated request to the dashboard deployment. */
 export function apiFor(jwt: string) {
   return async function api(path: string, init: RequestInit = {}) {
