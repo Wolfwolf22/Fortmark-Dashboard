@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Building2 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { EmptyState } from "@/components/ui/empty-state";
+import { UnavailableBody } from "@/components/home/metric-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LISTING_STATUS_PILL, StatusPill } from "@/components/ui/status-pill";
 import { WidgetCard } from "@/components/widgets/widget-card";
@@ -54,6 +55,15 @@ export default function FeaturedListingWidget() {
           icon={Building2}
           title="No listing to feature"
           description="Add an active listing and it will be spotlighted here."
+        />
+      ) : data.listing.source !== "mls" ? (
+        // Home is the executive brief, and a generated listing has no place on
+        // it. The listings screens still serve the sample set with a notice on
+        // the page; here the honest answer is simply that the MLS is not
+        // connected. Restored automatically the moment a live feed is.
+        <UnavailableBody
+          availability="not_configured"
+          detail="Connect the MLS to feature a live listing here."
         />
       ) : (
         <FeaturedBody listing={data.listing} agent={data.agent} />

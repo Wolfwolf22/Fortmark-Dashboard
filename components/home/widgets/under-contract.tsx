@@ -2,65 +2,52 @@
 
 import { FilePenLine } from "lucide-react";
 import { CountUp } from "@/components/charts/count-up";
-import { useWidgetPeriod } from "@/components/home/use-widget-period";
-import { PillProgress } from "@/components/ui/pill-progress";
-import { Skeleton } from "@/components/ui/skeleton";
 import { WidgetCard } from "@/components/widgets/widget-card";
-import { getDashboardMetrics } from "@/lib/data/adapters/metrics";
-import { useQuery } from "@/lib/data/hooks";
+import { FigureSkeleton, MetricNote, MetricState } from "@/components/home/metric-state";
+import { useHomeMetrics } from "@/components/home/metrics-provider";
+import { scopeLabel } from "@/components/home/metric-format";
 
-/** Files that entered contract in the period, against the scaled goal. */
+/**
+ * Deals being worked right now.
+ *
+ * The count comes from the lifecycle the transaction domain already defines —
+ * the six active stages — so it can never drift from what the transactions
+ * board shows. `on_hold` is reported beside it rather than folded in: a paused
+ * deal is real, but calling it active would overstate the book.
+ *
+ * Period-independent by nature, so the card carries no period control. "Active"
+ * is a fact about now, and a date filter over it would be decoration.
+ */
 export default function UnderContractWidget() {
-  const { preset, range, overridden, setOverride } = useWidgetPeriod("under-contract");
-  const { data, loading, error } = useQuery(
-    () => getDashboardMetrics(range, preset),
-    [preset, range.from.getTime(), range.to.getTime()]
-  );
+  const { metrics } = useHomeMetrics();
 
   return (
-    <WidgetCard
-      icon={FilePenLine}
-      title="Under contract"
-      preset={preset}
-      onPresetChange={setOverride}
-      presetOverridden={overridden}
-    >
-      {error ? (
-        <p className="text-[13px] text-muted-foreground">
-          Metrics failed to load. Refresh the page to retry.
-        </p>
-      ) : loading || !data ? (
-        <div className="flex h-full flex-col justify-between gap-5">
-          <Skeleton className="h-10 w-24" />
-          <div className="space-y-3">
-            <Skeleton className="h-3 w-full rounded-full" />
-            <Skeleton className="h-4 w-3/4" />
-          </div>
-        </div>
-      ) : (
-        <div className="flex h-full flex-col justify-between gap-5">
-          <div className="flex items-baseline gap-2">
+    <WidgetCard icon={FilePenLine} title="Active transactions" preset={null}>
+      <MetricState
+        group={metrics?.transactions}
+        detail="Connect the transaction database to see live deals."
+        skeleton={<FigureSkeleton />}
+      >
+        {(data) => (
+          <div className="flex h-full flex-col justify-between gap-5">
             <CountUp
-              value={data.underContractCount}
+              value={data.activeCount}
               format={(n) => String(Math.round(n))}
               className="font-display text-4xl leading-none tabular"
             />
-            <span className="tabular text-sm font-medium text-muted-foreground">
-              / {data.underContractGoal} goal
-            </span>
+            <div className="space-y-1">
+              <MetricNote>
+                {metrics ? scopeLabel(metrics.scope) : "Your book"} · in an active stage now
+              </MetricNote>
+              {data.onHoldCount > 0 && (
+                <MetricNote>
+                  {data.onHoldCount} on hold, not counted above
+                </MetricNote>
+              )}
+            </div>
           </div>
-          <div className="space-y-3">
-            <PillProgress
-              value={data.underContractCount}
-              max={data.underContractGoal}
-              label={`${data.underContractCount} of ${data.underContractGoal} under contract goal`}
-            />
-            <p className="text-[13px] leading-snug text-muted-foreground">
-              Files that entered contract this period
-            </p>
-          </div>
-        </div>
-      )}
+        )}
+      </MetricState>
     </WidgetCard>
   );
 }

@@ -37,6 +37,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DEFAULT_WIDGET_ORDER, WidgetId, useLayoutStore } from "@/lib/stores/layout";
 import { cn } from "@/lib/utils";
 import { WIDGETS } from "./widget-registry";
+import { HomeMetricsProvider } from "./metrics-provider";
+import { HomeMetricsBanner } from "./metrics-banner";
 
 const GRID_CLASS = "grid grid-cols-1 gap-5 md:grid-cols-6 xl:grid-cols-12";
 
@@ -157,7 +159,8 @@ export function BentoGrid({
   const orderChanged = widgetOrder.join("|") !== DEFAULT_WIDGET_ORDER.join("|");
 
   return (
-    <>
+    <HomeMetricsProvider>
+      <HomeMetricsBanner />
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -184,6 +187,6 @@ export function BentoGrid({
           </Button>
         </div>
       )}
-    </>
+    </HomeMetricsProvider>
   );
 }

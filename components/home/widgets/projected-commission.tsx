@@ -2,93 +2,119 @@
 
 import * as React from "react";
 import { BarChart3 } from "lucide-react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
-  ChartFrame,
-  ChartTooltipFrame,
-  chartColor,
-} from "@/components/charts/chart-frame";
+import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from "recharts";
+import { ChartFrame, ChartTooltipFrame, chartColor } from "@/components/charts/chart-frame";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WidgetCard, useWidgetExpanded } from "@/components/widgets/widget-card";
-import { useWidgetPeriod } from "@/components/home/use-widget-period";
-import { useQuery } from "@/lib/data/hooks";
-import {
-  getDashboardMetrics,
-  type CommissionPoint,
-} from "@/lib/data/adapters/metrics";
+import { MetricNote, MetricState } from "@/components/home/metric-state";
+import { useHomeMetrics } from "@/components/home/metrics-provider";
+import { centsToDollars, shortMonthLabel } from "@/components/home/metric-format";
+import type { MonthPoint } from "@/lib/metrics/types";
 import { formatCurrency } from "@/lib/utils";
 
 /**
- * Projected commission by period: GCI bucketed across the series returned by
- * the metrics adapter, current bucket highlighted. Clicking a bar pins its
- * value to the caption under the chart.
+ * Commission, split into the two statements it actually makes.
+ *
+ * The headline is a **projection**: gross commission implied by the terms
+ * entered on the deals currently being worked. It is not revenue and it is not
+ * earned — it is what the paperwork says these deals would pay if they all
+ * closed as written, and the card says exactly that underneath. Deals with no
+ * commission terms project nothing and are counted separately, so the figure
+ * is never mistaken for a complete one.
+ *
+ * The bars are **history**: commission from deals that actually closed, by the
+ * month they closed in. Projections and history never share an axis.
+ *
+ * All of it comes from `projectCommission` in the transaction domain. There is
+ * one implementation of commission arithmetic in this codebase and a chart is
+ * not allowed to become a second one.
  */
 export default function ProjectedCommissionWidget() {
-  // Gate persisted period overrides off first paint (hydration safety).
-  const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
-
-  const { preset, range, overridden, setOverride } = useWidgetPeriod(
-    "projected-commission"
-  );
-  const { data, loading } = useQuery(
-    () => getDashboardMetrics(range, preset),
-    [preset, range.from.getTime(), range.to.getTime()]
-  );
-
+  const { metrics } = useHomeMetrics();
   // Lifted so the selection carries into the expanded dialog.
   const [selected, setSelected] = React.useState<string | null>(null);
 
   return (
-    <WidgetCard
-      icon={BarChart3}
-      title="Projected commission"
-      preset={mounted ? preset : null}
-      onPresetChange={setOverride}
-      presetOverridden={overridden}
-    >
-      <CommissionChart
-        points={data?.commissionByPeriod}
-        loading={loading}
-        selected={selected}
-        onSelect={setSelected}
-      />
+    <WidgetCard icon={BarChart3} title="Projected commission" preset={null}>
+      <MetricState
+        group={metrics?.transactions}
+        detail="Connect the transaction database to see commission."
+        skeleton={
+          <div className="space-y-3">
+            <Skeleton className="h-10 w-40" />
+            <Skeleton className="h-[220px] w-full rounded-panel" />
+          </div>
+        }
+      >
+        {(data) => (
+          <div>
+            <div className="mb-4">
+              <p className="font-display text-4xl leading-none tabular">
+                {formatCurrency(centsToDollars(data.projectedCommissionCents))}
+              </p>
+              <div className="mt-2 space-y-1">
+                <MetricNote>
+                  Gross, projected from the terms on {data.activeCount} active{" "}
+                  {data.activeCount === 1 ? "deal" : "deals"} — not earned
+                </MetricNote>
+                {data.projectedCommissionUntermedCount > 0 && (
+                  <MetricNote>
+                    {data.projectedCommissionUntermedCount}{" "}
+                    {data.projectedCommissionUntermedCount === 1 ? "deal has" : "deals have"} no
+                    commission terms entered and project nothing
+                  </MetricNote>
+                )}
+              </div>
+            </div>
+            <ClosedCommissionChart
+              months={data.monthly}
+              selected={selected}
+              onSelect={setSelected}
+            />
+          </div>
+        )}
+      </MetricState>
     </WidgetCard>
   );
 }
 
-function CommissionChart({
-  points,
-  loading,
+interface Bucket {
+  label: string;
+  month: string;
+  value: number;
+  active: boolean;
+}
+
+function ClosedCommissionChart({
+  months,
   selected,
   onSelect,
 }: {
-  points: CommissionPoint[] | undefined;
-  loading: boolean;
+  months: MonthPoint[];
   selected: string | null;
   onSelect: (label: string) => void;
 }) {
   const expanded = useWidgetExpanded();
   const height = expanded ? 380 : 220;
 
-  if (loading || !points) {
+  const points: Bucket[] = months.map((month, i) => ({
+    label: shortMonthLabel(month.month),
+    month: month.month,
+    value: centsToDollars(month.commissionCents),
+    active: i === months.length - 1,
+  }));
+
+  if (points.every((p) => p.value === 0)) {
     return (
-      <div className="space-y-3">
-        <Skeleton style={{ height }} className="w-full rounded-panel" />
-        <Skeleton className="h-4 w-56" />
+      <div
+        className="flex items-center rounded-panel bg-tint px-4"
+        style={{ height: height / 2 }}
+      >
+        <MetricNote>No commission has been closed in the last twelve months</MetricNote>
       </div>
     );
   }
 
-  // Caption target: explicit selection, else the active (current) bucket.
   const focused =
     points.find((p) => p.label === selected) ??
     points.find((p) => p.active) ??
@@ -97,11 +123,7 @@ function CommissionChart({
   return (
     <div>
       <ChartFrame height={height}>
-        <BarChart
-          data={points}
-          margin={{ top: 8, right: 4, bottom: 0, left: 4 }}
-          accessibilityLayer
-        >
+        <BarChart data={points} margin={{ top: 8, right: 4, bottom: 0, left: 4 }} accessibilityLayer>
           <CartesianGrid vertical={false} stroke={chartColor("grid")} />
           <XAxis
             dataKey="label"
@@ -119,7 +141,7 @@ function CommissionChart({
                   label={String(label)}
                   rows={[
                     {
-                      name: "Projected GCI",
+                      name: "Closed commission",
                       value: formatCurrency(Number(payload[0]?.value ?? 0)),
                     },
                   ]}
@@ -127,22 +149,12 @@ function CommissionChart({
               ) : null
             }
           />
-          <Bar
-            dataKey="value"
-            radius={[6, 6, 0, 0]}
-            maxBarSize={40}
-            isAnimationActive
-            animationDuration={300}
-          >
+          <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={40} isAnimationActive animationDuration={300}>
             {points.map((p) => (
               <Cell
                 key={p.label}
                 cursor="pointer"
-                fill={
-                  p.active || p.label === focused?.label
-                    ? chartColor("active")
-                    : chartColor("5")
-                }
+                fill={p.active || p.label === focused?.label ? chartColor("active") : chartColor("5")}
                 onClick={() => onSelect(p.label)}
               />
             ))}
@@ -156,7 +168,7 @@ function CommissionChart({
           <span className="tabular font-semibold text-foreground">
             {formatCurrency(focused.value)}
           </span>{" "}
-          projected GCI
+          commission from deals closed that month
         </p>
       )}
     </div>

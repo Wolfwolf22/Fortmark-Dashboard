@@ -1,112 +1,85 @@
 "use client";
 
-import * as React from "react";
+import Link from "next/link";
 import {
   Activity,
+  ArrowRightLeft,
   CheckCircle2,
   FileCheck2,
-  Plus,
-  TrendingDown,
+  PhoneCall,
+  UserPlus,
   type LucideIcon,
 } from "lucide-react";
-import { DeltaBadge } from "@/components/ui/delta-badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WidgetCard, useWidgetExpanded } from "@/components/widgets/widget-card";
-import { getMarketActivity } from "@/lib/data/adapters/market";
-import { useQuery } from "@/lib/data/hooks";
-import type { MarketActivityItem } from "@/lib/data/types";
+import { MetricState } from "@/components/home/metric-state";
+import { useHomeMetrics } from "@/components/home/metrics-provider";
+import type { ActivityItem } from "@/lib/metrics/types";
 import { formatRelative } from "@/lib/utils";
 
-const COLLAPSED_ROWS = 6;
+const COLLAPSED_ROWS = 5;
 
-const KIND_ICONS: Record<MarketActivityItem["kind"], LucideIcon> = {
-  priceReduction: TrendingDown,
-  newComp: FileCheck2,
-  demandShift: Activity,
-  newListing: Plus,
-  closed: CheckCircle2,
+const ICONS: Record<ActivityItem["kind"], LucideIcon> = {
+  transaction_created: FileCheck2,
+  transaction_stage_changed: ArrowRightLeft,
+  transaction_closed: CheckCircle2,
+  contact_created: UserPlus,
+  contact_stage_changed: ArrowRightLeft,
+  contact_touch: PhoneCall,
 };
 
-type PulseTab = "today" | "history";
-
 /**
- * Market pulse feed: price cuts, comps, demand shifts, and closings in the
- * brokerage's segments — split into today's tape and the recent history.
+ * What has actually happened, lately.
+ *
+ * Built from `transaction_events` and `contact_activities` — the records the
+ * domains already write when something changes. It is a presentation layer
+ * over those, not a second history: nothing is stored to feed this card, and
+ * the audit log is deliberately not its source. Audit rows answer "who did
+ * what, and can we prove it"; they carry actor identity for compliance, and a
+ * feed is the wrong place for them.
+ *
+ * This card used to be a market tape of invented price cuts and demand
+ * shifts. Market intelligence returns when there is a market source behind
+ * it; until then the space belongs to events that really occurred.
  */
 export default function MarketPulseWidget() {
-  const [tab, setTab] = React.useState<PulseTab>("today");
-  const { data, loading, error } = useQuery(() => getMarketActivity(tab), [tab]);
+  const { metrics } = useHomeMetrics();
 
   return (
-    <WidgetCard icon={Activity} title="Market pulse" preset={null}>
-      <Tabs value={tab} onValueChange={(v) => setTab(v as PulseTab)}>
-        <TabsList>
-          <TabsTrigger value="today">Today</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
-        </TabsList>
-        <TabsContent value="today">
-          <PulseFeed tab="today" items={data} loading={loading} error={error} />
-        </TabsContent>
-        <TabsContent value="history">
-          <PulseFeed tab="history" items={data} loading={loading} error={error} />
-        </TabsContent>
-      </Tabs>
+    <WidgetCard icon={Activity} title="Recent activity" preset={null}>
+      <MetricState
+        group={metrics?.activity}
+        detail="Activity appears once the deal and contact records are connected."
+        skeleton={
+          <ul className="space-y-3">
+            {Array.from({ length: 4 }, (_, i) => (
+              <li key={i} className="flex items-center gap-3">
+                <Skeleton className="h-8 w-8 rounded-lg" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-3 w-1/3" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        }
+      >
+        {(items) => <ActivityBody items={items} />}
+      </MetricState>
     </WidgetCard>
   );
 }
 
-function PulseFeed({
-  tab,
-  items,
-  loading,
-  error,
-}: {
-  tab: PulseTab;
-  items: MarketActivityItem[] | undefined;
-  loading: boolean;
-  error: Error | null;
-}) {
+function ActivityBody({ items }: { items: ActivityItem[] }) {
   const expanded = useWidgetExpanded();
 
-  if (error) {
-    return (
-      <p className="text-[13px] text-muted-foreground">
-        Market activity failed to load. Refresh the page to retry.
-      </p>
-    );
-  }
-
-  if (loading || !items) {
-    return (
-      <ul className="divide-y divide-border">
-        {Array.from({ length: 4 }, (_, i) => (
-          <li key={i} className="flex items-start gap-3 py-3 first:pt-0">
-            <Skeleton className="h-7 w-7 shrink-0 rounded-full" />
-            <div className="flex-1 space-y-2">
-              <Skeleton className="h-4 w-2/5" />
-              <Skeleton className="h-3 w-4/5" />
-            </div>
-            <Skeleton className="h-3 w-12" />
-          </li>
-        ))}
-      </ul>
-    );
-  }
-
   if (items.length === 0) {
-    return tab === "today" ? (
+    return (
       <EmptyState
         icon={Activity}
-        title="Quiet so far today"
-        description="New market activity lands here as it happens. Check history for recent movement."
-      />
-    ) : (
-      <EmptyState
-        icon={Activity}
-        title="No recorded activity"
-        description="Past market activity builds up here over time."
+        title="Nothing has happened yet"
+        description="Deals and contacts you work on show up here as they change."
       />
     );
   }
@@ -114,46 +87,26 @@ function PulseFeed({
   const visible = expanded ? items : items.slice(0, COLLAPSED_ROWS);
 
   return (
-    <div>
-      <ul className="divide-y divide-border">
-        {visible.map((item) => {
-          const Icon = KIND_ICONS[item.kind];
-          return (
-            <li key={item.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
-              <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-tint">
-                <Icon className="h-3.5 w-3.5" aria-hidden />
+    <ul className="divide-y divide-border">
+      {visible.map((item) => {
+        const Icon = ICONS[item.kind];
+        return (
+          <li key={item.id}>
+            <Link
+              href={item.href}
+              className="-mx-2 flex items-center gap-3 rounded-lg px-2 py-3 transition-colors duration-150 hover:bg-tint"
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-tint">
+                <Icon className="h-4 w-4 text-muted-foreground" aria-hidden />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-semibold leading-snug">{item.title}</p>
-                <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-                  {item.detail}
-                </p>
-                <p className="text-micro mt-1">{item.neighborhood}</p>
+                <p className="truncate text-[13px] font-semibold">{item.summary}</p>
+                <p className="text-micro mt-0.5">{formatRelative(item.at)}</p>
               </div>
-              <div className="flex shrink-0 flex-col items-end gap-1.5">
-                <span className="tabular whitespace-nowrap text-[11px] text-muted-foreground">
-                  {formatRelative(item.timestamp)}
-                </span>
-                {item.delta && (
-                  <DeltaBadge
-                    value={
-                      item.delta.direction === "down"
-                        ? -item.delta.value
-                        : item.delta.value
-                    }
-                    suffix={item.delta.unit}
-                  />
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-      {!expanded && items.length > COLLAPSED_ROWS && (
-        <p className="text-micro mt-3 border-t border-border pt-3">
-          Showing {visible.length} of {items.length} — expand to see all
-        </p>
-      )}
-    </div>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
