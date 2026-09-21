@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { mockReplyFor } from "@/lib/ai/mock-response";
 import {
   AI_EFFORT,
   AI_MAX_TOKENS,
@@ -11,7 +10,10 @@ import {
   resolveAiCredential,
   type ChatTurn,
 } from "@/lib/ai/provider";
-import { EMPTY_TURN_TEXT, openTextStream, remainingText } from "@/lib/ai/stream";
+import { runAssistant, type OpenedRound, type RoundOpener, type Turn } from "@/lib/ai/loop";
+import type { ProviderEvent } from "@/lib/ai/stream";
+import { READ_ONLY_TOOLS } from "@/lib/ai/tools/registry";
+import type { ToolContext } from "@/lib/ai/tools/types";
 import { decideAccess, isConfigFailure } from "@/lib/auth/dashboard-access";
 
 export const runtime = "nodejs";
@@ -20,12 +22,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Vercel's default function ceiling is far shorter than a considered reply.
- * Streaming does not exempt a function from it — the response is cut off
- * mid-sentence when it expires — so it is raised here rather than discovered
- * later as a truncation that looks like a model fault.
+ * A tool round trip costs a model call plus a database round trip, and a
+ * considered answer may take several. Streaming does not exempt a function
+ * from the platform ceiling — the response is cut off mid-sentence when it
+ * expires — so it is raised here rather than discovered later as a truncation
+ * that looks like a model fault.
  */
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
@@ -39,18 +42,23 @@ const STREAM_HEADERS = {
 } as const;
 
 /**
- * Streaming chat endpoint.
+ * The assistant, over this caller's real records.
  *
  * Authorization is enforced here as well as in `middleware.ts`: a route
  * handler is the last line of defence for the data it returns, and must not
- * depend on a matcher pattern staying correct.
+ * depend on a matcher pattern staying correct. The verified Clerk user id is
+ * the *only* thing that decides what the tools can read; nothing about
+ * identity, tenancy, ownership or role is accepted from the request body, and
+ * no tool has an argument that could carry one.
  *
- * The provider is reached only when `AI_CHAT_PROVIDER_ENABLED=1` and
- * `ANTHROPIC_API_KEY` is set. Otherwise the original mock stream still serves,
- * so an environment that has not been given a key behaves exactly as it did
- * before this file changed — the same rule every other flag in this codebase
- * follows. Both paths emit the same incremental plain text, so nothing outside
- * this file knows which one answered.
+ * The model never touches infrastructure. It has no database URL, no MLS
+ * credential and no API key; it emits the name of a tool, and this server
+ * decides whether to run it, under whose identity, and what comes back.
+ *
+ * There is no mock path. An environment without a provider key says so
+ * (503 `not_configured`) rather than serving a generated reply — the old
+ * fallback opened with an invented comp table, which is the last thing a
+ * pricing conversation should be able to produce.
  */
 export async function POST(request: NextRequest) {
   const { userId } = await auth();
@@ -85,88 +93,160 @@ export async function POST(request: NextRequest) {
   }
 
   const credential = resolveAiCredential();
-  if (!credential.ok) return mockResponse(parsed.messages);
+  if (!credential.ok) {
+    return NextResponse.json(
+      { error: "not_configured" },
+      { status: 503, headers: NO_STORE }
+    );
+  }
 
-  return providerResponse(parsed.messages, credential.apiKey, request.signal);
+  // `userId` is non-null here: `decideAccess` refused every anonymous case.
+  return providerResponse(parsed.messages, userId as string, credential.apiKey, request.signal);
 }
 
 /**
  * The real model call.
  *
- * The first delta is awaited before a `Response` is returned. Once a 200 and
- * its headers are on the wire the status can no longer be corrected, so a
- * failure that happens up front — a rejected key, a rate limit, an overloaded
- * model — would otherwise reach the browser as an empty but apparently
- * successful stream. Waiting costs the first token's latency and buys an
- * accurate status code for every error that occurs before generation starts.
+ * The first round is opened — and its first event awaited — before a
+ * `Response` is returned. Once a 200 and its headers are on the wire the
+ * status can no longer be corrected, so a failure that happens up front (a
+ * rejected key, a rate limit, an overloaded model) would otherwise reach the
+ * browser as an empty but apparently successful stream. Waiting costs the
+ * first event's latency and buys an accurate status code for every error that
+ * occurs before generation starts.
  */
 async function providerResponse(
   messages: ChatTurn[],
+  clerkUserId: string,
   apiKey: string,
   signal: AbortSignal
 ): Promise<Response> {
   const client = new Anthropic({ apiKey });
+  const tools = toolParams();
 
-  const stream = client.beta.messages.stream(
-    {
-      model: AI_MODEL,
-      max_tokens: AI_MAX_TOKENS,
-      system: AI_SYSTEM_PROMPT,
-      messages,
-      output_config: { effort: AI_EFFORT },
-      // Thinking is on by default on this model and its text is not returned.
-      // Only `text_delta` is forwarded below, so reasoning can never be
-      // streamed into the thread as though it were the answer.
-      //
-      // On a policy decline the API re-runs the request on a fallback model
-      // inside the same call, routed by refusal category. Without it a declined
-      // request simply stops, which in a chat surface is an unexplained blank
-      // reply.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-    },
-    // Forwards a client disconnect to the provider. Without it, closing the
-    // thread leaves a generation running that nobody will read and everybody
-    // pays for.
-    { signal }
-  );
+  const open: RoundOpener = async (turns, options) => {
+    const stream = client.beta.messages.stream(
+      {
+        model: AI_MODEL,
+        max_tokens: AI_MAX_TOKENS,
+        system: [{ type: "text", text: AI_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+        messages: turns,
+        tools,
+        // The last round is opened unable to ask for anything more, so the
+        // turn ends in an answer rather than in a request nobody can pay for.
+        tool_choice: options.allowTools ? { type: "auto" } : { type: "none" },
+        output_config: { effort: AI_EFFORT },
+        // Thinking is on by default on this model and its text is not
+        // returned. Only `text_delta` is forwarded downstream, so reasoning
+        // can never be streamed into the thread as though it were the answer.
+        //
+        // On a policy decline the API re-runs the request on a fallback model
+        // inside the same call, routed by refusal category. Without it a
+        // declined request simply stops, which in a chat surface is an
+        // unexplained blank reply.
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+      },
+      // Forwards a client disconnect to the provider. Without it, closing the
+      // thread leaves a generation running that nobody will read and everybody
+      // pays for.
+      { signal }
+    );
+    return {
+      iterator: stream[Symbol.asyncIterator]() as AsyncIterator<ProviderEvent>,
+      abort: () => stream.abort(),
+    };
+  };
 
-  const encoder = new TextEncoder();
-  const iterator = stream[Symbol.asyncIterator]();
-
-  // Drained up to the first text so an early failure is still a real status
-  // code rather than a silent empty stream.
-  const opened = await openTextStream(iterator);
-  if (!opened.ok) {
-    // Nothing has been sent yet, so the status is still ours to choose.
-    stream.abort();
-    return providerError(opened.error);
+  let first: OpenedRound;
+  let primed: PrimedIterator;
+  try {
+    first = await open(messages as Turn[], { allowTools: true });
+    primed = await prime(first.iterator);
+  } catch (error) {
+    return providerError(error);
   }
+  if (!primed.ok) {
+    // Nothing has been sent yet, so the status is still ours to choose.
+    first.abort();
+    return providerError(primed.error);
+  }
+
+  const ctx: ToolContext = { clerkUserId, env: process.env, now: new Date() };
+  const encoder = new TextEncoder();
 
   const readable = new ReadableStream<Uint8Array>({
     async start(controller) {
-      let produced = false;
-      const write = (text: string) => {
-        controller.enqueue(encoder.encode(text));
-        produced = true;
-      };
       try {
-        for (const chunk of opened.first) write(chunk);
-        if (!opened.exhausted) {
-          for await (const chunk of remainingText(iterator)) write(chunk);
+        for await (const chunk of runAssistant(
+          messages as Turn[],
+          { iterator: primed.iterator, abort: first.abort },
+          ctx,
+          open
+        )) {
+          controller.enqueue(encoder.encode(chunk));
         }
-        if (!produced) write(EMPTY_TURN_TEXT);
       } finally {
         controller.close();
       }
     },
     cancel() {
       // The reader went away; stop generating.
-      stream.abort();
+      first.abort();
     },
   });
 
   return new Response(readable, { headers: STREAM_HEADERS });
+}
+
+type PrimedIterator =
+  | { ok: false; error: unknown }
+  | { ok: true; iterator: AsyncIterator<ProviderEvent> };
+
+/**
+ * Pull the first event, then hand back an iterator that starts with it.
+ *
+ * This is what makes the status code trustworthy. With tools in play the first
+ * thing a turn produces may be a tool call rather than text, so waiting for
+ * text would drain an entire round before deciding on a status — and a turn
+ * that legitimately opens with a lookup would be reported as empty.
+ */
+async function prime(iterator: AsyncIterator<ProviderEvent>): Promise<PrimedIterator> {
+  let head: IteratorResult<ProviderEvent>;
+  try {
+    head = await iterator.next();
+  } catch (error) {
+    return { ok: false, error };
+  }
+  let replayed = false;
+  return {
+    ok: true,
+    iterator: {
+      async next() {
+        if (!replayed) {
+          replayed = true;
+          return head;
+        }
+        return iterator.next();
+      },
+    },
+  };
+}
+
+/**
+ * The tools, as the provider sees them.
+ *
+ * `strict` holds the provider to each tool's schema, which is the same schema
+ * the server re-validates against before running anything — belt and braces,
+ * because the second check is the one that actually protects the database.
+ */
+function toolParams(): Anthropic.Beta.BetaToolUnion[] {
+  return READ_ONLY_TOOLS.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.inputSchema as Anthropic.Beta.BetaTool["input_schema"],
+    strict: true,
+  }));
 }
 
 /**
@@ -177,7 +257,7 @@ async function providerResponse(
  */
 function providerError(error: unknown): NextResponse {
   if (error instanceof Anthropic.APIUserAbortError) {
-    // The caller hung up before the first token. Nothing to report.
+    // The caller hung up before the first event. Nothing to report.
     return NextResponse.json({ error: "Cancelled" }, { status: 499, headers: NO_STORE });
   }
   if (error instanceof Anthropic.RateLimitError) {
@@ -198,40 +278,4 @@ function providerError(error: unknown): NextResponse {
     return NextResponse.json({ error: "Service unavailable" }, { status: 503, headers: NO_STORE });
   }
   return NextResponse.json({ error: "Service unavailable" }, { status: 503, headers: NO_STORE });
-}
-
-/**
- * The original mock stream, unchanged in behaviour.
- *
- * Kept so an environment without a key behaves exactly as it did before, and
- * so the thread UI stays exercisable in development without spending anything.
- */
-function mockResponse(messages: ChatTurn[]): Response {
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const reply = mockReplyFor(lastUser?.content ?? "");
-
-  const encoder = new TextEncoder();
-  const chunks = reply.match(/\S+\s*/g) ?? [reply];
-
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        // First-token latency, then a steady token cadence with jitter.
-        await sleep(350 + Math.random() * 400);
-        for (const chunk of chunks) {
-          controller.enqueue(encoder.encode(chunk));
-          await sleep(12 + Math.random() * 28);
-        }
-        controller.close();
-      } catch {
-        controller.close();
-      }
-    },
-  });
-
-  return new Response(stream, { headers: STREAM_HEADERS });
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
