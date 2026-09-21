@@ -13,7 +13,7 @@
 import type { LeadSource, LeadStage } from "../data/types.ts";
 import { ALL_CONTACT_STAGES } from "./stages.ts";
 
-const SOURCES: readonly LeadSource[] = ["referral", "sphere", "sign_call", "website", "open_house", "past_client", "social", "advertising", "walk_in", "other"];
+export const SOURCES: readonly LeadSource[] = ["referral", "sphere", "sign_call", "website", "open_house", "past_client", "social", "advertising", "walk_in", "other"];
 
 export type FilterReader = (key: string) => string | null;
 

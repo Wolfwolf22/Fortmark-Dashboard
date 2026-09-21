@@ -13,7 +13,7 @@
 import type { TransactionFilters, TransactionSide, TransactionStage } from "../data/types.ts";
 import { ALL_STAGES } from "./stages.ts";
 
-const SIDES: readonly TransactionSide[] = ["listing", "buyer", "dual", "landlord", "tenant"];
+export const SIDES: readonly TransactionSide[] = ["listing", "buyer", "dual", "landlord", "tenant"];
 
 export type FilterReader = (key: string) => string | null;
 
