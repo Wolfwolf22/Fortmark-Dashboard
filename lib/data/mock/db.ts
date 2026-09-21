@@ -5,7 +5,7 @@
  * hooks refetch — the same shape a real mutation + revalidation has.
  */
 
-import {
+import type {
   Agent,
   AppNotification,
   CalendarEvent,
@@ -25,9 +25,9 @@ import {
   Transaction,
   TransactionDocument,
   TransactionStage,
-  TRANSACTION_STAGES,
-} from "../types";
-import { chance, float, int, listingPrice, mulberry32, pick, shuffle } from "./random";
+} from "../types.ts";
+import { TRANSACTION_STAGES } from "../types.ts";
+import { chance, float, int, listingPrice, mulberry32, pick, shuffle } from "./random.ts";
 
 // Anchor "now" to the top of the current hour so server render and client
 // hydration agree on every derived date within the hour.

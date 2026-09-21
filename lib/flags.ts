@@ -76,6 +76,26 @@ export function contactsDatabaseEnabled(env: EnvLike = process.env): boolean {
 }
 
 /**
+ * Show the generated sample brokerage on the Home dashboard.
+ *
+ * The one sanctioned way a fabricated operational number may reach a screen,
+ * and it exists so that "demo this product" does not become a reason to let
+ * fiction leak into the real path. Off — the default — a domain that is not
+ * connected reports itself as not connected, and Home says so rather than
+ * inventing a figure. On, Home serves the sample set and labels it on screen.
+ *
+ * Deliberately strict: only the exact string "1". A flag that makes the
+ * dashboard state things that are not true should never be switched on by a
+ * generous reading of a typo.
+ *
+ * It never overrides a live domain: where real records are configured, the
+ * real numbers win and this flag changes nothing.
+ */
+export function sampleDashboardEnabled(env: EnvLike = process.env): boolean {
+  return env.SAMPLE_DASHBOARD_ENABLED === "1";
+}
+
+/**
  * Hand dashboard authorization to the database.
  *
  * Hard-disabled in Release 1. The constant below is the guard: even if the

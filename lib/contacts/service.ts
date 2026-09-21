@@ -73,7 +73,10 @@ export async function resolveActor(
   return { ok: true, value: { actor: result.actor, db: result.db } };
 }
 
-function visibleTo(actor: Actor) {
+/** The visibility predicate, as SQL. Mirrors `canSee` for a query.
+ *  Exported so aggregates (lib/contacts/metrics.ts) count exactly the rows
+ *  this actor may list — a total is a disclosure like any other. */
+export function visibleTo(actor: Actor) {
   const tenant = eq(contacts.brokerageKey, actor.brokerageKey);
   return isPrivileged(actor) ? tenant : and(tenant, eq(contacts.assignedAgentUserId, actor.userId));
 }

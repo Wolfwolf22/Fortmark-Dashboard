@@ -10,8 +10,8 @@ import {
   startOfWeek,
   startOfYear,
 } from "date-fns";
-import { DateRange, DateRangePreset } from "@/lib/data/types";
-import { now } from "@/lib/data/mock/db";
+import type { DateRange, DateRangePreset } from "./data/types.ts";
+import { now } from "./data/mock/db.ts";
 
 export const PRESET_LABELS: Record<DateRangePreset, string> = {
   today: "Today",

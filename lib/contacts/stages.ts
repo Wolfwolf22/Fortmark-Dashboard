@@ -29,6 +29,37 @@ export type ContactStage = LifecycleStage | ExitStage;
 
 export const ALL_CONTACT_STAGES: readonly ContactStage[] = [...LIFECYCLE_STAGES, ...EXIT_STAGES];
 
+/**
+ * "Active client" — one definition, for every screen and every metric.
+ *
+ * A person the brokerage is currently working for: represented, actively
+ * working, or under contract. Not `closed` (the work is done, the
+ * relationship has not yet settled into `past_client`), and not the earlier
+ * courtship stages, where nobody has agreed to anything yet. Widgets and the
+ * metrics service both import this rather than each deciding what "active"
+ * means.
+ */
+export const ACTIVE_CLIENT_STAGES = [
+  "representation",
+  "active_client",
+  "under_contract",
+] as const;
+
+/**
+ * The stages where a contact is still being worked — everything before the
+ * relationship settles and excluding both exits. Used for follow-up duty:
+ * a lost or archived person is not owed a call.
+ */
+export const OPEN_PIPELINE_STAGES = [
+  "lead",
+  "contacted",
+  "qualified",
+  "appointment",
+  "representation",
+  "active_client",
+  "under_contract",
+] as const;
+
 export const CONTACT_STAGE_LABELS: Record<ContactStage, string> = {
   lead: "Lead",
   contacted: "Contacted",
