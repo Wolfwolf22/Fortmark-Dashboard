@@ -2,16 +2,17 @@
 
 /**
  * The Home bento registry: one entry per widget, mapping id → component and
- * grid span. Order comes from the layout store (drag-reorderable); spans are
- * fixed here. Widget components live in `./widgets/` and receive no props —
- * each reads its period via `useWidgetPeriod(id)`.
+ * the grid span it occupies. Order lives in the layout store; span is fixed
+ * here. Widget components live in `./widgets/` and receive no props — each
+ * reads the shared metrics payload via `useHomeMetrics()`.
+ *
+ * `spanFor()` in `./widget-visibility` may narrow a span when a module's
+ * content has collapsed to a status line; this file holds the span a module
+ * takes when it has something to show.
  */
-import type { ComponentType } from "react";
+import { ComponentType } from "react";
 import { WidgetId } from "@/lib/stores/layout";
 import FeaturedListingWidget from "./widgets/featured-listing";
-import UnderContractWidget from "./widgets/under-contract";
-import ClosedWidget from "./widgets/closed";
-import PipelineValueWidget from "./widgets/pipeline-value";
 import ClosedVolumeWidget from "./widgets/closed-volume";
 import ProjectedCommissionWidget from "./widgets/projected-commission";
 import TransactionsTableWidget from "./widgets/transactions-table";
@@ -28,51 +29,15 @@ export interface WidgetDef {
 }
 
 export const WIDGETS: Record<WidgetId, WidgetDef> = {
-  "featured-listing": {
-    id: "featured-listing",
-    component: FeaturedListingWidget,
-    // Wide and short since Release 1.1: it sits below the commission chart
-    // rather than in the upper-left tile the identity card now owns.
-    spanClass: "md:col-span-6 xl:col-span-12",
-  },
-  "under-contract": {
-    id: "under-contract",
-    component: UnderContractWidget,
-    spanClass: "md:col-span-3 xl:col-span-4",
-  },
-  closed: {
-    id: "closed",
-    component: ClosedWidget,
-    spanClass: "md:col-span-3 xl:col-span-4",
-  },
-  "pipeline-value": {
-    id: "pipeline-value",
-    component: PipelineValueWidget,
-    spanClass: "md:col-span-3 xl:col-span-4",
-  },
-  "closed-volume": {
-    id: "closed-volume",
-    component: ClosedVolumeWidget,
-    spanClass: "md:col-span-3 xl:col-span-4",
-  },
-  "projected-commission": {
-    id: "projected-commission",
-    component: ProjectedCommissionWidget,
+  // Beside the identity card's 4 columns, so both sit in the first viewport.
+  compliance: {
+    id: "compliance",
+    component: ComplianceWidget,
     spanClass: "md:col-span-6 xl:col-span-8",
   },
   "transactions-table": {
     id: "transactions-table",
     component: TransactionsTableWidget,
-    spanClass: "md:col-span-6 xl:col-span-12",
-  },
-  "lead-source": {
-    id: "lead-source",
-    component: LeadSourceWidget,
-    spanClass: "md:col-span-3 xl:col-span-4",
-  },
-  leaderboard: {
-    id: "leaderboard",
-    component: LeaderboardWidget,
     spanClass: "md:col-span-6 xl:col-span-8",
   },
   "market-pulse": {
@@ -80,9 +45,29 @@ export const WIDGETS: Record<WidgetId, WidgetDef> = {
     component: MarketPulseWidget,
     spanClass: "md:col-span-3 xl:col-span-6",
   },
-  compliance: {
-    id: "compliance",
-    component: ComplianceWidget,
+  "closed-volume": {
+    id: "closed-volume",
+    component: ClosedVolumeWidget,
     spanClass: "md:col-span-3 xl:col-span-6",
+  },
+  "projected-commission": {
+    id: "projected-commission",
+    component: ProjectedCommissionWidget,
+    spanClass: "md:col-span-6 xl:col-span-6",
+  },
+  "lead-source": {
+    id: "lead-source",
+    component: LeadSourceWidget,
+    spanClass: "md:col-span-3 xl:col-span-6",
+  },
+  leaderboard: {
+    id: "leaderboard",
+    component: LeaderboardWidget,
+    spanClass: "md:col-span-6 xl:col-span-8",
+  },
+  "featured-listing": {
+    id: "featured-listing",
+    component: FeaturedListingWidget,
+    spanClass: "md:col-span-6 xl:col-span-12",
   },
 };

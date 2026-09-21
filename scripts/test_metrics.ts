@@ -43,6 +43,8 @@ import {
 } from "../lib/contacts/stages.ts";
 import { sampleDashboardEnabled } from "../lib/flags.ts";
 import { sampleBrokerageMetrics } from "../lib/data/sample-metrics.ts";
+import { isFirstUse, leaderboardVisible, mlsIsCompact } from "../lib/metrics/home-layout.ts";
+import { DEFAULT_WIDGET_ORDER } from "../lib/stores/widget-order.ts";
 
 /**
  * A file's code, with comments stripped.
@@ -55,6 +57,13 @@ function code(path: string): string {
   return readFileSync(path, "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+}
+
+/** Every widget the Home grid can render, taken from the order itself. */
+const HOME_WIDGETS = [...DEFAULT_WIDGET_ORDER];
+
+function widgetSource(id: string): string {
+  return readFileSync(`components/home/widgets/${id}.tsx`, "utf8");
 }
 
 let passed = 0;
@@ -324,34 +333,124 @@ check("Home asks for metrics exactly once", (() => {
   const calls = (provider.match(/getBrokerageMetrics\(\)/g) ?? []).length;
   if (calls !== 1) return false;
   // No widget may fetch its own copy.
-  const widgets = ["under-contract", "closed", "pipeline-value", "closed-volume", "projected-commission", "lead-source", "leaderboard", "compliance", "market-pulse"];
-  return widgets.every((w) => !readFileSync(`components/home/widgets/${w}.tsx`, "utf8").includes("getBrokerageMetrics"));
+  return HOME_WIDGETS.every((w) => !widgetSource(w).includes("getBrokerageMetrics"));
 })());
-check("no Home widget still reads the generated metric series", (() => {
-  const widgets = ["under-contract", "closed", "pipeline-value", "closed-volume", "projected-commission", "lead-source", "leaderboard", "compliance", "market-pulse"];
-  return widgets.every((w) => !readFileSync(`components/home/widgets/${w}.tsx`, "utf8").includes("getDashboardMetrics"));
-})());
-check("the invented brokerage goals are gone from Home", (() => {
-  for (const w of ["under-contract", "closed"]) {
-    if (/goal/i.test(code(`components/home/widgets/${w}.tsx`))) return false;
-  }
-  return true;
-})());
-check("every widget renders unavailability through the one shared component", (() => {
-  const widgets = ["under-contract", "closed", "pipeline-value", "closed-volume", "projected-commission", "lead-source", "leaderboard", "compliance", "market-pulse"];
-  return widgets.every((w) => {
-    const src = readFileSync(`components/home/widgets/${w}.tsx`, "utf8");
-    return src.includes("MetricState");
-  });
-})());
+check("no Home widget still reads the generated metric series",
+  HOME_WIDGETS.every((w) => !widgetSource(w).includes("getDashboardMetrics")));
+check("the invented brokerage goals are gone from Home",
+  HOME_WIDGETS.every((w) => !/goal/i.test(code(`components/home/widgets/${w}.tsx`))) &&
+    !/goal/i.test(code("components/home/daily-brief.tsx")));
+check("every widget renders unavailability through the one shared component",
+  HOME_WIDGETS.filter((w) => w !== "featured-listing" && w !== "transactions-table").every((w) =>
+    widgetSource(w).includes("MetricState")
+  ));
 check("Home says out loud when it is showing a sample", (() => {
-  const src = readFileSync("components/home/metrics-banner.tsx", "utf8");
+  const src = readFileSync("components/home/daily-brief.tsx", "utf8");
   return src.includes('metrics.source === "sample"') && src.includes("Sample dashboard");
 })());
 check("Home does not feature a generated listing", (() => {
   const src = code("components/home/widgets/featured-listing.tsx");
-  return /source !== "mls"[\s\S]{0,200}UnavailableBody/.test(src);
+  return (
+    /const connected = data\?\.listing\?\.source === "mls"/.test(src) &&
+    /!connected \?[\s\S]{0,120}UnavailableBody/.test(src)
+  );
 })());
+
+// --- Home hierarchy: what the real-data transition forced ---------------------------
+check("needs attention leads the page", DEFAULT_WIDGET_ORDER[0] === "compliance");
+check("the MLS module cannot lead the page",
+  DEFAULT_WIDGET_ORDER[DEFAULT_WIDGET_ORDER.length - 1] === "featured-listing");
+check("the headline figures are not reorderable widgets",
+  !HOME_WIDGETS.some((id) => ["under-contract", "pipeline-value", "closed"].includes(id)));
+check("the removed KPI cards are really gone", (() => {
+  for (const gone of ["under-contract", "pipeline-value", "closed"]) {
+    try {
+      widgetSource(gone);
+      return false;
+    } catch {
+      // Absent, as intended.
+    }
+  }
+  return true;
+})());
+check("the brief carries the four headline figures", (() => {
+  const src = readFileSync("components/home/daily-brief.tsx", "utf8");
+  return ["Active transactions", "Pipeline value", "Projected commission", "Active clients"].every(
+    (label) => src.includes(`label: "${label}"`)
+  );
+})());
+check("a figure the source cannot state is an em dash, never a zero", (() => {
+  const src = code("components/home/daily-brief.tsx");
+  return src.includes('{figure.value ?? "—"}') && /value: deals \? /.test(src);
+})());
+check("the brief does not greet twice", (() => {
+  const src = code("components/home/daily-brief.tsx");
+  return !/Good morning|Welcome back/.test(src);
+})());
+check("the brief names the scope it is reporting", (() => {
+  const src = readFileSync("components/home/daily-brief.tsx", "utf8");
+  return src.includes("scopeLabel(metrics.scope)");
+})());
+check("the brief is a divided field, not four cards", (() => {
+  const src = readFileSync("components/home/daily-brief.tsx", "utf8");
+  // Hairline rules drawn by a 1px gap over the border colour; no card shells.
+  return src.includes("gap-px border-y border-border bg-border") && !/\bCard\b/.test(src);
+})());
+
+// --- Role-aware presentation ---------------------------------------------------------
+const WITH_LEADERBOARD = { ...OFF, leaderboard: available([]) } as BrokerageMetrics;
+check("an agent is not shown a brokerage leaderboard",
+  !leaderboardVisible(OFF) && OFF.leaderboard.availability === "not_permitted");
+check("a broker is", leaderboardVisible(WITH_LEADERBOARD));
+check("an unresolved payload shows no leaderboard either", !leaderboardVisible(undefined));
+check("the MLS module is compact until the MLS is connected",
+  mlsIsCompact(OFF) &&
+    mlsIsCompact(undefined) &&
+    !mlsIsCompact({ ...OFF, listings: available({ activeCount: 3 }) } as BrokerageMetrics));
+
+// --- First use ------------------------------------------------------------------------
+const EMPTY_BROKERAGE = {
+  ...OFF,
+  transactions: available({
+    activeCount: 0, onHoldCount: 0, activeVolumeCents: 0, activeVolumeUnpricedCount: 0,
+    projectedCommissionCents: 0, projectedCommissionUntermedCount: 0,
+    scheduledClosingsThisMonth: 0, closedThisMonthCount: 0, closedThisMonthVolumeCents: 0,
+    monthly: monthSeries(NOW, 12).map((month) => ({ month, closedCount: 0, closedVolumeCents: 0, commissionCents: 0 })),
+  }),
+  contacts: available({
+    activeClients: 0, newLeadsThisMonth: 0, followUpsDue: 0,
+    lifecycle: LIFECYCLE_STAGES.map((stage) => ({ stage, count: 0 })),
+    newLeadsBySource: [],
+  }),
+} as BrokerageMetrics;
+check("a genuinely empty brokerage is offered somewhere to start", isFirstUse(EMPTY_BROKERAGE));
+check("one deal is enough to stop offering it", (() => {
+  const withDeal = {
+    ...EMPTY_BROKERAGE,
+    transactions: available({ ...EMPTY_BROKERAGE.transactions.data!, activeCount: 1 }),
+  } as BrokerageMetrics;
+  return !isFirstUse(withDeal);
+})());
+check("one contact is enough to stop offering it", (() => {
+  const lifecycle = LIFECYCLE_STAGES.map((stage, i) => ({ stage, count: i === 0 ? 1 : 0 }));
+  const withContact = {
+    ...EMPTY_BROKERAGE,
+    contacts: available({ ...EMPTY_BROKERAGE.contacts.data!, lifecycle }),
+  } as BrokerageMetrics;
+  return !isFirstUse(withContact);
+})());
+check("a closed deal last spring stops offering it", (() => {
+  const monthly = monthSeries(NOW, 12).map((month, i) => ({
+    month, closedCount: i === 3 ? 1 : 0, closedVolumeCents: 0, commissionCents: 0,
+  }));
+  const withHistory = {
+    ...EMPTY_BROKERAGE,
+    transactions: available({ ...EMPTY_BROKERAGE.transactions.data!, monthly }),
+  } as BrokerageMetrics;
+  return !isFirstUse(withHistory);
+})());
+check("an unreachable database is never mistaken for a new brokerage",
+  !isFirstUse(BROKEN) && !isFirstUse(OFF));
 check("the recent-activity feed reads events, not the audit log", (() => {
   const txn = readFileSync("lib/transactions/metrics.ts", "utf8");
   const contact = readFileSync("lib/contacts/metrics.ts", "utf8");

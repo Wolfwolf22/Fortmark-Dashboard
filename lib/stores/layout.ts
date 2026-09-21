@@ -31,11 +31,12 @@ export const useLayoutStore = create<LayoutState>()(
         set((s) => ({ widgetPeriods: { ...s.widgetPeriods, [id]: preset } })),
     }),
     {
-      // v2: the default order changed in Release 1.1. `merge` below appends
-      // unknown ids at the END, so a persisted v1 order would have kept
-      // featured-listing in first place forever for anyone who had already
-      // loaded the dashboard. A new key retires those saved orders.
-      name: "fm.dashboard.layout.v2",
+      // v3: Release E1 replaced four KPI cards with the daily brief and moved
+      // "Needs attention" to the top. `merge` below appends unknown ids at the
+      // END, so a saved v2 order would have kept attention in last place
+      // forever for anyone who had already loaded the dashboard — which is the
+      // single thing this release set out to fix. A new key retires them.
+      name: "fm.dashboard.layout.v3",
       merge: (persisted, current) => {
         // Tolerate widget ids added/removed between versions.
         const p = persisted as Partial<LayoutState> | undefined;

@@ -16,13 +16,21 @@ import { formatCurrency, initials } from "@/lib/utils";
 import { ListingImage } from "@/components/listings/listing-image";
 
 /**
- * The featured listing on Home. Since Release 1.1 this is a wide, short card
- * sitting between the commission chart and the transactions table — the
- * upper-left tile it used to occupy now belongs to the permanent identity card.
+ * The featured listing, when there is an MLS to feature one from.
  *
- * The layout is horizontal from `sm` up: image on the left at a fixed ratio,
- * details beside it. It stacks on the narrowest screens so nothing overflows.
- * Period-independent; the whole body links to the listing detail page.
+ * Two quite different cards share this file, because they are two states of
+ * one thing. Connected, it is a wide image card: photograph on the left from
+ * `sm` up, details beside it, the whole body linking to the listing.
+ *
+ * Not connected, it collapses to a narrow integration status — and the grid
+ * gives it a narrow span to match (see `widget-visibility.ts`). That pairing
+ * is the point. A full-width panel reading "Not connected" was the largest
+ * element on a page whose entire purpose is to show what matters today, and an
+ * optional integration being absent should never be the loudest thing a
+ * brokerage sees each morning.
+ *
+ * What it must never do is imply a fact: no invented property, and never
+ * "0 listings", which would assert something false about the market.
  */
 export default function FeaturedListingWidget() {
   const { data, loading, error } = useQuery<{
@@ -36,10 +44,14 @@ export default function FeaturedListingWidget() {
     return { listing, agent };
   }, []);
 
+  // A sample row is not a listing for these purposes: Home shows the MLS state
+  // rather than a generated property.
+  const connected = data?.listing?.source === "mls";
+
   return (
     <WidgetCard
       icon={Building2}
-      title="Featured listing"
+      title={connected ? "Featured listing" : "MLS"}
       preset={null}
       expandable={false}
       contentClassName="flex flex-col"
@@ -56,14 +68,14 @@ export default function FeaturedListingWidget() {
           title="No listing to feature"
           description="Add an active listing and it will be spotlighted here."
         />
-      ) : data.listing.source !== "mls" ? (
+      ) : !connected ? (
         // Home is the executive brief, and a generated listing has no place on
         // it. The listings screens still serve the sample set with a notice on
         // the page; here the honest answer is simply that the MLS is not
         // connected. Restored automatically the moment a live feed is.
         <UnavailableBody
           availability="not_configured"
-          detail="Connect the MLS to feature a live listing here."
+          detail="Listings appear here once the MLS feed is connected."
         />
       ) : (
         <FeaturedBody listing={data.listing} agent={data.agent} />

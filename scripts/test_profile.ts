@@ -881,7 +881,7 @@ check("empty URL is null", toProfileUrl("") === null);
   check("vcard filename falls back", vCardFilename("!!!") === "fortmark-contact.vcf");
 }
 
-// --- Home layout: the identity card is fixed, featured listing moved ------
+// --- Home layout: the identity card is fixed, attention leads ------------
 check(
   "identity card is not a draggable widget id",
   !(DEFAULT_WIDGET_ORDER as readonly string[]).some((id) =>
@@ -889,22 +889,27 @@ check(
   )
 );
 check(
-  "featured listing is no longer the first widget",
-  (DEFAULT_WIDGET_ORDER as readonly string[])[0] !== "featured-listing"
+  "needs attention is the first widget",
+  DEFAULT_WIDGET_ORDER[0] === "compliance"
 );
 check(
-  "featured listing sits directly after projected commission",
-  DEFAULT_WIDGET_ORDER.indexOf("featured-listing") ===
-    DEFAULT_WIDGET_ORDER.indexOf("projected-commission") + 1
+  "the MLS module is last, so an unconnected integration cannot lead the page",
+  DEFAULT_WIDGET_ORDER[DEFAULT_WIDGET_ORDER.length - 1] === "featured-listing"
 );
 check(
-  "featured listing sits directly before the transactions table",
-  DEFAULT_WIDGET_ORDER.indexOf("transactions-table") ===
-    DEFAULT_WIDGET_ORDER.indexOf("featured-listing") + 1
+  "the headline figures are not draggable widgets",
+  !(DEFAULT_WIDGET_ORDER as readonly string[]).some((id) =>
+    ["under-contract", "pipeline-value", "closed", "active-clients"].includes(id)
+  )
 );
 check(
-  "every widget id is still present after the move",
-  DEFAULT_WIDGET_ORDER.length === 11
+  "what is being worked outranks how the year went",
+  DEFAULT_WIDGET_ORDER.indexOf("transactions-table") <
+    DEFAULT_WIDGET_ORDER.indexOf("closed-volume")
+);
+check(
+  "the widget set is the reduced one",
+  DEFAULT_WIDGET_ORDER.length === 8
 );
 
 // --- Presence fields are writable, protected fields still are not ---------

@@ -13,21 +13,17 @@ import type { MonthPoint } from "@/lib/metrics/types";
 import { formatCurrency } from "@/lib/utils";
 
 /**
- * Commission, split into the two statements it actually makes.
+ * Commission that has actually been closed, by the month it closed in.
  *
- * The headline is a **projection**: gross commission implied by the terms
- * entered on the deals currently being worked. It is not revenue and it is not
- * earned — it is what the paperwork says these deals would pay if they all
- * closed as written, and the card says exactly that underneath. Deals with no
- * commission terms project nothing and are counted separately, so the figure
- * is never mistaken for a complete one.
+ * History only. The forward **projection** now lives in the daily brief at the
+ * top of the page, and keeping the two apart is the point: this card used to
+ * carry a projected headline directly above a chart of realised commission,
+ * which invited exactly the misreading the whole release exists to prevent —
+ * that money the paperwork implies is money that has arrived.
  *
- * The bars are **history**: commission from deals that actually closed, by the
- * month they closed in. Projections and history never share an axis.
- *
- * All of it comes from `projectCommission` in the transaction domain. There is
- * one implementation of commission arithmetic in this codebase and a chart is
- * not allowed to become a second one.
+ * Every figure comes from `projectCommission` in the transaction domain. There
+ * is one implementation of commission arithmetic in this codebase and a chart
+ * is not allowed to become a second one.
  */
 export default function ProjectedCommissionWidget() {
   const { metrics } = useHomeMetrics();
@@ -35,37 +31,14 @@ export default function ProjectedCommissionWidget() {
   const [selected, setSelected] = React.useState<string | null>(null);
 
   return (
-    <WidgetCard icon={BarChart3} title="Projected commission" preset={null}>
+    <WidgetCard icon={BarChart3} title="Commission closed" preset={null}>
       <MetricState
         group={metrics?.transactions}
         detail="Connect the transaction database to see commission."
-        skeleton={
-          <div className="space-y-3">
-            <Skeleton className="h-10 w-40" />
-            <Skeleton className="h-[220px] w-full rounded-panel" />
-          </div>
-        }
+        skeleton={<Skeleton className="h-[220px] w-full rounded-panel" />}
       >
         {(data) => (
           <div>
-            <div className="mb-4">
-              <p className="font-display text-4xl leading-none tabular">
-                {formatCurrency(centsToDollars(data.projectedCommissionCents))}
-              </p>
-              <div className="mt-2 space-y-1">
-                <MetricNote>
-                  Gross, projected from the terms on {data.activeCount} active{" "}
-                  {data.activeCount === 1 ? "deal" : "deals"} — not earned
-                </MetricNote>
-                {data.projectedCommissionUntermedCount > 0 && (
-                  <MetricNote>
-                    {data.projectedCommissionUntermedCount}{" "}
-                    {data.projectedCommissionUntermedCount === 1 ? "deal has" : "deals have"} no
-                    commission terms entered and project nothing
-                  </MetricNote>
-                )}
-              </div>
-            </div>
             <ClosedCommissionChart
               months={data.monthly}
               selected={selected}

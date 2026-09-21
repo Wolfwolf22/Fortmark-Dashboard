@@ -105,6 +105,44 @@ It exists because "the environment variable is set" is not proof that the
 running deployment resolved it. An operator must be able to ask a deployment
 whether it is serving real records before signing into it.
 
+## The Home hierarchy (product audit, post-E1)
+
+Making the data real exposed a layout built for mocks. With generators in
+place every one of eleven equal-weight cards always had something to show, so
+order barely mattered. With real records, several are empty or forbidden for a
+given reader — and the one module that answers "what should I do today" was
+eleventh of eleven.
+
+What changed:
+
+| Before | After |
+|---|---|
+| 5 KPI cards in the first viewport | 4 figures in an editorial band, above the grid |
+| "Needs attention" last | First widget |
+| Recent activity tenth | Third |
+| MLS: full-width "Not connected" band | Narrow integration status, last |
+| Leaderboard: 8-col "not for your role" for every agent | Not rendered for agents |
+| Closed count and closed volume in two cards | One card |
+| Projected headline above a closed-commission chart | Projection in the band; chart is history only |
+| 11 widgets | 8 |
+
+The band is not four cards. FortMark's system is editorial — hierarchy from
+weight and spacing, structure from hairline rules — so the figures sit in one
+aligned field divided by rules. A figure a source cannot state renders as an em
+dash with the reason beneath it, never as a zero.
+
+Order (`lib/stores/widget-order.ts`) reads down the page as: what to act on,
+what is being worked, what just happened, how the year is going, then what
+belongs to someone else or another system. The four headline figures are
+deliberately not reorderable widgets — a dashboard whose first numbers can be
+dragged below the fold is not a brief.
+
+`lib/metrics/home-layout.ts` holds the three decisions this forced, as pure
+predicates so they are tested directly: `leaderboardVisible`, `mlsIsCompact`,
+`isFirstUse`. Each hides or reshapes presentation only — no figure is invented
+or suppressed, and `isFirstUse` is false when a domain is *unavailable*, so a
+database outage is never mistaken for a new brokerage.
+
 ## Still fiction
 
 - **Reports** (`getDashboardMetrics`) is still the generated series. Home no

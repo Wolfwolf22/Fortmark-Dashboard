@@ -37,13 +37,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DEFAULT_WIDGET_ORDER, WidgetId, useLayoutStore } from "@/lib/stores/layout";
 import { cn } from "@/lib/utils";
 import { WIDGETS } from "./widget-registry";
-import { HomeMetricsProvider } from "./metrics-provider";
-import { HomeMetricsBanner } from "./metrics-banner";
+import { HomeMetricsProvider, useHomeMetrics } from "./metrics-provider";
+import { DailyBrief } from "./daily-brief";
+import { spanFor, visibleWidgets } from "./widget-visibility";
 
 const GRID_CLASS = "grid grid-cols-1 gap-5 md:grid-cols-6 xl:grid-cols-12";
 
 function SortableWidget({ id }: { id: WidgetId }) {
   const def = WIDGETS[id];
+  const { metrics } = useHomeMetrics();
   const {
     attributes,
     listeners,
@@ -68,7 +70,7 @@ function SortableWidget({ id }: { id: WidgetId }) {
       }}
       className={cn(
         "group relative",
-        def.spanClass,
+        spanFor(id, metrics),
         isDragging && "z-20 rounded-card shadow-card-hover"
       )}
     >
@@ -123,7 +125,12 @@ function GridSkeleton({
 
 export function BentoGrid({
   fixedLead,
-  fixedLeadSpanClass = "md:col-span-3 xl:col-span-4 md:row-span-2",
+  // Full width at md so the 6-column grid packs without a hole beside it, and
+  // a two-row column only at xl, where the attention panel and the deals table
+  // sit alongside it. Last on a phone: the operating content — the brief above
+  // and "Needs attention" below — is what a mobile visit is for, and a profile
+  // card between them pushed the day's work off the first screen.
+  fixedLeadSpanClass = "order-last md:order-none md:col-span-6 xl:col-span-4 xl:row-span-2",
 }: {
   /** Permanent, non-sortable first cell. Omitted when the feature is off. */
   fixedLead?: React.ReactNode;
@@ -137,6 +144,46 @@ export function BentoGrid({
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  if (!mounted)
+    return (
+      <GridSkeleton fixedLead={fixedLead} fixedLeadSpanClass={fixedLeadSpanClass} />
+    );
+
+  return (
+    <HomeMetricsProvider>
+      <DailyBrief />
+      <SortableGrid
+        fixedLead={fixedLead}
+        fixedLeadSpanClass={fixedLeadSpanClass}
+        widgetOrder={widgetOrder}
+        setWidgetOrder={setWidgetOrder}
+        resetLayout={resetLayout}
+      />
+    </HomeMetricsProvider>
+  );
+}
+
+/**
+ * The reorderable grid.
+ *
+ * Split out so it can read the metrics context the provider above it
+ * establishes: which widgets are worth rendering for this reader, and how wide
+ * each one should be, both depend on the payload.
+ */
+function SortableGrid({
+  fixedLead,
+  fixedLeadSpanClass,
+  widgetOrder,
+  setWidgetOrder,
+  resetLayout,
+}: {
+  fixedLead?: React.ReactNode;
+  fixedLeadSpanClass: string;
+  widgetOrder: WidgetId[];
+  setWidgetOrder: (order: WidgetId[]) => void;
+  resetLayout: () => void;
+}) {
+  const { metrics } = useHomeMetrics();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -151,25 +198,23 @@ export function BentoGrid({
     setWidgetOrder(arrayMove(widgetOrder, oldIndex, newIndex));
   }
 
-  if (!mounted)
-    return (
-      <GridSkeleton fixedLead={fixedLead} fixedLeadSpanClass={fixedLeadSpanClass} />
-    );
-
+  // Dragging must operate on exactly the ids that are on screen, so the
+  // sortable context is built from the visible list rather than the stored
+  // one. Reordering still writes the full stored order back.
+  const visible = visibleWidgets(widgetOrder, metrics);
   const orderChanged = widgetOrder.join("|") !== DEFAULT_WIDGET_ORDER.join("|");
 
   return (
-    <HomeMetricsProvider>
-      <HomeMetricsBanner />
+    <>
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
         onDragEnd={handleDragEnd}
       >
-        <SortableContext items={widgetOrder} strategy={rectSortingStrategy}>
+        <SortableContext items={visible} strategy={rectSortingStrategy}>
           <div className={GRID_CLASS}>
             {fixedLead && <div className={fixedLeadSpanClass}>{fixedLead}</div>}
-            {widgetOrder.map((id) => (
+            {visible.map((id) => (
               <SortableWidget key={id} id={id} />
             ))}
           </div>
@@ -187,6 +232,6 @@ export function BentoGrid({
           </Button>
         </div>
       )}
-    </HomeMetricsProvider>
+    </>
   );
 }

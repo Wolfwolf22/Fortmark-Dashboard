@@ -11,14 +11,19 @@ import { centsToDollars, monthLabel, toPeriodPoints } from "@/components/home/me
 import { formatCurrencyCompact } from "@/lib/utils";
 
 /**
- * Closed dollars this month, against the twelve months behind it.
+ * Production: what closed this month, against the twelve months behind it.
  *
- * The sparkline is real production history — one point per calendar month,
- * built from the deals that reached `closed` with a closed date in it. The
- * prior-month comparison is only drawn when there is a prior month with
- * something in it: a percentage change from zero is not a percentage change,
- * and an arrow implying growth from nothing is the kind of flattery this
- * dashboard is meant to refuse.
+ * This card absorbed the separate "Closed" count tile, because two cards
+ * reporting the same month's closings — one the number of deals, one their
+ * value — were two answers to one question taking twice the space.
+ *
+ * What is merely *scheduled* to close sits underneath as a separate sentence,
+ * never added in. A deal with a closing date three weeks out has produced no
+ * money, and combining the two is the most flattering arithmetic in real
+ * estate.
+ *
+ * The month-over-month badge is drawn only when the prior month had something
+ * in it: a percentage change from zero is not a percentage change.
  */
 export default function ClosedVolumeWidget() {
   const { metrics } = useHomeMetrics();
@@ -47,9 +52,11 @@ export default function ClosedVolumeWidget() {
                     className="font-display text-4xl leading-none tabular"
                   />
                   <p className="tabular mt-2 text-[13px] text-muted-foreground">
-                    {previous
-                      ? `${monthLabel(previous.month)} ${formatCurrencyCompact(prior)}`
-                      : "No prior month to compare"}
+                    {data.closedThisMonthCount === 0
+                      ? "Nothing closed this month"
+                      : `${data.closedThisMonthCount} ${
+                          data.closedThisMonthCount === 1 ? "deal" : "deals"
+                        } closed in ${metrics ? monthLabel(metrics.monthStart) : "this month"}`}
                   </p>
                 </div>
                 {deltaPct === null ? (
@@ -63,11 +70,19 @@ export default function ClosedVolumeWidget() {
                   <DeltaBadge value={deltaPct} />
                 )}
               </div>
-              {months.some((m) => m.closedVolumeCents > 0) ? (
-                <Sparkline points={toPeriodPoints(months, (m) => m.closedVolumeCents)} />
-              ) : (
-                <MetricNote>Nothing has closed in the last twelve months</MetricNote>
-              )}
+
+              <div className="space-y-3">
+                {months.some((m) => m.closedVolumeCents > 0) ? (
+                  <Sparkline points={toPeriodPoints(months, (m) => m.closedVolumeCents)} />
+                ) : (
+                  <MetricNote>Nothing has closed in the last twelve months</MetricNote>
+                )}
+                <MetricNote>
+                  {data.scheduledClosingsThisMonth === 0
+                    ? "Nothing further is scheduled to close this month"
+                    : `${data.scheduledClosingsThisMonth} more scheduled to close this month`}
+                </MetricNote>
+              </div>
             </div>
           );
         }}
