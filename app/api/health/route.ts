@@ -32,6 +32,18 @@ export async function GET() {
   return NextResponse.json(
     {
       ok: true,
+      /**
+       * Which revision is answering.
+       *
+       * Every phase of this project ends by proving a claim against the
+       * running deployment, and that is impossible without knowing which
+       * build is serving: an alias follows the latest *successful* deployment,
+       * so a failed build is indistinguishable from an unchanged one from the
+       * outside. Seven characters of the commit, supplied by the platform.
+       * The repository is private, so it identifies a build to its operator
+       * and nothing to anyone else.
+       */
+      revision: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local",
       sources: {
         transactions: transactionsSource(),
         contacts: contactsSource(),

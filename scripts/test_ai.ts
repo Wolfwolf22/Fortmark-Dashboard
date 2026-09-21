@@ -390,6 +390,18 @@ await Promise.all(results);
   check("nothing caller-specific is interpolated into the prompt",
     !/\$\{/.test(AI_SYSTEM_PROMPT));
 
+  // The unauthenticated probe must state the assistant's resolved mode, and
+  // which build resolved it — an alias follows the latest SUCCESSFUL
+  // deployment, so without a revision a failed build looks like an unchanged
+  // one from the outside.
+  const health = readFileSync("app/api/health/route.ts", "utf8");
+  check("the health probe reports the assistant's resolved mode",
+    /assistant: assistantAvailability\(\)/.test(health));
+  check("the health probe names the running revision",
+    /revision: process\.env\.VERCEL_GIT_COMMIT_SHA\?\.slice\(0, 7\)/.test(health));
+  check("the health probe still discloses no value or secret",
+    !/ANTHROPIC|CLERK_SECRET|DATABASE_URL|BRIDGE_API_TOKEN/.test(health));
+
   // --- Operator-facing configuration ---------------------------------------
   const envExample = readFileSync(".env.example", "utf8");
   check("the flag is documented by name only", /^AI_CHAT_PROVIDER_ENABLED=$/m.test(envExample));
