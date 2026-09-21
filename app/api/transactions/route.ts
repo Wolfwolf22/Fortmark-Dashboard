@@ -1,40 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
 import { listSampleTransactions } from "@/lib/data/sample-transactions";
-import type { TransactionFilters, TransactionSide, TransactionStage } from "@/lib/data/types";
 import { createTransactionSchema } from "@/lib/transactions/domain";
 import { actorOrResponse, failure, NO_STORE, transactionsSource, unexpected } from "@/lib/transactions/http";
 import { createTransaction, listTransactions } from "@/lib/transactions/service";
-import { ALL_STAGES } from "@/lib/transactions/stages";
+import { parseTransactionFilters } from "@/lib/transactions/filters";
 
 export const runtime = "nodejs";
 
 /** Per-user, confidential; never cached or statically generated. */
 export const dynamic = "force-dynamic";
 
-const SIDES: readonly TransactionSide[] = ["listing", "buyer", "dual", "landlord", "tenant"];
-
-function parseFilters(params: URLSearchParams): { filters: TransactionFilters; range?: { from: Date; to: Date } } {
-  const list = <T extends string>(raw: string | null, allowed: readonly T[]) => {
-    if (!raw) return undefined;
-    const picked = raw.split(",").map((s) => s.trim()).filter((s): s is T => (allowed as readonly string[]).includes(s));
-    return picked.length ? picked : undefined;
-  };
-  const q = params.get("q")?.trim().slice(0, 120);
-  const filters: TransactionFilters = {
-    stage: list(params.get("stage"), ALL_STAGES as readonly TransactionStage[]),
-    side: list(params.get("side"), SIDES),
-    query: q && q.length > 0 ? q : undefined,
-  };
-  const from = params.get("from");
-  const to = params.get("to");
-  let range: { from: Date; to: Date } | undefined;
-  if (from && to) {
-    const f = new Date(from);
-    const t = new Date(to);
-    if (!Number.isNaN(f.getTime()) && !Number.isNaN(t.getTime()) && f <= t) range = { from: f, to: t };
-  }
-  return { filters, range };
+/**
+ * The GET path never reads `q`.
+ *
+ * A deal search term is a property address — the one a named client is buying.
+ * A GET would write it into the platform's access logs on every keystroke, so
+ * text goes to the POST search route instead. Stage, side and the date window
+ * are not identifying and stay here.
+ */
+function parseUrlFilters(params: URLSearchParams) {
+  return parseTransactionFilters((key) => (key === "q" ? null : params.get(key)));
 }
 
 /** The caller's deals — every one they may see, within the optional period. */
@@ -42,7 +28,7 @@ export async function GET(request: NextRequest) {
   const caller = await requireCaller();
   if (!caller.ok) return caller.response;
 
-  const { filters, range } = parseFilters(request.nextUrl.searchParams);
+  const { filters, range } = parseUrlFilters(request.nextUrl.searchParams);
 
   if (transactionsSource() === "sample") {
     return NextResponse.json({ items: listSampleTransactions(filters, range) }, { headers: NO_STORE });

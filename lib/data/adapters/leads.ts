@@ -72,13 +72,23 @@ export async function getLeads(filters?: LeadFilters, range?: DateRange): Promis
     await delay();
     return listSampleLeads(filters, range);
   }
-  const p = new URLSearchParams();
-  if (filters?.stage?.length) p.set("stage", filters.stage.join(","));
-  if (filters?.source?.length) p.set("source", filters.source.join(","));
-  if (filters?.agentId) p.set("agent", filters.agentId);
-  if (filters?.query) p.set("q", filters.query);
-  const qs = p.toString();
-  const { items } = await request<{ items: Lead[] }>(`/api/contacts${qs ? `?${qs}` : ""}`);
+  const fields: Record<string, string> = {};
+  if (filters?.stage?.length) fields.stage = filters.stage.join(",");
+  if (filters?.source?.length) fields.source = filters.source.join(",");
+  if (filters?.agentId) fields.agent = filters.agentId;
+  if (filters?.query) fields.q = filters.query;
+
+  // A search term never travels in a URL: it is a client's name, their phone
+  // number or their email, and the request line is what the platform logs.
+  // Text goes to the POST form of the same read; everything else stays a GET.
+  const { items } = filters?.query
+    ? await request<{ items: Lead[] }>("/api/contacts/search", {
+        method: "POST",
+        body: JSON.stringify(fields),
+      })
+    : await request<{ items: Lead[] }>(
+        `/api/contacts${new URLSearchParams(fields).toString() ? `?${new URLSearchParams(fields)}` : ""}`
+      );
   return range ? items.filter((l) => {
     const t = new Date(l.createdDate).getTime();
     return t >= range.from.getTime() && t <= range.to.getTime();

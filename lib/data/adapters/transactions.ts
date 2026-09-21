@@ -79,16 +79,25 @@ export async function getTransactions(
     await delay();
     return listSampleTransactions(filters, range);
   }
-  const p = new URLSearchParams();
-  if (filters?.stage?.length) p.set("stage", filters.stage.join(","));
-  if (filters?.side?.length) p.set("side", filters.side.join(","));
-  if (filters?.query) p.set("q", filters.query);
+  const fields: Record<string, string> = {};
+  if (filters?.stage?.length) fields.stage = filters.stage.join(",");
+  if (filters?.side?.length) fields.side = filters.side.join(",");
+  if (filters?.query) fields.q = filters.query;
   if (range) {
-    p.set("from", range.from.toISOString());
-    p.set("to", range.to.toISOString());
+    fields.from = range.from.toISOString();
+    fields.to = range.to.toISOString();
   }
-  const qs = p.toString();
-  const { items } = await request<{ items: Transaction[] }>(`/api/transactions${qs ? `?${qs}` : ""}`);
+
+  // A deal search term is a property address. It never travels in a URL, for
+  // the same reason a contact's name does not — see the POST search route.
+  const { items } = filters?.query
+    ? await request<{ items: Transaction[] }>("/api/transactions/search", {
+        method: "POST",
+        body: JSON.stringify(fields),
+      })
+    : await request<{ items: Transaction[] }>(
+        `/api/transactions${new URLSearchParams(fields).toString() ? `?${new URLSearchParams(fields)}` : ""}`
+      );
   return items;
 }
 

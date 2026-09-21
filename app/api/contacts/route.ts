@@ -1,33 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
 import { listSampleLeads } from "@/lib/data/sample-leads";
-import type { LeadSource, LeadStage } from "@/lib/data/types";
 import { createContactSchema } from "@/lib/contacts/domain";
 import { actorOrResponse, contactsSource, failure, NO_STORE, unexpected } from "@/lib/contacts/http";
 import { createContact, listContacts } from "@/lib/contacts/service";
-import { ALL_CONTACT_STAGES } from "@/lib/contacts/stages";
+import { parseContactFilters } from "@/lib/contacts/filters";
 
 export const runtime = "nodejs";
 
 /** Per-user, confidential; never cached or statically generated. */
 export const dynamic = "force-dynamic";
 
-const SOURCES: readonly LeadSource[] = ["referral", "sphere", "sign_call", "website", "open_house", "past_client", "social", "advertising", "walk_in", "other"];
-
-function parseFilters(params: URLSearchParams) {
-  const list = <T extends string>(raw: string | null, allowed: readonly T[]) => {
-    if (!raw) return undefined;
-    const picked = raw.split(",").map((s) => s.trim()).filter((s): s is T => (allowed as readonly string[]).includes(s));
-    return picked.length ? picked : undefined;
-  };
-  const q = params.get("q")?.trim().slice(0, 120);
-  const agent = params.get("agent")?.trim();
-  return {
-    stage: list(params.get("stage"), ALL_CONTACT_STAGES as readonly LeadStage[]),
-    source: list(params.get("source"), SOURCES),
-    agentId: agent && /^[A-Za-z0-9-]{1,64}$/.test(agent) ? agent : undefined,
-    query: q && q.length > 0 ? q : undefined,
-  };
+/**
+ * The GET path never reads `q`.
+ *
+ * A search string is a client's name, their phone number, their email. A GET
+ * puts it in the request line and the request line is what the platform
+ * writes to its access logs, so searching from this screen would quietly
+ * accumulate a log of the brokerage's clients. Text goes to the POST search
+ * route instead; a stage or a source filter is not identifying and stays here.
+ */
+function parseUrlFilters(params: URLSearchParams) {
+  return parseContactFilters((key) => (key === "q" ? null : params.get(key)));
 }
 
 /** The caller's contacts — every one they may see. */
@@ -35,7 +29,7 @@ export async function GET(request: NextRequest) {
   const caller = await requireCaller();
   if (!caller.ok) return caller.response;
 
-  const filters = parseFilters(request.nextUrl.searchParams);
+  const filters = parseUrlFilters(request.nextUrl.searchParams);
 
   if (contactsSource() === "sample") {
     return NextResponse.json({ items: listSampleLeads(filters) }, { headers: NO_STORE });
