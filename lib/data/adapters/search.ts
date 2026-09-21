@@ -17,7 +17,7 @@ export async function searchAll(query: string): Promise<SearchResult[]> {
       (l) =>
         l.address.toLowerCase().includes(q) ||
         l.city.toLowerCase().includes(q) ||
-        l.neighborhood.toLowerCase().includes(q) ||
+        (l.neighborhood ?? "").toLowerCase().includes(q) ||
         l.mlsNumber.toLowerCase().includes(q)
     )
     .slice(0, 6)

@@ -309,6 +309,7 @@ export const listings: Listing[] = Array.from({ length: 64 }, (_, i) => {
     description: pick(rng, DESCRIPTIONS),
     priceHistory,
     featured: false,
+    source: "sample",
   };
 });
 

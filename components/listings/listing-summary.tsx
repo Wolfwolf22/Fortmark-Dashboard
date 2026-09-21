@@ -24,6 +24,17 @@ export function ListingSummary({
     label: listing.status,
   };
   const isClosed = listing.status === "closed" && listing.closedPrice !== undefined;
+  // An MLS row states its own agent; a sample row points at the sample roster.
+  const shownAgent = listing.listingAgent
+    ? {
+        name: listing.listingAgent.name,
+        phone: listing.listingAgent.phone,
+        email: listing.listingAgent.email,
+        office: listing.listingAgent.office,
+      }
+    : agent
+      ? { name: agent.name, phone: agent.phone, email: agent.email, office: undefined }
+      : undefined;
 
   const specs: { label: string; value: string }[] = [
     { label: "Beds", value: listing.beds > 0 ? String(listing.beds) : "—" },
@@ -36,11 +47,14 @@ export function ListingSummary({
       label: "Lot sqft",
       value: listing.lotSqft ? formatSqft(listing.lotSqft) : "—",
     },
-    { label: "Year built", value: String(listing.yearBuilt) },
+    { label: "Year built", value: listing.yearBuilt ? String(listing.yearBuilt) : "—" },
     { label: "Type", value: PROPERTY_TYPE_LABELS[listing.propertyType] },
     { label: "MLS", value: listing.mlsNumber },
-    { label: "Folio", value: listing.folioNumber },
-    { label: "Days on market", value: String(listing.daysOnMarket) },
+    { label: "Folio", value: listing.folioNumber ?? "—" },
+    {
+      label: "Days on market",
+      value: listing.daysOnMarket !== undefined ? String(listing.daysOnMarket) : "—",
+    },
     { label: "Listed", value: formatDate(listing.listedDate) },
   ];
 
@@ -79,7 +93,8 @@ export function ListingSummary({
         <div>
           <h2 className="text-display text-2xl">{listing.address}</h2>
           <p className="mt-1.5 text-[13px] text-muted-foreground">
-            {listing.city}, FL {listing.zip} · {listing.neighborhood}
+            {listing.city}, FL {listing.zip}
+            {listing.neighborhood && <> · {listing.neighborhood}</>}
           </p>
         </div>
 
@@ -96,32 +111,35 @@ export function ListingSummary({
           ))}
         </dl>
 
-        {agent && (
+        {shownAgent && (
           <>
             <Separator />
             <div>
               <p className="text-micro">Listing agent</p>
               <div className="mt-2.5 flex items-center gap-3">
                 <Avatar className="h-10 w-10">
-                  <AvatarFallback>{initials(agent.name)}</AvatarFallback>
+                  <AvatarFallback>{initials(shownAgent.name)}</AvatarFallback>
                 </Avatar>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{agent.name}</p>
-                  <p className="truncate text-[13px] text-muted-foreground">
-                    <a
-                      href={`tel:${agent.phone}`}
-                      className="hover:text-foreground hover:underline"
-                    >
-                      {agent.phone}
-                    </a>
-                    {" · "}
-                    <a
-                      href={`mailto:${agent.email}`}
-                      className="hover:text-foreground hover:underline"
-                    >
-                      {agent.email}
-                    </a>
-                  </p>
+                  <p className="truncate text-sm font-semibold">{shownAgent.name}</p>
+                  {shownAgent.office && (
+                    <p className="truncate text-[13px] text-muted-foreground">{shownAgent.office}</p>
+                  )}
+                  {(shownAgent.phone || shownAgent.email) && (
+                    <p className="truncate text-[13px] text-muted-foreground">
+                      {shownAgent.phone && (
+                        <a href={`tel:${shownAgent.phone}`} className="hover:text-foreground hover:underline">
+                          {shownAgent.phone}
+                        </a>
+                      )}
+                      {shownAgent.phone && shownAgent.email && " · "}
+                      {shownAgent.email && (
+                        <a href={`mailto:${shownAgent.email}`} className="hover:text-foreground hover:underline">
+                          {shownAgent.email}
+                        </a>
+                      )}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

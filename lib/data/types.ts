@@ -42,18 +42,21 @@ export interface Client {
 
 export type ListingStatus =
   | "active"
+  | "comingSoon"
   | "pending"
   | "underContract"
   | "closed"
   | "expired"
-  | "withdrawn";
+  | "withdrawn"
+  | "hold";
 
 export type PropertyType =
   | "singleFamily"
   | "condo"
   | "townhouse"
   | "multiFamily"
-  | "land";
+  | "land"
+  | "other";
 
 export interface PriceEvent {
   date: string; // ISO
@@ -61,32 +64,49 @@ export interface PriceEvent {
   kind: "listed" | "reduced" | "increased" | "closed";
 }
 
+/**
+ * Where a listing row came from. `mls` rows are the brokerage's actual MLS
+ * feed; `sample` rows are the seeded generators and are labelled as such in
+ * the UI. Never rendered as one another.
+ */
+export type ListingSource = "mls" | "sample";
+
 export interface Listing {
+  /** Durable identifier: the RESO ListingKey for MLS rows. Used in URLs. */
   id: string;
   mlsNumber: string;
-  folioNumber: string;
+  /** County parcel / folio number. Absent when the feed does not carry it. */
+  folioNumber?: string;
   address: string;
   city: string;
   zip: string;
-  neighborhood: string;
+  /** Subdivision or area. Absent until the feed field is verified. */
+  neighborhood?: string;
   status: ListingStatus;
   propertyType: PropertyType;
   listPrice: number;
   closedPrice?: number;
+  /** 0 means "not stated" — the spec line and summary treat 0 as unknown. */
   beds: number;
   baths: number;
   sqft: number;
   lotSqft?: number;
-  yearBuilt: number;
+  yearBuilt?: number;
   listedDate: string; // ISO
   closedDate?: string; // ISO
   expiresDate?: string; // ISO
-  daysOnMarket: number;
+  daysOnMarket?: number;
+  /** Internal roster id for sample rows; empty for MLS rows (see listingAgent). */
   agentId: string;
-  photos: string[]; // URLs — local SVG plates today, MLS media later
+  /** Listing agent as stated by the feed, when the feed carries it. */
+  listingAgent?: { name: string; phone?: string; email?: string; office?: string };
+  /** URLs. Empty for an MLS row whose media has not been fetched or has none. */
+  photos: string[];
   description: string;
   priceHistory: PriceEvent[];
   featured?: boolean;
+  source: ListingSource;
+  coordinates?: { lat: number; lng: number };
 }
 
 export interface ListingFilters {
@@ -97,6 +117,45 @@ export interface ListingFilters {
   maxPrice?: number;
   minBeds?: number;
   query?: string;
+}
+
+/** Sort keys the listings screen exposes. Not every key is server-sortable. */
+export type ListingSortKey =
+  | "address"
+  | "city"
+  | "status"
+  | "propertyType"
+  | "listPrice"
+  | "beds"
+  | "baths"
+  | "sqft"
+  | "ppsf"
+  | "daysOnMarket"
+  | "listedDate";
+
+export type SortDirection = "asc" | "desc";
+
+/** One page of a listing search, as the server resolved it. */
+export interface ListingSearchQuery extends ListingFilters {
+  page: number;
+  pageSize: number;
+  sortKey: ListingSortKey;
+  sortDirection: SortDirection;
+}
+
+export interface ListingPage {
+  items: Listing[];
+  /** Total rows matching the filter, across all pages. */
+  total: number;
+  page: number;
+  pageSize: number;
+  source: ListingSource;
+  /**
+   * False when the requested sort could not be applied by the source (the
+   * MLS cannot sort by a derived value such as $/sqft) and rows arrived in
+   * the source's default order instead. The UI says so rather than pretending.
+   */
+  sortApplied: boolean;
 }
 
 // ---------------------------------------------------------------------------

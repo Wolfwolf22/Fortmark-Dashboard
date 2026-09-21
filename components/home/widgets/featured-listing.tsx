@@ -29,7 +29,9 @@ export default function FeaturedListingWidget() {
     agent: Agent | undefined;
   }>(async () => {
     const listing = await getFeaturedListing();
-    const agent = listing ? await getAgent(listing.agentId) : undefined;
+    // The sample roster only applies to sample rows; an MLS row states its
+    // own agent on the record.
+    const agent = listing?.agentId ? await getAgent(listing.agentId) : undefined;
     return { listing, agent };
   }, []);
 
@@ -82,6 +84,7 @@ function FeaturedBody({
         <ListingImage
           src={listing.photos[0]}
           alt={listing.address}
+          source={listing.source}
           className="aspect-[16/10] w-full transition-transform duration-200 group-hover:scale-[1.02]"
         />
         <StatusPill tone={pill.tone} className="absolute left-3 top-3 backdrop-blur-sm">
@@ -94,7 +97,8 @@ function FeaturedBody({
           <div className="min-w-0">
             <p className="truncate text-[15px] font-bold leading-snug">{listing.address}</p>
             <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
-              {listing.city} · {listing.neighborhood}
+              {listing.city}
+              {listing.neighborhood && <> · {listing.neighborhood}</>}
             </p>
           </div>
           <p className="font-display text-2xl leading-none tabular">
@@ -104,15 +108,19 @@ function FeaturedBody({
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span className="text-micro tabular">MLS {listing.mlsNumber}</span>
-          <span className="text-micro tabular">
-            {listing.daysOnMarket} {listing.daysOnMarket === 1 ? "day" : "days"} on market
-          </span>
-          {agent && (
+          {listing.daysOnMarket !== undefined && (
+            <span className="text-micro tabular">
+              {listing.daysOnMarket} {listing.daysOnMarket === 1 ? "day" : "days"} on market
+            </span>
+          )}
+          {(listing.listingAgent ?? agent) && (
             <span className="flex items-center gap-1.5">
               <Avatar className="h-5 w-5">
-                <AvatarFallback className="text-[9px]">{initials(agent.name)}</AvatarFallback>
+                <AvatarFallback className="text-[9px]">
+                  {initials((listing.listingAgent ?? agent)!.name)}
+                </AvatarFallback>
               </Avatar>
-              <span className="text-micro">{agent.name} · Listing agent</span>
+              <span className="text-micro">{(listing.listingAgent ?? agent)!.name} · Listing agent</span>
             </span>
           )}
         </div>

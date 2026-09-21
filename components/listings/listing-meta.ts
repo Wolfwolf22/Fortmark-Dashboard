@@ -16,6 +16,7 @@ export const PROPERTY_TYPE_LABELS: Record<PropertyType, string> = {
   townhouse: "Townhouse",
   multiFamily: "Multi family",
   land: "Land",
+  other: "Other",
 };
 
 export const PROPERTY_TYPE_OPTIONS = (
@@ -24,11 +25,13 @@ export const PROPERTY_TYPE_OPTIONS = (
 
 export const LISTING_STATUS_LABELS: Record<ListingStatus, string> = {
   active: "Active",
+  comingSoon: "Coming soon",
   pending: "Pending",
   underContract: "Under contract",
   closed: "Closed",
   expired: "Expired",
   withdrawn: "Withdrawn",
+  hold: "On hold",
 };
 
 export const LISTING_STATUS_OPTIONS = (

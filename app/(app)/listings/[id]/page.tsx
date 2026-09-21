@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Building2 } from "lucide-react";
+import { ArrowLeft, Building2, ServerCrash } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -11,21 +11,24 @@ import { getAgent } from "@/lib/data/adapters/agents";
 import { getListing } from "@/lib/data/adapters/listings";
 import { useQuery } from "@/lib/data/hooks";
 import type { Agent, Listing } from "@/lib/data/types";
-import { CompsStub } from "@/components/listings/comps-stub";
+import { ComparableSales } from "@/components/listings/comparable-sales";
 import { ListingGallery } from "@/components/listings/listing-gallery";
 import { ListingSummary } from "@/components/listings/listing-summary";
 import { PriceHistory } from "@/components/listings/price-history";
+import { SampleDataNotice } from "@/components/listings/sample-data-notice";
 
 export default function ListingDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
 
-  const { data, loading } = useQuery<{
+  const { data, loading, error, refetch } = useQuery<{
     listing: Listing | undefined;
     agent: Agent | undefined;
   }>(async () => {
     const listing = await getListing(id);
-    const agent = listing ? await getAgent(listing.agentId) : undefined;
+    // The sample roster only applies to sample rows; an MLS row states its
+    // own agent on the record (see `listingAgent`).
+    const agent = listing?.agentId ? await getAgent(listing.agentId) : undefined;
     return { listing, agent };
   }, [id]);
 
@@ -38,7 +41,20 @@ export default function ListingDetailPage() {
         </Link>
       </Button>
 
-      {loading || !data ? (
+      {error ? (
+        <Card>
+          <EmptyState
+            icon={ServerCrash}
+            title="This listing could not be retrieved."
+            description="The MLS is unavailable right now. Retry in a moment."
+            action={
+              <Button variant="outline" size="sm" onClick={refetch}>
+                Retry
+              </Button>
+            }
+          />
+        </Card>
+      ) : loading || !data ? (
         <DetailSkeleton />
       ) : !data.listing ? (
         <Card>
@@ -69,29 +85,37 @@ function DetailBody({
 }) {
   return (
     <>
+      {listing.source === "sample" && <SampleDataNotice />}
+
       <div className="grid gap-6 lg:grid-cols-5">
         <div className="lg:col-span-3">
-          <ListingGallery photos={listing.photos} address={listing.address} />
+          <ListingGallery
+            photos={listing.photos}
+            address={listing.address}
+            source={listing.source}
+          />
         </div>
         <div className="lg:col-span-2">
           <ListingSummary listing={listing} agent={agent} />
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Description</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="max-w-prose text-sm leading-relaxed">
-            {listing.description}
-          </p>
-        </CardContent>
-      </Card>
+      {listing.description ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Description</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="max-w-prose whitespace-pre-line text-sm leading-relaxed">
+              {listing.description}
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="grid items-start gap-6 lg:grid-cols-2">
         <PriceHistory events={listing.priceHistory} />
-        <CompsStub />
+        <ComparableSales listing={listing} />
       </div>
     </>
   );

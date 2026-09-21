@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { ListingSource } from "@/lib/data/types";
 import { cn } from "@/lib/utils";
 import { ListingImage } from "@/components/listings/listing-image";
 
@@ -11,9 +12,11 @@ import { ListingImage } from "@/components/listings/listing-image";
 export function ListingGallery({
   photos,
   address,
+  source = "sample",
 }: {
   photos: string[];
   address: string;
+  source?: ListingSource;
 }) {
   const [index, setIndex] = useState(0);
   const safeIndex = Math.min(index, Math.max(0, photos.length - 1));
@@ -22,7 +25,9 @@ export function ListingGallery({
   if (!main) {
     return (
       <div className="flex aspect-[16/10] w-full items-center justify-center rounded-card bg-tint">
-        <p className="text-[13px] text-muted-foreground">No photos yet</p>
+        <p className="text-[13px] text-muted-foreground">
+          {source === "mls" ? "The MLS has no photos for this listing" : "No photos yet"}
+        </p>
       </div>
     );
   }
@@ -33,6 +38,7 @@ export function ListingGallery({
         <ListingImage
           src={main}
           alt={`Photo ${safeIndex + 1} of ${photos.length} for ${address}`}
+          source={source}
           className="aspect-[16/10] w-full"
         />
       </div>
@@ -57,7 +63,7 @@ export function ListingGallery({
                   : "opacity-70 hover:opacity-100"
               )}
             >
-              <ListingImage src={photo} alt="" className="aspect-[4/3] w-20" />
+              <ListingImage src={photo} alt="" source={source} className="aspect-[4/3] w-20" />
             </button>
           ))}
         </div>

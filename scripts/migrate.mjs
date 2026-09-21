@@ -235,6 +235,24 @@ if (url && url !== "[SENSITIVE]") {
     `[migrate] flags PROFILE_IMAGE_UPLOAD_ENABLED=${strict("PROFILE_IMAGE_UPLOAD_ENABLED")}`
   );
 
+  // MLS listings. Flag on with a missing credential is the one combination
+  // that breaks: every listings request answers 503, and nothing falls back.
+  {
+    const flag = strict("MLS_LISTINGS_ENABLED");
+    const token = Boolean(process.env.BRIDGE_API_TOKEN?.trim());
+    const dataset = Boolean(process.env.BRIDGE_DATASET?.trim());
+    console.log(
+      `[migrate] listings MLS_LISTINGS_ENABLED=${flag} BRIDGE_API_TOKEN present=${token} ` +
+        `BRIDGE_DATASET present=${dataset} -> ${flag === "on" && token && dataset ? "MLS" : flag === "on" ? "UNAVAILABLE (503)" : "sample data"}`
+    );
+    if (flag === "on" && (!token || !dataset)) {
+      console.log(
+        `[migrate] WARNING: listings are switched to the MLS but ${!token ? "BRIDGE_API_TOKEN" : "BRIDGE_DATASET"} is absent — ` +
+          "every listings request will answer 503; the sample set is never substituted for the MLS"
+      );
+    }
+  }
+
   // The assistant provider. Both halves are required, so report both and say
   // which way the route will actually resolve — "flag on, key absent" is a
   // silent fallback to the mock, and that is not obvious from two booleans.

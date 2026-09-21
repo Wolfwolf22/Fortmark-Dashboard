@@ -14,73 +14,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { Listing } from "@/lib/data/types";
+import type { Listing, ListingSortKey, SortDirection } from "@/lib/data/types";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import {
-  LISTING_STATUS_LABELS,
   PROPERTY_TYPE_LABELS,
   formatSqft,
   pricePerSqft,
 } from "./listing-meta";
 
-export type ListingSortKey =
-  | "address"
-  | "city"
-  | "status"
-  | "propertyType"
-  | "listPrice"
-  | "beds"
-  | "baths"
-  | "sqft"
-  | "ppsf"
-  | "daysOnMarket"
-  | "listedDate";
+export type { ListingSortKey, SortDirection } from "@/lib/data/types";
+export { sortListings } from "@/lib/data/listing-sort";
 
-export type SortDirection = "asc" | "desc";
 
-function sortValue(listing: Listing, key: ListingSortKey): string | number {
-  switch (key) {
-    case "address":
-      return listing.address.toLowerCase();
-    case "city":
-      return listing.city.toLowerCase();
-    case "status":
-      return LISTING_STATUS_LABELS[listing.status];
-    case "propertyType":
-      return PROPERTY_TYPE_LABELS[listing.propertyType];
-    case "listPrice":
-      return listing.listPrice;
-    case "beds":
-      return listing.beds;
-    case "baths":
-      return listing.baths;
-    case "sqft":
-      return listing.sqft;
-    case "ppsf":
-      return pricePerSqft(listing) ?? 0;
-    case "daysOnMarket":
-      return listing.daysOnMarket;
-    case "listedDate":
-      return new Date(listing.listedDate).getTime();
-  }
-}
-
-/** Stable client-side sort used by the table view. */
-export function sortListings(
-  rows: Listing[],
-  key: ListingSortKey,
-  direction: SortDirection
-): Listing[] {
-  const mult = direction === "asc" ? 1 : -1;
-  return [...rows].sort((a, b) => {
-    const va = sortValue(a, key);
-    const vb = sortValue(b, key);
-    if (typeof va === "string" && typeof vb === "string") {
-      return va.localeCompare(vb) * mult;
-    }
-    return ((va as number) - (vb as number)) * mult;
-  });
-}
 
 const COLUMNS: {
   key: ListingSortKey;

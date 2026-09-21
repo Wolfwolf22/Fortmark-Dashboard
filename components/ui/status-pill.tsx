@@ -46,9 +46,11 @@ export const LISTING_STATUS_PILL: Record<
   { tone: StatusTone; label: string }
 > = {
   active: { tone: "good", label: "Active" },
+  comingSoon: { tone: "neutral", label: "Coming soon" },
   pending: { tone: "warn", label: "Pending" },
   underContract: { tone: "warn", label: "Under contract" },
   closed: { tone: "neutral", label: "Closed" },
   expired: { tone: "bad", label: "Expired" },
   withdrawn: { tone: "neutral", label: "Withdrawn" },
+  hold: { tone: "neutral", label: "On hold" },
 };

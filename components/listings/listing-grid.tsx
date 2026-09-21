@@ -36,6 +36,7 @@ function ListingCard({ listing }: { listing: Listing }) {
         <div className="relative overflow-hidden rounded-panel">
           <ListingImage
             src={listing.photos[0]}
+            source={listing.source}
             alt={listing.address}
             className="aspect-[4/3] w-full transition-transform duration-200 group-hover:scale-[1.02]"
           />
@@ -53,14 +54,17 @@ function ListingCard({ listing }: { listing: Listing }) {
           </p>
           <p className="text-sm font-semibold leading-snug">{listing.address}</p>
           <p className="text-[13px] text-muted-foreground">
-            {listing.city} · {listing.neighborhood}
+            {listing.city}
+            {listing.neighborhood && <> · {listing.neighborhood}</>}
           </p>
           <div className="mt-auto space-y-0.5 pt-2">
             <p className="text-micro tabular">{specLine(listing)}</p>
-            <p className="text-[12px] text-muted-foreground tabular">
-              {listing.daysOnMarket}{" "}
-              {listing.daysOnMarket === 1 ? "day" : "days"} on market
-            </p>
+            {listing.daysOnMarket !== undefined && (
+              <p className="text-[12px] text-muted-foreground tabular">
+                {listing.daysOnMarket}{" "}
+                {listing.daysOnMarket === 1 ? "day" : "days"} on market
+              </p>
+            )}
           </div>
         </div>
       </Card>

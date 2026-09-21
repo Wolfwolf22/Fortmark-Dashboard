@@ -213,6 +213,7 @@ export async function getMedianDaysOnMarket(range: DateRange): Promise<number> {
   const closed = listings
     .filter((l) => l.status === "closed" && l.closedDate && inRange(l.closedDate, range))
     .map((l) => l.daysOnMarket)
+    .filter((d): d is number => d !== undefined)
     .sort((a, b) => a - b);
   if (!closed.length) return 0;
   const mid = Math.floor(closed.length / 2);
