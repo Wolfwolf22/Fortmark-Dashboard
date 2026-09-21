@@ -52,6 +52,17 @@ export const CREDENTIAL_VARIABLE: Record<ProviderName, string> = {
   openai: "OPENAI_API_KEY",
 };
 
+/**
+ * The model a given vendor would be asked for, in this environment.
+ *
+ * Split out so the resolver and the health probe cannot disagree about it.
+ * Certification has to state the model it certified, and a model the probe
+ * derived separately would be a second opinion rather than a fact.
+ */
+export function selectedModel(name: ProviderName, env: EnvLike = process.env): string {
+  return env.AI_MODEL?.trim() || DEFAULT_MODEL[name];
+}
+
 export type SelectionFailure = "disabled" | "invalid_provider" | "no_credential";
 
 export type ProviderSelection =
@@ -107,5 +118,5 @@ export function resolveProvider(env: EnvLike = process.env): ProviderSelection {
   const apiKey = env[CREDENTIAL_VARIABLE[name]]?.trim();
   if (!apiKey) return { ok: false, reason: "no_credential", name };
 
-  return { ok: true, name, model: env.AI_MODEL?.trim() || DEFAULT_MODEL[name], apiKey };
+  return { ok: true, name, model: selectedModel(name, env), apiKey };
 }

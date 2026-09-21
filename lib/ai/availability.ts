@@ -18,7 +18,12 @@ import "server-only";
  * reverse.
  */
 import type { EnvLike } from "../flags.ts";
-import { aiProviderEnabled, parseProvider, resolveProvider } from "./providers/select.ts";
+import {
+  aiProviderEnabled,
+  parseProvider,
+  resolveProvider,
+  selectedModel,
+} from "./providers/select.ts";
 import type { ProviderName } from "./providers/types.ts";
 
 export type AssistantStatus =
@@ -30,6 +35,15 @@ export type AssistantStatus =
 export interface AssistantHealth {
   /** The selected vendor, or null when the selection itself is unreadable. */
   provider: ProviderName | null;
+  /**
+   * The model that vendor would be asked for, or null when no vendor parses.
+   *
+   * Not a secret — a model name identifies a product, not an account — and
+   * without it a certification cannot state what it certified. It comes from
+   * the same helper the runtime uses, so the probe cannot name one model while
+   * a turn uses another.
+   */
+  model: string | null;
   status: AssistantStatus;
 }
 
@@ -49,14 +63,15 @@ export interface AssistantHealth {
  */
 export function assistantHealth(env: EnvLike = process.env): AssistantHealth {
   const provider = parseProvider(env);
-  if (!provider) return { provider: null, status: "invalid_provider" };
+  if (!provider) return { provider: null, model: null, status: "invalid_provider" };
+  const model = selectedModel(provider, env);
 
   // The selected vendor's credential, and never the other one's: reporting
   // "available" because some other vendor's key happens to be present would
   // be the same lie as answering with it.
   if (!resolveProvider({ ...env, AI_CHAT_PROVIDER_ENABLED: "1" }).ok) {
-    return { provider, status: "no_credential" };
+    return { provider, model, status: "no_credential" };
   }
-  if (!aiProviderEnabled(env)) return { provider, status: "disabled" };
-  return { provider, status: "available" };
+  if (!aiProviderEnabled(env)) return { provider, model, status: "disabled" };
+  return { provider, model, status: "available" };
 }

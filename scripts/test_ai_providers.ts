@@ -38,6 +38,7 @@ import {
   DEFAULT_PROVIDER,
   parseProvider,
   resolveProvider,
+  selectedModel,
 } from "../lib/ai/providers/select.ts";
 import { assistantHealth } from "../lib/ai/availability.ts";
 import { runAssistant } from "../lib/ai/loop.ts";
@@ -180,16 +181,16 @@ check("each vendor's credential variable is named once, in one place",
     OPENAI_API_KEY: OPENAI_KEY,
   };
   check("a working assistant reports its vendor and availability",
-    JSON.stringify(assistantHealth(full)) === '{"provider":"openai","status":"available"}');
+    JSON.stringify(assistantHealth(full)) === '{"provider":"openai","model":"gpt-5.5","status":"available"}');
   check("a switched-off assistant still reports which vendor is selected",
     JSON.stringify(assistantHealth({ ...full, AI_CHAT_PROVIDER_ENABLED: "" })) ===
-      '{"provider":"openai","status":"disabled"}');
+      '{"provider":"openai","model":"gpt-5.5","status":"disabled"}');
   check("a missing credential names the vendor whose key is missing",
     JSON.stringify(assistantHealth({ AI_CHAT_PROVIDER_ENABLED: "1", AI_PROVIDER: "openai" })) ===
-      '{"provider":"openai","status":"no_credential"}');
+      '{"provider":"openai","model":"gpt-5.5","status":"no_credential"}');
   check("an unreadable selection reports no vendor at all",
     JSON.stringify(assistantHealth({ AI_PROVIDER: "gemini" })) ===
-      '{"provider":null,"status":"invalid_provider"}');
+      '{"provider":null,"model":null,"status":"invalid_provider"}');
 
   // Anthropic, fully configured. The mirror of the OpenAI case above, so
   // neither vendor's happy path depends on the other's.
@@ -200,11 +201,11 @@ check("each vendor's credential variable is named once, in one place",
         AI_PROVIDER: "anthropic",
         ANTHROPIC_API_KEY: ANTHROPIC_KEY,
       })
-    ) === '{"provider":"anthropic","status":"available"}');
+    ) === '{"provider":"anthropic","model":"claude-opus-5","status":"available"}');
   check("an unset vendor with an Anthropic key is available as the default",
     JSON.stringify(
       assistantHealth({ AI_CHAT_PROVIDER_ENABLED: "1", ANTHROPIC_API_KEY: ANTHROPIC_KEY })
-    ) === '{"provider":"anthropic","status":"available"}');
+    ) === '{"provider":"anthropic","model":"claude-opus-5","status":"available"}');
 
   // The crux of an explicit selection: setting AI_PROVIDER=openai must beat
   // the default, and must do so even when an Anthropic key is also present.
@@ -247,6 +248,19 @@ check("each vendor's credential variable is named once, in one place",
     }).status === "no_credential");
   check("no fragment of a key is disclosed",
     !JSON.stringify(assistantHealth(full)).includes(OPENAI_KEY.slice(0, 6)));
+
+  // A certification has to state the model it certified, and the probe must
+  // name the one a turn would actually use — not a second opinion.
+  check("the probe names the effective model",
+    assistantHealth(full).model === DEFAULT_MODEL.openai);
+  check("an AI_MODEL override is what the probe reports",
+    assistantHealth({ ...full, AI_MODEL: "gpt-5.4-mini" }).model === "gpt-5.4-mini");
+  check("the probe and the runtime derive the model from one helper",
+    selectedModel("openai", { ...full, AI_MODEL: "gpt-5.4-mini" }) === "gpt-5.4-mini" &&
+      (() => {
+        const r = resolveProvider({ ...full, AI_MODEL: "gpt-5.4-mini" });
+        return r.ok && r.model === assistantHealth({ ...full, AI_MODEL: "gpt-5.4-mini" }).model;
+      })());
 }
 
 // =============================================================================
