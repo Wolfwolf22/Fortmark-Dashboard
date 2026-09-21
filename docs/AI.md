@@ -51,6 +51,15 @@ runs. Scope is resolved inside each tool from the verified Clerk user id
 through the same `resolveActor` the screens use, and each query then carries
 the same `visibleTo` predicate as its list screen.
 
+Argument validation is server-side and unconditional: `executeTool` re-parses
+every argument against the tool's own schema before a service is reached, and
+a failure comes back as `invalid_arguments`. The provider is deliberately
+*not* asked to enforce the schemas as well (`strict: true` is off): strict mode
+limits which JSON Schema keywords a tool may declare, and a keyword it refuses
+is a 400 on every turn — a total outage of the surface — to save the
+occasional wasted round. Worth turning on once a deployment with a live key can
+prove the schemas are accepted; not worth guessing at.
+
 Existence is not leakable either. A record id belonging to another brokerage
 returns `not_found` — the same answer as an id that never existed — so absence
 of an error can never confirm that a record is out there.

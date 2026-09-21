@@ -122,6 +122,17 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
     READ_ONLY_TOOLS.every((tool) => tool.inputSchema.additionalProperties === false));
   check("no schema carries JSON Schema metadata into the request",
     READ_ONLY_TOOLS.every((tool) => !("$schema" in tool.inputSchema)));
+
+  // The provider is not relied on to enforce the schema — strict mode limits
+  // which keywords a tool may declare, and a keyword it refuses is a 400 on
+  // every turn. The enforcement that matters is server-side and unconditional.
+  const route = code("app/api/chat/route.ts");
+  const execute = code("lib/ai/tools/execute.ts");
+  check("arguments are re-validated on this server before any service runs",
+    /const parsed = tool\.parse\(request\.input\)[\s\S]{0,140}error: "invalid_arguments"/.test(execute) &&
+      execute.indexOf("tool.parse(request.input)") < execute.indexOf("tool.run("));
+  check("the request does not depend on provider-side strict validation",
+    !/strict: true/.test(route));
 }
 
 // --- The model cannot choose its own scope ---------------------------------

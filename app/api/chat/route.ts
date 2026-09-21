@@ -242,16 +242,23 @@ async function prime(iterator: AsyncIterator<ProviderEvent>): Promise<PrimedIter
 /**
  * The tools, as the provider sees them.
  *
- * `strict` holds the provider to each tool's schema, which is the same schema
- * the server re-validates against before running anything — belt and braces,
- * because the second check is the one that actually protects the database.
+ * Deliberately NOT sent with `strict: true`. Strict mode constrains which
+ * JSON Schema keywords a tool may declare, and these schemas carry length,
+ * range and item bounds that guide the model well; a keyword the provider
+ * refuses is a 400 on every turn, which is a total outage of the surface. The
+ * enforcement that matters does not live there anyway — every argument is
+ * re-parsed against the very same schema in `executeTool` before a service is
+ * reached, and an argument that fails comes back as `invalid_arguments`. The
+ * provider-side check would only have saved the occasional wasted round.
+ *
+ * Worth turning on once a deployment with a live key can prove the schemas
+ * are accepted. It is not worth guessing at.
  */
 function toolParams(): Anthropic.Beta.BetaToolUnion[] {
   return READ_ONLY_TOOLS.map((tool) => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.inputSchema as Anthropic.Beta.BetaTool["input_schema"],
-    strict: true,
   }));
 }
 
