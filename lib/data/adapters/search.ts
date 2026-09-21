@@ -1,70 +1,40 @@
 /**
- * Global search adapter (⌘K). Mock-backed today; swap the body for the
- * search service and the palette is untouched.
+ * Search adapter — the browser's view of unified search.
+ *
+ * It sends text and receives normalised hits. It does not send a brokerage, an
+ * agent or a scope, because the server would not believe them: authorization
+ * is resolved from the session inside each domain query.
+ *
+ * There is no sample path here. The old adapter searched the generated
+ * brokerage directly from the browser; now a failed request throws and the
+ * palette says so. A search that quietly returns invented people would be the
+ * worst possible place for fiction — the user would call one of them.
  */
-import { SearchResult } from "../types";
-import { clients, leads, listings, transactions } from "../mock/db";
-import { formatCurrencyCompact } from "@/lib/utils";
-import { delay } from "./latency";
+import { apiPath } from "@/lib/routes";
+import type { SearchResponse } from "@/lib/search/types";
 
-export async function searchAll(query: string): Promise<SearchResult[]> {
-  await delay(120);
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
+export class SearchError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`Search request failed (${status})`);
+    this.name = "SearchError";
+    this.status = status;
+  }
+}
 
-  const listingHits: SearchResult[] = listings
-    .filter(
-      (l) =>
-        l.address.toLowerCase().includes(q) ||
-        l.city.toLowerCase().includes(q) ||
-        (l.neighborhood ?? "").toLowerCase().includes(q) ||
-        l.mlsNumber.toLowerCase().includes(q)
-    )
-    .slice(0, 6)
-    .map((l) => ({
-      id: `search-${l.id}`,
-      kind: "listing" as const,
-      title: l.address,
-      subtitle: `${l.city} · ${formatCurrencyCompact(l.listPrice)} · MLS ${l.mlsNumber}`,
-      href: `/listings/${l.id}`,
-    }));
-
-  const txnHits: SearchResult[] = transactions
-    .filter(
-      (t) =>
-        t.address.toLowerCase().includes(q) || t.clientName.toLowerCase().includes(q)
-    )
-    .slice(0, 6)
-    .map((t) => ({
-      id: `search-${t.id}`,
-      kind: "transaction" as const,
-      title: t.address,
-      subtitle: `${t.clientName} · ${formatCurrencyCompact(t.contractPrice)} · ${t.statusLabel}`,
-      href: `/transactions?open=${t.id}`,
-    }));
-
-  const contactHits: SearchResult[] = [
-    ...clients
-      .filter((c) => c.name.toLowerCase().includes(q))
-      .slice(0, 4)
-      .map((c) => ({
-        id: `search-${c.id}`,
-        kind: "contact" as const,
-        title: c.name,
-        subtitle: `Client · ${c.email}`,
-        href: `/messages`,
-      })),
-    ...leads
-      .filter((l) => l.name.toLowerCase().includes(q))
-      .slice(0, 4)
-      .map((l) => ({
-        id: `search-${l.id}`,
-        kind: "contact" as const,
-        title: l.name,
-        subtitle: `Lead · ${l.email}`,
-        href: `/leads?open=${l.id}`,
-      })),
-  ];
-
-  return [...listingHits, ...txnHits, ...contactHits];
+/**
+ * Run a search.
+ *
+ * `signal` lets the palette abandon a request the moment the query changes, so
+ * a slow answer to "ja" can never overwrite the answer to "jane".
+ */
+export async function searchAll(query: string, signal?: AbortSignal): Promise<SearchResponse> {
+  const response = await fetch(apiPath("/api/search"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ q: query }),
+    signal,
+  });
+  if (!response.ok) throw new SearchError(response.status);
+  return (await response.json()) as SearchResponse;
 }

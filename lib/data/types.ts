@@ -552,13 +552,9 @@ export interface DashboardMetrics {
 // ---------------------------------------------------------------------------
 // Search (⌘K)
 
-export interface SearchResult {
-  id: string;
-  kind: "listing" | "transaction" | "contact";
-  title: string;
-  subtitle: string;
-  href: string;
-}
+// The ⌘K result shape moved to lib/search/types.ts in Release E2, where it
+// covers every searchable entity and carries each provider's availability.
+// Two competing result contracts is one too many.
 
 // ---------------------------------------------------------------------------
 // Settings
