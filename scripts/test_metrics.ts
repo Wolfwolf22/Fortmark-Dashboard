@@ -485,12 +485,21 @@ check("the identity card is still permanent", (() => {
 // --- The readiness probe -----------------------------------------------------------------
 check("the probe reports sources and nothing else", (() => {
   const src = code("app/api/health/route.ts");
+  // The one environment read it may make: the platform's own build id, which
+  // names the running revision and configures nothing. Everything else about
+  // configuration is reported through the same helpers the routes call, as a
+  // resolved label — never as a variable, and never as a value.
+  const envReads = [...src.matchAll(/process\.env\.(\w+)/g)].map((m) => m[1]);
   return (
     src.includes("transactionsSource()") &&
     src.includes("contactsSource()") &&
     src.includes("listingSource()") &&
-    // Never a count, a record, or an environment variable.
-    !/process\.env|count|rows|DATABASE/.test(src)
+    src.includes("assistantAvailability()") &&
+    envReads.every((name) => name === "VERCEL_GIT_COMMIT_SHA") &&
+    // The build id is truncated, so it is an identifier rather than a handle.
+    /VERCEL_GIT_COMMIT_SHA\?\.slice\(0, 7\)/.test(src) &&
+    // Never a count, a record, or anything that carries a credential.
+    !/count|rows|DATABASE|TOKEN|SECRET|KEY/.test(src)
   );
 })());
 check("the probe is reachable without a session", (() => {

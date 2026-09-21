@@ -307,6 +307,9 @@ await Promise.all(results);
 {
   const route = readFileSync("app/api/chat/route.ts", "utf8");
   const provider = readFileSync("lib/ai/provider.ts", "utf8");
+  /** Source with comments stripped: a word in prose is not a word in code. */
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
   // Authorization is unchanged and still runs first.
   check("access is decided before the body is read",
@@ -331,7 +334,7 @@ await Promise.all(results);
       !/model:\s*(body|parsed|opts|mode)/.test(route));
   // `mode` is a composer field that reaches this route from the browser. It is
   // not read at all: a caller-chosen model would be a caller-chosen bill.
-  check("the browser-supplied mode field is never read", !/\bmode\b/.test(route));
+  check("the browser-supplied mode field is never read", !/\bmode\b/.test(strip(route)));
   check("the parser drops mode rather than forwarding it",
     !/\bmode\b/.test(provider.slice(provider.indexOf("export function parseChatRequest"))));
 
