@@ -22,12 +22,27 @@ export const DASHBOARD = process.env.CERT_DASHBOARD_URL ?? "https://fortmark-das
 
 export async function signInCertificationUser(page: Page): Promise<string> {
   await setupClerkTestingToken({ page });
-  await page.goto("/sign-in");
-  await clerk.loaded({ page });
+
+  // Clerk's script occasionally does not finish initialising on a given load,
+  // and `clerk.loaded()` then waits forever. Reloading is the whole fix; the
+  // retry is bounded so a genuine failure still surfaces as one rather than as
+  // a test timeout with no explanation.
+  let loaded = false;
+  for (let attempt = 1; attempt <= 3 && !loaded; attempt += 1) {
+    try {
+      await page.goto("/sign-in", { waitUntil: "domcontentloaded" });
+      await clerk.loaded({ page, timeout: 30_000 } as Parameters<typeof clerk.loaded>[0]);
+      loaded = true;
+    } catch (error) {
+      console.log(`[session] Clerk did not initialise on attempt ${attempt}; reloading`);
+      if (attempt === 3) throw error;
+    }
+  }
+
   await clerk.signIn({ page, signInParams: { strategy: "email_code", identifier: CERT_EMAIL } });
 
-  await page.goto("/");
-  await clerk.loaded({ page });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await clerk.loaded({ page, timeout: 30_000 } as Parameters<typeof clerk.loaded>[0]);
   // Clerk restores the session asynchronously after a navigation; getToken()
   // returns null until it has.
   await page.waitForFunction(
