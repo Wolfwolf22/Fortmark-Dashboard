@@ -290,20 +290,33 @@ if (url && url !== "[SENSITIVE]") {
     }
   }
 
-  // The assistant provider. Both halves are required, so report both and say
-  // which way the route will actually resolve. There is no fallback any more:
-  // without both, the assistant answers nothing and says so.
+  // The assistant. Three things are required now — the flag, a vendor, and
+  // THAT vendor's key — so report all three and say which way the route will
+  // resolve. There is no fallback of any kind: not to a generated reply, and
+  // not to whichever vendor happens to have a key lying around.
   {
     const flag = strict("AI_CHAT_PROVIDER_ENABLED");
-    const key = Boolean(process.env.ANTHROPIC_API_KEY?.trim());
+    const raw = process.env.AI_PROVIDER?.trim();
+    const provider = !raw ? "anthropic (default)" : raw;
+    const known = !raw || raw === "anthropic" || raw === "openai";
+    const variable = raw === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
+    const key = Boolean(process.env[variable]?.trim());
+    const model = process.env.AI_MODEL?.trim();
+    const ready = flag === "on" && known && key;
     console.log(
-      `[migrate] assistant AI_CHAT_PROVIDER_ENABLED=${flag} ANTHROPIC_API_KEY present=${key} ` +
-        `-> ${flag === "on" && key ? "answers over real records" : "not connected"}`
+      `[migrate] assistant AI_CHAT_PROVIDER_ENABLED=${flag} AI_PROVIDER=${provider} ` +
+        `${variable} present=${key} model=${model || "(vendor default)"} ` +
+        `-> ${ready ? "answers over real records" : "not connected"}`
     );
-    if (flag === "on" && !key) {
+    if (!known) {
       console.log(
-        "[migrate] WARNING: the assistant provider is enabled but ANTHROPIC_API_KEY is absent — " +
-          "the assistant will refuse every turn as not_configured"
+        `[migrate] WARNING: AI_PROVIDER=${raw} is not a vendor this build implements — ` +
+          "the assistant will refuse every turn rather than guess which one you meant"
+      );
+    } else if (flag === "on" && !key) {
+      console.log(
+        `[migrate] WARNING: the assistant is enabled for ${provider} but ${variable} is absent — ` +
+          "the assistant will refuse every turn as not_configured, and will NOT use the other vendor"
       );
     }
   }

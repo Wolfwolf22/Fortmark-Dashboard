@@ -1,139 +1,65 @@
 /**
- * Turning a provider event stream into the plain text the thread renders.
+ * Accumulating one round of a turn.
  *
- * Separated from the route so it can be tested against synthetic event
- * sequences. The cases that matter here — a failure before any text, a turn
- * that produces no text at all, reasoning events that must never be forwarded
- * — are all ones a live call would show only intermittently, if at all.
+ * This used to parse one vendor's wire protocol. It no longer knows there is
+ * such a thing: an adapter hands it text and tool calls, and it decides what
+ * the user sees and what the executor is asked for. That is the whole of the
+ * split — protocol below, policy above — and it is why a second provider is a
+ * translation rather than a second orchestration.
  *
- * No credential is read in this module; it holds no secrets and makes no
- * network call of its own.
+ * No SDK import, no server-only import: a test can drive this with a literal
+ * array of events and neither vendor's package installed.
  */
-import type Anthropic from "@anthropic-ai/sdk";
+import type { NeutralToolCall, TurnEvent } from "./providers/types.ts";
 
-/** A provider event, narrowed to what this module needs from it. */
-export type ProviderEvent = Anthropic.Beta.BetaRawMessageStreamEvent;
+export type { NeutralToolCall as PendingToolUse };
 
 /**
- * The text carried by one event, or null for every other kind.
- *
- * Only `text_delta` is text. `thinking_delta` is reasoning: on this model it
- * is not returned as readable text anyway, but forwarding it on any model
- * would put the model's working out into the thread as though it were the
- * answer. Filtering by delta type rather than trusting the model's
- * configuration keeps that impossible instead of merely unlikely.
- */
-export function textDelta(event: ProviderEvent): string | null {
-  if (event.type !== "content_block_delta") return null;
-  if (event.delta.type !== "text_delta") return null;
-  return event.delta.text;
-}
-
-/**
- * What to show when a turn produced no text at all.
- *
- * A refusal the fallback chain did not rescue ends with empty content. An
- * empty bubble reads as a broken dashboard, so the turn says what happened.
- */
-export const EMPTY_TURN_TEXT =
-  "I can't help with that request. Try rephrasing it, or ask me something else.";
-
-// --- Rounds ------------------------------------------------------------------
-
-/**
- * One tool call the model asked for, assembled from its streamed events.
- *
- * `invalid` marks arguments that did not survive `JSON.parse`. That is
- * recorded rather than thrown: the call still has an id, the model is still
- * owed a `tool_result` for it, and the honest result is an error saying the
- * arguments were unreadable.
- */
-export interface PendingToolUse {
-  id: string;
-  name: string;
-  input: unknown;
-  invalid?: boolean;
-}
-
-/**
- * Everything one assistant turn produced, accumulated as it streamed.
+ * Everything one assistant round produced.
  *
  * The text has already gone to the browser by the time this is read; it is
- * kept so the turn can be replayed as history on the next round, which the
- * API requires for the tool results to attach to anything.
+ * kept so the round can be replayed as history to the next one, which both
+ * vendors require for tool results to attach to anything.
  */
 export interface RoundResult {
   text: string;
-  toolUses: PendingToolUse[];
-  stopReason: string | null;
+  toolCalls: NeutralToolCall[];
   /** True when the stream threw partway. Text already sent stays sent. */
   broke: boolean;
 }
 
 export function emptyRound(): RoundResult {
-  return { text: "", toolUses: [], stopReason: null, broke: false };
+  return { text: "", toolCalls: [], broke: false };
 }
 
-type Partial = { id: string; name: string; json: string };
-
 /**
- * Drain one round, yielding its visible text and recording everything else.
+ * Drain one round, yielding the text the user sees.
  *
- * Reasoning never leaves this function. Tool arguments never leave it as text
- * either — a `tool_use` block's JSON is accumulated into `round`, never
- * yielded, because the user asked a question and is owed an answer, not a
- * transcript of the lookups behind it.
+ * Tool calls are recorded, never yielded: the user asked a question and is
+ * owed an answer, not a transcript of the lookups behind it. Whether the round
+ * wants tools is decided by whether any arrived — no vendor's word for why it
+ * stopped is consulted, so the two can never disagree about it.
  *
  * A mid-stream failure sets `broke` and ends quietly. By then a 200 and some
  * text are already on the wire, so there is no status left to correct and
- * appending a provider error into the middle of a sentence would only make
- * the turn less readable. The caller decides what to say about it.
+ * appending a provider error into the middle of a sentence would only make the
+ * turn less readable. The caller decides what to say about it.
  */
 export async function* streamRound(
-  iterator: AsyncIterator<ProviderEvent>,
+  events: AsyncIterator<TurnEvent>,
   round: RoundResult
 ): AsyncGenerator<string> {
-  const partials = new Map<number, Partial>();
   try {
     while (true) {
-      const next = await iterator.next();
+      const next = await events.next();
       if (next.done) return;
       const event = next.value;
-
-      if (event.type === "content_block_start") {
-        const block = event.content_block;
-        if (block.type === "tool_use") {
-          partials.set(event.index, { id: block.id, name: block.name, json: "" });
-        }
+      if (event.type === "text") {
+        round.text += event.text;
+        yield event.text;
         continue;
       }
-
-      if (event.type === "content_block_delta") {
-        const chunk = textDelta(event);
-        if (chunk !== null) {
-          round.text += chunk;
-          yield chunk;
-          continue;
-        }
-        if (event.delta.type === "input_json_delta") {
-          const partial = partials.get(event.index);
-          if (partial) partial.json += event.delta.partial_json;
-        }
-        // Every other delta — thinking above all — is not the answer.
-        continue;
-      }
-
-      if (event.type === "content_block_stop") {
-        const partial = partials.get(event.index);
-        if (!partial) continue;
-        partials.delete(event.index);
-        round.toolUses.push(finishToolUse(partial));
-        continue;
-      }
-
-      if (event.type === "message_delta") {
-        round.stopReason = event.delta.stop_reason ?? round.stopReason;
-      }
+      round.toolCalls.push(event.call);
     }
   } catch {
     round.broke = true;
@@ -141,22 +67,13 @@ export async function* streamRound(
 }
 
 /**
- * Turn accumulated argument JSON into an input object.
+ * What to show when a turn produced no text at all.
  *
- * Empty is `{}` — a no-argument tool streams nothing at all — and anything
- * unparseable is flagged rather than guessed at. Tool inputs here are buffered
- * by the provider, so a truncated body means something went wrong upstream,
- * not that more is coming.
+ * A refusal that no fallback rescued ends with empty content. An empty bubble
+ * reads as a broken dashboard, so the turn says what happened.
  */
-function finishToolUse(partial: Partial): PendingToolUse {
-  const raw = partial.json.trim();
-  if (raw.length === 0) return { id: partial.id, name: partial.name, input: {} };
-  try {
-    return { id: partial.id, name: partial.name, input: JSON.parse(raw) };
-  } catch {
-    return { id: partial.id, name: partial.name, input: {}, invalid: true };
-  }
-}
+export const EMPTY_TURN_TEXT =
+  "I can't help with that request. Try rephrasing it, or ask me something else.";
 
 /**
  * Appended when a turn ends because the provider stopped answering partway.

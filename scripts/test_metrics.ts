@@ -494,7 +494,7 @@ check("the probe reports sources and nothing else", (() => {
     src.includes("transactionsSource()") &&
     src.includes("contactsSource()") &&
     src.includes("listingAvailability()") &&
-    src.includes("assistantAvailability()") &&
+    src.includes("assistantHealth()") &&
     envReads.every((name) => name === "VERCEL_GIT_COMMIT_SHA") &&
     // The build id is truncated, so it is an identifier rather than a handle.
     /VERCEL_GIT_COMMIT_SHA\?\.slice\(0, 7\)/.test(src) &&

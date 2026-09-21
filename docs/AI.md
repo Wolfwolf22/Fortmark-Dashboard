@@ -8,6 +8,7 @@
 ```
 /ai thread  →  lib/ai/client.ts        plain-text stream, typed failures
                  └── POST /api/chat    Clerk session + dashboard allowlist
+                       └── lib/ai/providers/    Anthropic or OpenAI — see AI_PROVIDERS.md
                        └── lib/ai/loop.ts        bounded tool loop
                              ├── lib/ai/stream.ts        events → text + tool calls
                              └── lib/ai/tools/execute.ts validate → run → structure
@@ -53,12 +54,12 @@ the same `visibleTo` predicate as its list screen.
 
 Argument validation is server-side and unconditional: `executeTool` re-parses
 every argument against the tool's own schema before a service is reached, and
-a failure comes back as `invalid_arguments`. The provider is deliberately
-*not* asked to enforce the schemas as well (`strict: true` is off): strict mode
-limits which JSON Schema keywords a tool may declare, and a keyword it refuses
-is a 400 on every turn — a total outage of the surface — to save the
-occasional wasted round. Worth turning on once a deployment with a live key can
-prove the schemas are accepted; not worth guessing at.
+a failure comes back as `invalid_arguments`. Neither provider is asked to
+enforce the schemas as well: strict/structured modes limit which JSON Schema
+keywords a tool may declare, and a keyword one refuses is an error on every
+turn — a total outage of the surface — to save the occasional wasted round.
+Worth turning on per vendor once a deployment with a live key can prove the
+schemas are accepted; not worth guessing at.
 
 Existence is not leakable either. A record id belonging to another brokerage
 returns `not_found` — the same answer as an id that never existed — so absence
@@ -114,6 +115,9 @@ Nothing in this path can turn "we could not look" into "there is nothing".
 | Rows per tool | 8 default, 20 max | `hasMore` says the list was cut off, not that it ended |
 | Function ceiling | 120s | a truncated stream looks like a model fault; it is not |
 
+None of these is delegated to a vendor: they are enforced in FortMark's loop
+and executor, identically whoever is answering.
+
 The **final** round is opened with `tool_choice: none`, so a turn always ends
 in an answer rather than in another request the budget cannot pay for. A model
 that asks anyway is told the budget ran out — in the thread, not silently.
@@ -145,9 +149,12 @@ every `console.*` call in the loop and the executor.
 
 ## Availability
 
-Two states, and no fallback:
+Two states, and no fallback — not to a generated reply, and not to whichever
+vendor happens to have a key. The assistant answers over real records, or it
+says it is not connected. Which vendor answers, and what a missing key means,
+are in **docs/AI_PROVIDERS.md**.
 
-| `AI_CHAT_PROVIDER_ENABLED` | `ANTHROPIC_API_KEY` | Result |
+| `AI_CHAT_PROVIDER_ENABLED` | selected vendor's key | Result |
 |---|---|---|
 | `1` | present | answers over real records |
 | anything else | — | `503 not_configured`; the thread says the assistant is not connected |

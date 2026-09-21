@@ -16,22 +16,9 @@
  * Run: npm run test:ai
  */
 import { existsSync, readFileSync } from "node:fs";
-import { assistantAvailability } from "../lib/ai/availability.ts";
-import {
-  AI_LIMITS,
-  AI_MODEL,
-  AI_SYSTEM_PROMPT,
-  aiProviderEnabled,
-  parseChatRequest,
-  resolveAiCredential,
-} from "../lib/ai/provider.ts";
-import {
-  emptyRound,
-  EMPTY_TURN_TEXT,
-  streamRound,
-  textDelta,
-  type ProviderEvent,
-} from "../lib/ai/stream.ts";
+import { AI_LIMITS, AI_SYSTEM_PROMPT, parseChatRequest } from "../lib/ai/provider.ts";
+import { emptyRound, EMPTY_TURN_TEXT, streamRound } from "../lib/ai/stream.ts";
+import type { TurnEvent } from "../lib/ai/providers/types.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -48,35 +35,10 @@ function check(name: string, condition: boolean): void {
 // Syntactically plausible shape only — never a real credential.
 const KEY = "sk-ant-api03-example";
 
-// --- The flag --------------------------------------------------------------
-//
-// Strict on purpose: this one authorises spending against an external account,
-// so a typo must fail closed rather than be read generously.
-check("flag on for exactly 1", aiProviderEnabled({ AI_CHAT_PROVIDER_ENABLED: "1" }));
-check("flag off when unset", !aiProviderEnabled({}));
-check("flag off for true", !aiProviderEnabled({ AI_CHAT_PROVIDER_ENABLED: "true" }));
-check("flag off for yes", !aiProviderEnabled({ AI_CHAT_PROVIDER_ENABLED: "yes" }));
-check("flag off for on", !aiProviderEnabled({ AI_CHAT_PROVIDER_ENABLED: "on" }));
-check("flag off for padded 1", !aiProviderEnabled({ AI_CHAT_PROVIDER_ENABLED: " 1 " }));
-
-// --- Credential resolution -------------------------------------------------
-check("a key alone does not enable the provider",
-  resolveAiCredential({ ANTHROPIC_API_KEY: KEY }).ok === false);
-check("key alone reports disabled, not a missing key",
-  resolveAiCredential({ ANTHROPIC_API_KEY: KEY }) as unknown as { reason: string } &&
-    (resolveAiCredential({ ANTHROPIC_API_KEY: KEY }) as { reason?: string }).reason === "disabled");
-check("flag alone is a missing key",
-  (resolveAiCredential({ AI_CHAT_PROVIDER_ENABLED: "1" }) as { reason?: string }).reason ===
-    "missing_key");
-check("whitespace key is absent",
-  (resolveAiCredential({ AI_CHAT_PROVIDER_ENABLED: "1", ANTHROPIC_API_KEY: "   " }) as {
-    reason?: string;
-  }).reason === "missing_key");
-{
-  const r = resolveAiCredential({ AI_CHAT_PROVIDER_ENABLED: "1", ANTHROPIC_API_KEY: `  ${KEY}  ` });
-  check("flag and key together resolve", r.ok);
-  check("the resolved key is trimmed", r.ok && r.apiKey === KEY);
-}
+// Provider selection, credential resolution and the health vocabulary moved to
+// scripts/test_ai_providers.ts when a second vendor arrived: they are
+// questions about a provider, and there are now two. What stays here is what
+// is true whoever answers.
 
 // --- Request validation ----------------------------------------------------
 //
@@ -156,33 +118,20 @@ check("a history ending on an assistant turn is refused",
     r.ok && r.messages.every((m) => m.content.trim().length > 0));
 }
 
-// --- Event handling --------------------------------------------------------
+// --- Round accumulation ----------------------------------------------------
 //
-// One round of provider events, accumulated. This is the seam that decides
-// what the user sees, so the interesting cases — reasoning, tool arguments, a
-// stream that dies partway, arguments that are not valid JSON — are scripted
-// here rather than waited for in production.
-const ev = (e: unknown) => e as ProviderEvent;
-const text = (t: string, index = 0) =>
-  ev({ type: "content_block_delta", index, delta: { type: "text_delta", text: t } });
-const thinking = (t: string) =>
-  ev({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: t } });
-const start = () => ev({ type: "message_start", message: {} });
-const stop = () => ev({ type: "message_stop" });
-const toolStart = (index: number, id: string, name: string) =>
-  ev({ type: "content_block_start", index, content_block: { type: "tool_use", id, name, input: {} } });
-const toolJson = (index: number, partial: string) =>
-  ev({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: partial } });
-const blockStop = (index: number) => ev({ type: "content_block_stop", index });
-const stopReason = (reason: string) =>
-  ev({ type: "message_delta", delta: { stop_reason: reason, stop_sequence: null }, usage: {} });
+// One round of NEUTRAL events, accumulated. This seam no longer knows there is
+// such a thing as a wire protocol — each vendor's translation is exercised in
+// scripts/test_ai_providers.ts — so what is asserted here is FortMark's own
+// policy: what the user sees, what the executor is asked for, and what happens
+// when a stream dies partway.
+const textEvent = (t: string): TurnEvent => ({ type: "text", text: t });
+const callEvent = (id: string, name: string, input: unknown, invalid?: boolean): TurnEvent => ({
+  type: "tool_call",
+  call: { id, name, input, ...(invalid ? { invalid } : {}) },
+});
 
-check("a text delta yields its text", textDelta(text("hi")) === "hi");
-check("a thinking delta yields nothing", textDelta(thinking("reasoning")) === null);
-check("a non-delta event yields nothing", textDelta(start()) === null);
-check("a message stop yields nothing", textDelta(stop()) === null);
-
-async function iterate(events: ProviderEvent[], failAfter = -1): Promise<AsyncIterator<ProviderEvent>> {
+async function iterate(events: TurnEvent[], failAfter = -1): Promise<AsyncIterator<TurnEvent>> {
   async function* gen() {
     for (const [i, e] of events.entries()) {
       if (i === failAfter) throw new Error("provider exploded");
@@ -194,7 +143,7 @@ async function iterate(events: ProviderEvent[], failAfter = -1): Promise<AsyncIt
 }
 
 /** Drain a round, returning what the browser saw and what was recorded. */
-async function drain(events: ProviderEvent[], failAfter = -1) {
+async function drain(events: TurnEvent[], failAfter = -1) {
   const round = emptyRound();
   const seen: string[] = [];
   const it = await iterate(events, failAfter);
@@ -206,85 +155,56 @@ const results: Promise<void>[] = [];
 
 results.push(
   (async () => {
-    // Reasoning ahead of the answer must not reach the thread.
-    const { round, seen } = await drain([
-      start(),
-      thinking("weighing it up"),
-      text("Hello"),
-      text(" there"),
-      stopReason("end_turn"),
-      stop(),
-    ]);
+    const { round, seen } = await drain([textEvent("Hello"), textEvent(" there")]);
     check("text streams through in order", seen === "Hello there");
-    check("reasoning never reaches the thread", !seen.includes("weighing"));
-    check("the turn is replayable as history", round.text === "Hello there");
-    check("a plain answer records its stop reason", round.stopReason === "end_turn");
-    check("a plain answer asks for no tools", round.toolUses.length === 0);
+    check("the round is replayable as history", round.text === "Hello there");
+    check("a plain answer asks for no tools", round.toolCalls.length === 0);
+    check("a plain answer is not a broken stream", !round.broke);
   })()
 );
 
 results.push(
   (async () => {
-    // A tool call: the arguments are recorded, and NOT narrated to the user.
+    // Tool calls are recorded, and NOT narrated to the user.
     const { round, seen } = await drain([
-      start(),
-      text("Let me check."),
-      toolStart(1, "tu_1", "get_contact"),
-      toolJson(1, '{"contact_'),
-      toolJson(1, 'id":"c-42"}'),
-      blockStop(1),
-      stopReason("tool_use"),
+      textEvent("Let me check."),
+      callEvent("tu_1", "get_contact", { contact_id: "c-42" }),
     ]);
-    check("tool arguments are never streamed to the user", seen === "Let me check.");
-    check("a tool call is recorded", round.toolUses.length === 1);
+    check("tool calls are never streamed to the user", seen === "Let me check.");
+    check("a tool call is recorded", round.toolCalls.length === 1);
     check("the tool's name and id survive",
-      round.toolUses[0].name === "get_contact" && round.toolUses[0].id === "tu_1");
-    check("split argument JSON is reassembled",
-      JSON.stringify(round.toolUses[0].input) === '{"contact_id":"c-42"}');
-    check("a tool round records the tool_use stop reason", round.stopReason === "tool_use");
+      round.toolCalls[0].name === "get_contact" && round.toolCalls[0].id === "tu_1");
+    check("the tool's arguments survive",
+      JSON.stringify(round.toolCalls[0].input) === '{"contact_id":"c-42"}');
   })()
 );
 
 results.push(
   (async () => {
-    // Two calls in one round, and a no-argument tool that streams nothing.
     const { round } = await drain([
-      toolStart(0, "tu_a", "get_business_summary"),
-      blockStop(0),
-      toolStart(1, "tu_b", "get_followups"),
-      toolJson(1, '{"limit":3}'),
-      blockStop(1),
-      stopReason("tool_use"),
+      callEvent("tu_a", "get_business_summary", {}),
+      callEvent("tu_b", "get_followups", { limit: 3 }),
     ]);
-    check("parallel tool calls are all recorded", round.toolUses.length === 2);
-    check("a tool with no arguments becomes an empty object",
-      JSON.stringify(round.toolUses[0].input) === "{}" && !round.toolUses[0].invalid);
-    check("a later call keeps its own arguments",
-      JSON.stringify(round.toolUses[1].input) === '{"limit":3}');
+    check("parallel tool calls are all recorded", round.toolCalls.length === 2);
+    check("each call keeps its own arguments",
+      JSON.stringify(round.toolCalls[1].input) === '{"limit":3}');
   })()
 );
 
 results.push(
   (async () => {
-    // Unreadable arguments are flagged, never guessed at.
-    const { round } = await drain([
-      toolStart(0, "tu_x", "get_contact"),
-      toolJson(0, '{"contact_id": "c-1'),
-      blockStop(0),
-      stopReason("tool_use"),
-    ]);
-    check("unparseable arguments are flagged", round.toolUses[0].invalid === true);
-    check("unparseable arguments are not guessed at",
-      JSON.stringify(round.toolUses[0].input) === "{}");
+    const { round } = await drain([callEvent("tu_x", "get_contact", {}, true)]);
+    check("unreadable arguments stay flagged through the round",
+      round.toolCalls[0].invalid === true);
   })()
 );
 
 results.push(
   (async () => {
-    // A refusal the fallback chain did not rescue: no text at all.
-    const { round, seen } = await drain([start(), thinking("considering"), stop()]);
+    // A refusal no fallback rescued: no text at all.
+    const { round, seen } = await drain([]);
     check("a turn with no text produces nothing", seen === "");
-    check("a turn with no text asks for no tools", round.toolUses.length === 0);
+    check("a turn with no text asks for no tools", round.toolCalls.length === 0);
     check("there is something to say when a turn is empty", EMPTY_TURN_TEXT.length > 0);
   })()
 );
@@ -293,7 +213,7 @@ results.push(
   (async () => {
     // Mid-stream: the status is long gone and partial text is rendered, so the
     // turn ends where it broke rather than throwing into a committed response.
-    const { round, seen } = await drain([text("partial"), text(" answer")], 2);
+    const { round, seen } = await drain([textEvent("partial"), textEvent(" answer")], 2);
     check("a mid-stream failure does not throw at the caller", seen === "partial answer");
     check("a mid-stream failure is recorded, not swallowed", round.broke === true);
   })()
@@ -308,6 +228,8 @@ await Promise.all(results);
 {
   const route = readFileSync("app/api/chat/route.ts", "utf8");
   const provider = readFileSync("lib/ai/provider.ts", "utf8");
+  const anthropic = readFileSync("lib/ai/providers/anthropic.ts", "utf8");
+  const openai = readFileSync("lib/ai/providers/openai.ts", "utf8");
   /** Source with comments stripped: a word in prose is not a word in code. */
   const strip = (src: string) =>
     src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -316,12 +238,12 @@ await Promise.all(results);
   check("access is decided before the body is read",
     route.indexOf("decideAccess(userId)") < route.indexOf("request.json()"));
   check("the body is validated before the provider is reached",
-    route.indexOf("parseChatRequest(body)") < route.indexOf("resolveAiCredential()"));
+    route.indexOf("parseChatRequest(body)") < route.indexOf("resolveProvider()"));
   // An environment without a provider says so. It does NOT answer. The path
   // that used to run here opened its reply with an invented comparable-sales
   // table, and nothing on screen distinguished it from a real one.
   check("an unconfigured environment refuses rather than answering",
-    /if \(!credential\.ok\)[\s\S]{0,160}error: "not_configured"[\s\S]{0,80}status: 503/.test(route));
+    /if \(!selection\.ok\)[\s\S]{0,320}error: "not_configured"[\s\S]{0,80}status: 503/.test(route));
   check("no generated reply remains anywhere in the assistant",
     !route.includes("mockReplyFor") &&
       !route.includes("mockResponse") &&
@@ -330,9 +252,8 @@ await Promise.all(results);
     (route.match(/headers: STREAM_HEADERS/g) ?? []).length === 1);
 
   // The model is ours, not the caller's. `mode` arrives from the browser.
-  check("the model is a constant, not a request field",
-    provider.includes('export const AI_MODEL = "claude-opus-5"') &&
-      !/model:\s*(body|parsed|opts|mode)/.test(route));
+  check("the model is never read from the request",
+    !/model:\s*(body|parsed|opts|mode)/.test(route));
   // `mode` is a composer field that reaches this route from the browser. It is
   // not read at all: a caller-chosen model would be a caller-chosen bill.
   check("the browser-supplied mode field is never read", !/\bmode\b/.test(strip(route)));
@@ -343,20 +264,32 @@ await Promise.all(results);
   check("the provider module is server-only", provider.includes('import "server-only"'));
   check("the key is never a NEXT_PUBLIC value",
     !provider.includes("NEXT_PUBLIC_ANTHROPIC") && !route.includes("NEXT_PUBLIC_ANTHROPIC"));
-  check("the client is constructed with the resolved key",
-    route.includes("new Anthropic({ apiKey })"));
+  // The route hands each adapter the one key the selector resolved, and the
+  // adapter constructs its own client with it. Neither reads the environment.
+  check("each adapter is constructed with the resolved key",
+    /anthropicProvider\(selection\.apiKey, selection\.model/.test(route) &&
+      /openaiProvider\(selection\.apiKey, selection\.model/.test(route));
+  check("no adapter reads a credential out of the environment",
+    !/process\.env/.test(anthropic) && !/process\.env/.test(openai));
 
   // A provider message can carry request and account identifiers.
   check("no provider message is forwarded to the caller",
     !/error:\s*(error|err)\.message/.test(route) && !/JSON.*error\.message/.test(route));
   check("a rejected key is reported as a server fault, not the caller's",
-    /AuthenticationError[\s\S]{0,400}status: 503/.test(route));
+    /case "auth"[\s\S]{0,400}status: 503/.test(route));
   check("a rate limit is distinguishable from a broken key",
-    /RateLimitError[\s\S]{0,200}status: 429/.test(route));
+    /case "rate_limited"[\s\S]{0,200}status: 429/.test(route));
+  // Vendor error classes never reach the route: each adapter classifies its
+  // own SDK's exceptions into the neutral vocabulary.
+  check("no vendor error class is named outside its adapter",
+    !/Anthropic\.|OpenAI\./.test(route) &&
+      /Anthropic\.AuthenticationError/.test(anthropic) &&
+      /OpenAI\.AuthenticationError/.test(openai));
 
-  // Cost and correctness properties of the call itself.
-  check("a client disconnect is forwarded to the provider",
-    route.includes("{ signal }") && route.includes("stream.abort()"));
+  // Cost and correctness properties of the call itself, in both adapters.
+  check("a client disconnect is forwarded to both providers",
+    /\{ signal \}/.test(anthropic) && /stream\.abort\(\)/.test(anthropic) &&
+      /signal\.addEventListener\("abort"/.test(openai) && /controller\.abort\(\)/.test(openai));
   // A turn may span several rounds. Cancelling must stop the one generating
   // now, not the first one, which finished rounds ago.
   check("cancelling stops the round that is running",
@@ -390,7 +323,9 @@ await Promise.all(results);
     /documents or attachments, email, calendars, contact notes/.test(AI_SYSTEM_PROMPT));
   check("the system prompt still refuses licensed conclusions",
     /not a licensed professional/.test(AI_SYSTEM_PROMPT));
-  check("the system prompt is sent with the call", route.includes("text: AI_SYSTEM_PROMPT"));
+  check("the system prompt is sent with the call, by both adapters",
+    anthropic.includes("text: AI_SYSTEM_PROMPT") &&
+      openai.includes("instructions: AI_SYSTEM_PROMPT"));
   check("nothing caller-specific is interpolated into the prompt",
     !/\$\{/.test(AI_SYSTEM_PROMPT));
 
@@ -399,21 +334,8 @@ await Promise.all(results);
   // deployment, so without a revision a failed build looks like an unchanged
   // one from the outside.
   const health = readFileSync("app/api/health/route.ts", "utf8");
-  check("the health probe reports the assistant's resolved mode",
-    /assistant: assistantAvailability\(\)/.test(health));
-  // Which of the two setup steps is missing, without disclosing either value.
-  check("the probe distinguishes an unset flag from an absent key",
-    assistantAvailability({ ANTHROPIC_API_KEY: KEY }) === "not_enabled" &&
-      assistantAvailability({ AI_CHAT_PROVIDER_ENABLED: "1" }) === "no_credential" &&
-      assistantAvailability({ AI_CHAT_PROVIDER_ENABLED: "1", ANTHROPIC_API_KEY: KEY }) === "available");
-  // With both missing, name the credential: an operator who flips the flag on
-  // that advice would come straight back for the second half.
-  check("the probe names the step that would still be blocking",
-    assistantAvailability({}) === "no_credential");
-  check("reporting order never loosens the gate itself",
-    resolveAiCredential({ ANTHROPIC_API_KEY: KEY }).ok === false);
-  check("the probe never carries a fragment of the key",
-    !JSON.stringify(assistantAvailability({ AI_CHAT_PROVIDER_ENABLED: "1", ANTHROPIC_API_KEY: KEY })).includes(KEY.slice(0, 8)));
+  check("the health probe reports the assistant's resolved state",
+    /assistant: assistantHealth\(\)/.test(health));
   check("the health probe names the running revision",
     /revision: process\.env\.VERCEL_GIT_COMMIT_SHA\?\.slice\(0, 7\)/.test(health));
   check("the health probe still discloses no value or secret",
@@ -431,13 +353,21 @@ await Promise.all(results);
   // answers. Two booleans do not make that obvious, so the build resolves it.
   const mig = readFileSync("scripts/migrate.mjs", "utf8");
   check("the build reports which way the assistant resolves",
-    /assistant AI_CHAT_PROVIDER_ENABLED=/.test(mig) && /not connected/.test(mig));
+    /assistant AI_CHAT_PROVIDER_ENABLED=/.test(mig) &&
+      /AI_PROVIDER=/.test(mig) &&
+      /not connected/.test(mig));
+  check("the build warns that a missing key is never covered by the other vendor",
+    /will NOT use the other vendor/.test(mig));
+  check("the build reads only the selected vendor's key",
+    /raw === "openai" \? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"/.test(mig));
   check("the build no longer promises a generated reply",
     !/mock replies/.test(mig));
   check("the build warns when the flag is on without a key",
-    /flag === "on" && !key[\s\S]{0,300}WARNING: the assistant provider is enabled/.test(mig));
-  check("the build never prints the key",
-    !/\$\{process\.env\.ANTHROPIC_API_KEY\}/.test(mig));
+    /flag === "on" && !key[\s\S]{0,300}WARNING: the assistant is enabled/.test(mig));
+  check("the build never prints either key",
+    !/\$\{process\.env\.ANTHROPIC_API_KEY\}/.test(mig) &&
+      !/\$\{process\.env\.OPENAI_API_KEY\}/.test(mig) &&
+      !/\$\{process\.env\[variable\]\}/.test(mig));
   check("the build reads the assistant flag strictly",
     /const flag = strict\("AI_CHAT_PROVIDER_ENABLED"\)/.test(mig));
 }

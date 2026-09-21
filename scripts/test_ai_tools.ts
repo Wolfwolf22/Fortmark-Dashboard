@@ -39,8 +39,9 @@ import {
   type ToolContext,
 } from "../lib/ai/tools/types.ts";
 import { businessSummary, contactDetail, transactionDetail } from "../lib/ai/tools/dto.ts";
-import { runAssistant, type OpenedRound, type Turn } from "../lib/ai/loop.ts";
-import { emptyRound, INTERRUPTED_TEXT, TOOL_BUDGET_TEXT, type ProviderEvent } from "../lib/ai/stream.ts";
+import { runAssistant } from "../lib/ai/loop.ts";
+import { emptyRound, INTERRUPTED_TEXT, TOOL_BUDGET_TEXT } from "../lib/ai/stream.ts";
+import type { NeutralTurn, OpenedRound, TurnEvent } from "../lib/ai/providers/types.ts";
 import { MAX_TOOL_ROUNDS } from "../lib/ai/provider.ts";
 import type { Lead, Transaction } from "../lib/data/types.ts";
 import type { BrokerageMetrics } from "../lib/metrics/types.ts";
@@ -460,14 +461,19 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
 
   const loop = code("lib/ai/loop.ts");
   const route = code("app/api/chat/route.ts");
-  check("tool output reaches the model only as a tool_result block",
-    /type: "tool_result"/.test(loop) && /tool_use_id/.test(loop));
-  check("no tool output is concatenated into the system prompt",
-    !/system[\s\S]{0,80}(result|payload|data|contact|transaction)/i.test(route));
+  check("tool output reaches the model only as a tool-result turn",
+    /role: "tool_results"/.test(loop) && /payload: toolResultPayload\(execution\)/.test(loop));
+  // Neither adapter builds its prompt from anything but the constant, so text
+  // stored in a CRM field can never arrive carrying system authority.
+  const anthropic = code("lib/ai/providers/anthropic.ts");
+  const openai = code("lib/ai/providers/openai.ts");
+  check("no tool output is concatenated into either system prompt",
+    !/system[\s\S]{0,80}(result|payload|data|contact|transaction)/i.test(anthropic) &&
+      !/instructions[\s\S]{0,80}(result|payload|data|contact|transaction)/i.test(openai));
   check("the system prompt is a constant, not a template",
-    /text: AI_SYSTEM_PROMPT/.test(route));
+    /text: AI_SYSTEM_PROMPT/.test(anthropic) && /instructions: AI_SYSTEM_PROMPT/.test(openai));
   check("a failed tool is returned as an error, never dropped",
-    /is_error: !execution\.outcome\.ok/.test(loop));
+    /isError: !execution\.outcome\.ok/.test(loop));
 }
 
 // --- The loop -----------------------------------------------------------------
@@ -476,18 +482,12 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
 // cases that matter (a model that will not stop calling tools, a stream that
 // dies, an opener that fails on the second round) never happen on demand.
 {
-  const ev = (e: unknown) => e as ProviderEvent;
-  const text = (t: string) =>
-    ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: t } });
-  const toolCall = (index: number, id: string, name: string, input: string) => [
-    ev({ type: "content_block_start", index, content_block: { type: "tool_use", id, name, input: {} } }),
-    ev({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: input } }),
-    ev({ type: "content_block_stop", index }),
+  const text = (t: string): TurnEvent => ({ type: "text", text: t });
+  const toolCall = (id: string, name: string, input: unknown): TurnEvent[] => [
+    { type: "tool_call", call: { id, name, input } },
   ];
-  const stopWith = (reason: string) =>
-    ev({ type: "message_delta", delta: { stop_reason: reason, stop_sequence: null }, usage: {} });
 
-  function opened(events: ProviderEvent[], failAfter = -1): OpenedRound {
+  function opened(events: TurnEvent[], failAfter = -1): OpenedRound {
     async function* gen() {
       for (const [i, e] of events.entries()) {
         if (i === failAfter) throw new Error("provider exploded");
@@ -495,18 +495,20 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
       }
       if (failAfter === events.length) throw new Error("provider exploded");
     }
-    return { iterator: gen()[Symbol.asyncIterator](), abort: () => {} };
+    return { events: gen()[Symbol.asyncIterator](), abort: () => {} };
   }
 
   /** A scripted model. Each entry is one round; the calls are recorded. */
-  function scriptedOpener(rounds: ProviderEvent[][], log: { allowTools: boolean[]; turns: Turn[][] }) {
+  function scriptedOpener(rounds: TurnEvent[][], log: { allowTools: boolean[]; turns: NeutralTurn[][] }) {
     let round = 0;
-    return async (messages: Turn[], options: { allowTools: boolean }) => {
-      log.allowTools.push(options.allowTools);
-      log.turns.push(messages);
-      const events = rounds[Math.min(round, rounds.length - 1)];
-      round += 1;
-      return opened(events);
+    return {
+      openRound: async (turns: NeutralTurn[], options: { allowTools: boolean }) => {
+        log.allowTools.push(options.allowTools);
+        log.turns.push(turns);
+        const events = rounds[Math.min(round, rounds.length - 1)];
+        round += 1;
+        return opened(events);
+      },
     };
   }
 
@@ -516,13 +518,13 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
     return out.join("");
   };
 
-  const history: Turn[] = [{ role: "user", content: "how is my month going?" }];
+  const history: NeutralTurn[] = [{ role: "user", text: "how is my month going?" }];
 
   // 1. A plain answer: one round, no tools, nothing appended.
   {
-    const log = { allowTools: [] as boolean[], turns: [] as Turn[][] };
+    const log = { allowTools: [] as boolean[], turns: [] as NeutralTurn[][] };
     const out = await collect(
-      runAssistant(history, opened([text("Four closings this month."), stopWith("end_turn")]), ctx,
+      runAssistant(history, opened([text("Four closings this month.")]), ctx,
         scriptedOpener([], log))
     );
     check("a plain answer streams through untouched", out === "Four closings this month.");
@@ -532,14 +534,13 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
   // 2. One tool round, then an answer. The tool result must come back as a
   //    user turn carrying a tool_result for the exact tool_use id.
   {
-    const log = { allowTools: [] as boolean[], turns: [] as Turn[][] };
+    const log = { allowTools: [] as boolean[], turns: [] as NeutralTurn[][] };
     const first = opened([
       text("Checking."),
-      ...toolCall(1, "tu_a", "get_contact", '{"contact_id":"c-1"}'),
-      stopWith("tool_use"),
+      ...toolCall("tu_a", "get_contact", { contact_id: "c-1" }),
     ]);
     const out = await collect(
-      runAssistant(history, first, ctx, scriptedOpener([[text(" No such contact is visible."), stopWith("end_turn")]], log))
+      runAssistant(history, first, ctx, scriptedOpener([[text(" No such contact is visible.")]], log))
     );
     check("a tool round answers in the same visible turn",
       out === "Checking. No such contact is visible.");
@@ -548,24 +549,23 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
 
     const replayed = log.turns[0];
     check("the history grows by the assistant turn and the results", replayed.length === 3);
-    const assistantTurn = replayed[1] as { role: string; content: { type: string; id?: string }[] };
-    check("the assistant turn is replayed with its tool_use block",
+    const assistantTurn = replayed[1];
+    check("the assistant turn is replayed with its tool call",
       assistantTurn.role === "assistant" &&
-        assistantTurn.content.some((b) => b.type === "tool_use" && b.id === "tu_a"));
-    const resultTurn = replayed[2] as { role: string; content: { type: string; tool_use_id?: string; content?: string }[] };
-    check("the result is a user turn keyed to the call",
-      resultTurn.role === "user" && resultTurn.content[0].tool_use_id === "tu_a");
+        assistantTurn.toolCalls.some((call) => call.id === "tu_a"));
+    const resultTurn = replayed[2];
+    check("the result is keyed to the call",
+      resultTurn.role === "tool_results" && resultTurn.results[0].id === "tu_a");
     check("an unconfigured domain is reported to the model as such",
-      String(resultTurn.content[0].content).includes("not_configured"));
+      resultTurn.role === "tool_results" &&
+        resultTurn.results[0].payload.includes("not_configured") &&
+        resultTurn.results[0].isError);
   }
 
   // 3. A model that will not stop asking. The budget must hold.
   {
-    const log = { allowTools: [] as boolean[], turns: [] as Turn[][] };
-    const forever = [
-      ...toolCall(0, "tu_x", "get_business_summary", "{}"),
-      stopWith("tool_use"),
-    ];
+    const log = { allowTools: [] as boolean[], turns: [] as NeutralTurn[][] };
+    const forever = toolCall("tu_x", "get_business_summary", {});
     const out = await collect(
       runAssistant(history, opened(forever), ctx, scriptedOpener([forever], log))
     );
@@ -579,7 +579,7 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
 
   // 4. The stream dies partway. What arrived stays; the user is told.
   {
-    const log = { allowTools: [] as boolean[], turns: [] as Turn[][] };
+    const log = { allowTools: [] as boolean[], turns: [] as NeutralTurn[][] };
     const out = await collect(
       runAssistant(history, opened([text("Half an ans"), text("wer")], 2), ctx, scriptedOpener([], log))
     );
@@ -595,9 +595,9 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
     const out = await collect(
       runAssistant(
         history,
-        opened([text("Looking."), ...toolCall(1, "tu_b", "get_followups", "{}"), stopWith("tool_use")]),
+        opened([text("Looking."), ...toolCall("tu_b", "get_followups", {})]),
         ctx,
-        failing as never
+        { openRound: failing } as never
       )
     );
     check("a provider that fails mid-turn does not throw at the caller",
@@ -608,13 +608,13 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
 
   // 6. Nothing about the tools is narrated into the thread.
   {
-    const log = { allowTools: [] as boolean[], turns: [] as Turn[][] };
+    const log = { allowTools: [] as boolean[], turns: [] as NeutralTurn[][] };
     const out = await collect(
       runAssistant(
         history,
-        opened([...toolCall(0, "tu_c", "get_contact", '{"contact_id":"c-secret"}'), stopWith("tool_use")]),
+        opened([...toolCall("tu_c", "get_contact", { contact_id: "c-secret" })]),
         ctx,
-        scriptedOpener([[text("I could not read that."), stopWith("end_turn")]], log)
+        scriptedOpener([[text("I could not read that.")]], log)
       )
     );
     check("tool names are not streamed to the user", !out.includes("get_contact"));
@@ -623,7 +623,7 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
 
   check("a fresh round starts empty", (() => {
     const round = emptyRound();
-    return round.text === "" && round.toolUses.length === 0 && !round.broke;
+    return round.text === "" && round.toolCalls.length === 0 && !round.broke;
   })());
 }
 

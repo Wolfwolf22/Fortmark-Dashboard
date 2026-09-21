@@ -1,22 +1,19 @@
 import "server-only";
 
 /**
- * Provider configuration for the assistant.
+ * The assistant's own settings — the ones that are FortMark's rather than any
+ * vendor's.
  *
- * Server-only by import guard: `ANTHROPIC_API_KEY` is read here and must never
- * reach a browser bundle.
+ * What the model is, and which credential reaches it, moved to
+ * `providers/select.ts` when a second vendor arrived: those are questions
+ * about a provider. What is left here is what stays the same whoever answers
+ * — the system prompt, the round budget, the output ceiling, and the rules
+ * for what a submitted conversation may contain.
  *
- * Kept apart from `app/api/chat/route.ts` so the rules that decide whether a
- * paid provider is called at all are pure functions a test can exercise,
- * rather than branches reachable only by serving a request.
+ * Server-only by import guard, and kept apart from the route so these rules
+ * are pure functions a test can exercise rather than branches reachable only
+ * by serving a request.
  */
-import type { EnvLike } from "../flags.ts";
-
-/**
- * The model. Deliberately a constant rather than a request field: `mode`
- * arrives from the browser, and a caller-chosen model is a caller-chosen bill.
- */
-export const AI_MODEL = "claude-opus-5";
 
 /**
  * Interactive surface, so this is the latency and cost tuning point. `high` is
@@ -103,44 +100,6 @@ Be direct and concise — a few sentences unless detail is asked for. Lead with 
 Do not narrate your lookups. The user wants the answer, not an account of which tools you called; mention a lookup only when what it did or did not return changes what they should believe.
 
 You are not a licensed professional. Do not present legal, tax or appraisal conclusions as advice, and say when something needs a licensed review.`;
-
-/**
- * Permit calls to the paid provider.
- *
- * A SEPARATE gate from key presence, for the same reason the Blob upload flag
- * is separate from its token: a credential can arrive in an environment for
- * some other purpose, and if presence were the switch, adding it would start
- * billed traffic in every scope at once without anyone choosing to.
- *
- * Strict by design — only the exact string "1". "true", "yes" and "on" are all
- * rejected, unlike the general-purpose flags, because this one authorises
- * spending against an external account and a typo should fail closed rather
- * than be guessed generously.
- *
- * It authorises nobody. Clerk authentication and the dashboard allowlist are
- * still enforced by the route ahead of any of this.
- */
-export function aiProviderEnabled(env: EnvLike = process.env): boolean {
-  return env.AI_CHAT_PROVIDER_ENABLED === "1";
-}
-
-export type AiCredential =
-  | { ok: true; apiKey: string }
-  | { ok: false; reason: "disabled" | "missing_key" };
-
-/**
- * Resolve the credential this subsystem is allowed to use.
- *
- * Returns the key rather than letting the SDK read the ambient environment, so
- * that "is the provider configured" is answered in one place and the answer is
- * the same value the client is later constructed with.
- */
-export function resolveAiCredential(env: EnvLike = process.env): AiCredential {
-  if (!aiProviderEnabled(env)) return { ok: false, reason: "disabled" };
-  const apiKey = env.ANTHROPIC_API_KEY?.trim();
-  if (!apiKey) return { ok: false, reason: "missing_key" };
-  return { ok: true, apiKey };
-}
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
