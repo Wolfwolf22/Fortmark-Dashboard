@@ -46,6 +46,7 @@ import { MAX_TOOL_ROUNDS } from "../lib/ai/provider.ts";
 import { TOOL_NAMES } from "../lib/ai/tools/registry.ts";
 import type { ToolContext } from "../lib/ai/tools/types.ts";
 import type { NeutralTurn, OpenedRound, TurnEvent } from "../lib/ai/providers/types.ts";
+import { startAnthropicStub, startOpenaiStub } from "./provider-stubs.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -595,6 +596,130 @@ for (const scenario of SCENARIOS) {
   check("parity — raw protocol reaches the user from neither vendor",
     !/response\.|content_block|function_call|tool_use/.test(anthropic + openai));
   check("parity — the visible answer is identical", anthropic === openai);
+}
+
+// =============================================================================
+// A real request, over a real socket
+// =============================================================================
+//
+// Everything above drives the translation functions directly, which proves the
+// mapping and never sends a byte. This sends the bytes: the adapter builds a
+// request, an HTTP server receives it, and its SSE stream is parsed back by
+// the SDK. It is the one check that would catch a request shape the types
+// accept and the API would not.
+{
+  const stub = await startOpenaiStub([
+    { type: "response.created", response: {}, sequence_number: 0 },
+    { type: "response.reasoning_text.delta", delta: "deciding", item_id: "r1", content_index: 0, output_index: 0, sequence_number: 1 },
+    { type: "response.output_text.delta", delta: "Looking that up.", item_id: "m1", content_index: 0, output_index: 0, sequence_number: 2, logprobs: [] },
+    {
+      type: "response.output_item.done",
+      output_index: 1,
+      sequence_number: 3,
+      item: { type: "function_call", call_id: "call_1", name: "get_business_summary", arguments: "{}", id: "fc1", status: "completed" },
+    },
+    { type: "response.completed", response: {}, sequence_number: 4 },
+  ]);
+
+  // The official SDK reads this itself; the adapter is unchanged.
+  process.env.OPENAI_BASE_URL = stub.baseUrl;
+  const { openaiProvider } = await import("../lib/ai/providers/openai.ts");
+  const provider = openaiProvider(OPENAI_KEY, "gpt-5.5", new AbortController().signal);
+
+  const round = await provider.openRound(
+    [{ role: "user", text: "how is my month going?" }],
+    { allowTools: true }
+  );
+  const events = await drain(round.events as AsyncGenerator<TurnEvent>);
+  const sent = stub.captured[0];
+  await stub.close();
+  delete process.env.OPENAI_BASE_URL;
+
+  check("a real request reaches the Responses endpoint", sent?.path.includes("/responses"));
+  check("the request carries the system prompt as instructions",
+    typeof sent.body.instructions === "string" && (sent.body.instructions as string).length > 500);
+  check("the request carries every FortMark tool",
+    Array.isArray(sent.body.tools) && (sent.body.tools as unknown[]).length === TOOL_NAMES.length);
+  check("the request names the tools as functions",
+    JSON.stringify(sent.body.tools).includes('"type":"function"') &&
+      JSON.stringify(sent.body.tools).includes('"name":"get_business_summary"'));
+  check("the request permits tools on a non-final round", sent.body.tool_choice === "auto");
+  check("the request asks the vendor NOT to retain the turn", sent.body.store === false);
+  check("the request streams", sent.body.stream === true);
+  check("the request names the selected model", sent.body.model === "gpt-5.5");
+  check("the request carries the conversation",
+    JSON.stringify(sent.body.input).includes("how is my month going?"));
+  check("no credential appears in the request body",
+    !JSON.stringify(sent.body).includes(OPENAI_KEY));
+
+  check("the streamed response parses into neutral events", events.length === 2);
+  check("the streamed text arrives",
+    events[0].type === "text" && events[0].text === "Looking that up.");
+  check("the streamed tool call arrives, with its id and name",
+    events[1].type === "tool_call" &&
+      events[1].call.id === "call_1" &&
+      events[1].call.name === "get_business_summary");
+  check("streamed reasoning does not survive a real round trip",
+    !JSON.stringify(events).includes("deciding"));
+}
+
+// --- The same round trip, through Anthropic ----------------------------------
+{
+  const stub = await startAnthropicStub([
+    { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude-opus-5", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Looking that up." } },
+    { type: "content_block_stop", index: 0 },
+    { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "call_1", name: "get_business_summary", input: {} } },
+    { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "{}" } },
+    { type: "content_block_stop", index: 1 },
+    { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 2 } },
+    { type: "message_stop" },
+  ]);
+
+  process.env.ANTHROPIC_BASE_URL = stub.baseUrl;
+  const { anthropicProvider } = await import("../lib/ai/providers/anthropic.ts");
+  const provider = anthropicProvider(ANTHROPIC_KEY, "claude-opus-5", new AbortController().signal);
+
+  const round = await provider.openRound(
+    [{ role: "user", text: "how is my month going?" }],
+    { allowTools: true }
+  );
+  const events = await drain(round.events as AsyncGenerator<TurnEvent>);
+  const sent = stub.captured[0];
+  await stub.close();
+  delete process.env.ANTHROPIC_BASE_URL;
+
+  check("a real request reaches the Messages endpoint", sent?.path.includes("/messages"));
+  check("the request carries the system prompt",
+    JSON.stringify(sent.body.system).length > 500);
+  check("the request carries every FortMark tool",
+    Array.isArray(sent.body.tools) && (sent.body.tools as unknown[]).length === TOOL_NAMES.length);
+  check("the request names the same tool the other vendor was given",
+    JSON.stringify(sent.body.tools).includes('"name":"get_business_summary"'));
+  check("the request permits tools on a non-final round",
+    JSON.stringify(sent.body.tool_choice) === '{"type":"auto"}');
+  check("the request names the selected model", sent.body.model === "claude-opus-5");
+  check("the request carries the conversation",
+    JSON.stringify(sent.body.messages).includes("how is my month going?"));
+  check("no credential appears in the request body",
+    !JSON.stringify(sent.body).includes(ANTHROPIC_KEY));
+
+  check("the streamed response parses into neutral events", events.length === 2);
+  check("the streamed text arrives",
+    events[0].type === "text" && events[0].text === "Looking that up.");
+  check("the streamed tool call arrives, with its id and name",
+    events[1].type === "tool_call" &&
+      events[1].call.id === "call_1" &&
+      events[1].call.name === "get_business_summary");
+
+  // The whole point, proven on the wire rather than in a mapping table.
+  check("both vendors' real round trips produce the same neutral events",
+    JSON.stringify(events) ===
+      JSON.stringify([
+        { type: "text", text: "Looking that up." },
+        { type: "tool_call", call: { id: "call_1", name: "get_business_summary", input: {} } },
+      ]));
 }
 
 // =============================================================================
