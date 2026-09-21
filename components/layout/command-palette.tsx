@@ -2,42 +2,74 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Building2, User, Workflow } from "lucide-react";
+import { Plus } from "lucide-react";
 import {
   CommandDialog,
-  CommandEmpty,
   CommandGroup,
   CommandInput,
   CommandItem,
   CommandList,
+  CommandSeparator,
 } from "@/components/ui/command";
 import { NAV_ITEMS } from "./nav-items";
 import { useUiStore } from "@/lib/stores/ui";
 import { searchAll } from "@/lib/data/adapters/search";
-import { SearchResult } from "@/lib/data/types";
+import { ENTITY_ORDER, topResult } from "@/lib/search/rank";
+import {
+  MIN_QUERY_LENGTH,
+  type ProviderStates,
+  type SearchEntity,
+  type SearchHit,
+  type SearchResponse,
+} from "@/lib/search/types";
+import { ROUTES } from "@/lib/routes";
 
-const KIND_ICON = {
-  listing: Building2,
-  transaction: Workflow,
-  contact: User,
-} as const;
-
-const KIND_LABEL = {
-  listing: "Listings",
-  transaction: "Transactions",
+const ENTITY_HEADING: Record<SearchEntity, string> = {
   contact: "Contacts",
-} as const;
+  transaction: "Transactions",
+  listing: "Listings",
+  agent: "Team",
+};
 
 /**
- * ⌘K palette: navigation plus live search across listings, transactions,
- * and contacts via the search adapter.
+ * Quick actions.
+ *
+ * Commands, not search results: they are always available, never sent to a
+ * database, and still work when every provider is down. The palette is a
+ * launcher as much as a finder, and the launcher half must not depend on the
+ * finder half.
+ */
+const ACTIONS = [
+  { label: "Add a contact", href: ROUTES.leads },
+  { label: "Create a transaction", href: ROUTES.transactions },
+];
+
+/** Debounce: long enough to skip intermediate keystrokes, short enough to feel live. */
+const DEBOUNCE_MS = 140;
+
+/**
+ * ⌘K — FortMark's retrieval surface.
+ *
+ * Commands above, authorized records below. The records come from the unified
+ * search service, so what appears here is exactly what the caller could open
+ * on the underlying screen: no client-side filtering of a wider set, and no
+ * generated brokerage behind it.
+ *
+ * Two things it is careful about. A slow answer can never overwrite a faster
+ * one for a later query — each request carries an `AbortController` and a
+ * sequence number. And a provider that could not answer is reported as such,
+ * never as "no results", because telling an agent their client does not exist
+ * when the database was merely unreachable is the worst lie this screen could
+ * tell.
  */
 export function CommandPalette() {
   const router = useRouter();
   const open = useUiStore((s) => s.commandOpen);
   const setOpen = useUiStore((s) => s.setCommandOpen);
   const [query, setQuery] = React.useState("");
-  const [results, setResults] = React.useState<SearchResult[]>([]);
+  const [response, setResponse] = React.useState<SearchResponse | null>(null);
+  const [searching, setSearching] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
 
   React.useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -50,21 +82,48 @@ export function CommandPalette() {
     return () => document.removeEventListener("keydown", down);
   }, [setOpen]);
 
+  // The latest request wins, whatever order the answers arrive in.
+  const sequence = React.useRef(0);
+
   React.useEffect(() => {
     if (!open) {
       setQuery("");
-      setResults([]);
+      setResponse(null);
+      setFailed(false);
+      setSearching(false);
       return;
     }
-    let cancelled = false;
+    const trimmed = query.trim();
+    if (trimmed.length < MIN_QUERY_LENGTH) {
+      setResponse(null);
+      setFailed(false);
+      setSearching(false);
+      return;
+    }
+
+    const ticket = ++sequence.current;
+    const controller = new AbortController();
+    setSearching(true);
     const handle = setTimeout(() => {
-      searchAll(query).then((r) => {
-        if (!cancelled) setResults(r);
-      });
-    }, 120);
+      searchAll(trimmed, controller.signal)
+        .then((result) => {
+          if (ticket !== sequence.current) return;
+          setResponse(result);
+          setFailed(false);
+        })
+        .catch(() => {
+          if (ticket !== sequence.current) return;
+          setResponse(null);
+          setFailed(true);
+        })
+        .finally(() => {
+          if (ticket === sequence.current) setSearching(false);
+        });
+    }, DEBOUNCE_MS);
+
     return () => {
-      cancelled = true;
       clearTimeout(handle);
+      controller.abort();
     };
   }, [query, open]);
 
@@ -73,60 +132,191 @@ export function CommandPalette() {
     router.push(href);
   };
 
-  const grouped = (["listing", "transaction", "contact"] as const)
-    .map((kind) => ({ kind, items: results.filter((r) => r.kind === kind) }))
-    .filter((g) => g.items.length > 0);
+  const trimmed = query.trim();
+  const searchable = trimmed.length >= MIN_QUERY_LENGTH;
+  const hits = response?.hits ?? [];
+  const lead = topResult(hits);
+  const grouped = ENTITY_ORDER.map((entity) => ({
+    entity,
+    items: hits.filter((hit) => hit.entity === entity && hit.id !== lead?.id),
+  })).filter((group) => group.items.length > 0);
 
-  const navMatches = query
-    ? NAV_ITEMS.filter((item) =>
-        item.label.toLowerCase().includes(query.toLowerCase())
-      )
+  const navMatches = trimmed
+    ? NAV_ITEMS.filter((item) => item.label.toLowerCase().includes(trimmed.toLowerCase()))
     : NAV_ITEMS;
+  const actionMatches = trimmed
+    ? ACTIONS.filter((action) => action.label.toLowerCase().includes(trimmed.toLowerCase()))
+    : ACTIONS;
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen} title="Search FortMark">
       <CommandInput
-        placeholder="Search listings, transactions, people…"
+        placeholder="Search people, deals, addresses…"
         value={query}
         onValueChange={setQuery}
       />
       <CommandList>
-        <CommandEmpty>No matches. Try an address, client, or MLS number.</CommandEmpty>
-        {grouped.map((group) => {
-          const Icon = KIND_ICON[group.kind];
-          return (
-            <CommandGroup key={group.kind} heading={KIND_LABEL[group.kind]}>
-              {group.items.map((result) => (
-                <CommandItem
-                  key={result.id}
-                  value={result.id}
-                  onSelect={() => go(result.href)}
-                >
-                  <Icon />
-                  <span className="min-w-0">
-                    <span className="block truncate font-semibold">{result.title}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {result.subtitle}
-                    </span>
-                  </span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          );
-        })}
-        <CommandGroup heading="Go to">
-          {navMatches.map((item) => (
-            <CommandItem
-              key={item.href}
-              value={`nav-${item.label}`}
-              onSelect={() => go(item.href)}
-            >
-              <item.icon />
-              {item.label}
-            </CommandItem>
-          ))}
-        </CommandGroup>
+        {lead && (
+          <CommandGroup heading="Top result">
+            <Result hit={lead} onSelect={go} />
+          </CommandGroup>
+        )}
+
+        {grouped.map((group) => (
+          <CommandGroup key={group.entity} heading={ENTITY_HEADING[group.entity]}>
+            {group.items.map((hit) => (
+              <Result key={`${hit.entity}-${hit.id}`} hit={hit} onSelect={go} />
+            ))}
+          </CommandGroup>
+        ))}
+
+        {searchable && (
+          <SearchState
+            query={trimmed}
+            searching={searching}
+            failed={failed}
+            response={response}
+          />
+        )}
+
+        {(lead || grouped.length > 0) && <CommandSeparator />}
+
+        {actionMatches.length > 0 && (
+          <CommandGroup heading="Actions">
+            {actionMatches.map((action) => (
+              <CommandItem
+                key={action.href + action.label}
+                value={`action-${action.label}`}
+                onSelect={() => go(action.href)}
+              >
+                <Plus />
+                {action.label}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {navMatches.length > 0 && (
+          <CommandGroup heading="Go to">
+            {navMatches.map((item) => (
+              <CommandItem
+                key={item.href}
+                value={`nav-${item.label}`}
+                onSelect={() => go(item.href)}
+              >
+                <item.icon />
+                {item.label}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
       </CommandList>
     </CommandDialog>
+  );
+}
+
+/**
+ * One record.
+ *
+ * `value` is unique per hit and `shouldFilter` is off on the dialog, so cmdk
+ * never second-guesses the server's result set — what the service authorized
+ * is exactly what is shown.
+ */
+function Result({ hit, onSelect }: { hit: SearchHit; onSelect: (href: string) => void }) {
+  return (
+    <CommandItem value={`${hit.entity}-${hit.id}`} onSelect={() => onSelect(hit.href)}>
+      <span className="flex min-w-0 flex-1 items-baseline justify-between gap-3">
+        <span className="min-w-0">
+          <span className="block truncate font-semibold">{hit.title}</span>
+          {hit.subtitle && (
+            <span className="block truncate text-xs text-muted-foreground">{hit.subtitle}</span>
+          )}
+        </span>
+        {hit.meta && (
+          <span className="shrink-0 text-xs tabular text-muted-foreground">{hit.meta}</span>
+        )}
+      </span>
+    </CommandItem>
+  );
+}
+
+/** The domains a person would expect an answer from, in the order they read. */
+const REPORTED: SearchEntity[] = ["contact", "transaction", "listing"];
+
+const DEGRADED_LABEL: Record<SearchEntity, string> = {
+  contact: "Contacts",
+  transaction: "Transactions",
+  listing: "MLS",
+  agent: "Team",
+};
+
+/**
+ * What to say when there is nothing to show.
+ *
+ * The distinction this draws is the whole point of the availability contract:
+ * "we searched and found nothing" and "we could not search" must never read
+ * the same way. A user told "no results" when the MLS was simply not connected
+ * would conclude the property does not exist.
+ */
+function SearchState({
+  query,
+  searching,
+  failed,
+  response,
+}: {
+  query: string;
+  searching: boolean;
+  failed: boolean;
+  response: SearchResponse | null;
+}) {
+  if (failed) {
+    return <Note>Search is unavailable right now. Try again in a moment.</Note>;
+  }
+  if (searching && !response) {
+    return <Note>Searching…</Note>;
+  }
+  if (!response) return null;
+
+  const degraded = describeDegraded(response.providers);
+  if (response.hits.length > 0) {
+    return degraded ? <Note>{degraded}</Note> : null;
+  }
+
+  const searched = REPORTED.filter((entity) => response.providers[entity] === "available");
+  const searchedLabel = searched.map((entity) => DEGRADED_LABEL[entity].toLowerCase());
+  return (
+    <Note>
+      {searched.length === 0
+        ? `Nothing could be searched for “${query}”.`
+        : `No ${joinWords(searchedLabel)} match “${query}”.`}
+      {degraded ? ` ${degraded}` : ""}
+    </Note>
+  );
+}
+
+/** Names the domains that could not be searched, so silence is never a zero. */
+function describeDegraded(providers: ProviderStates): string | null {
+  const down = REPORTED.filter((entity) => providers[entity] === "unavailable");
+  const off = REPORTED.filter((entity) => providers[entity] === "not_configured");
+  const parts: string[] = [];
+  if (down.length > 0) {
+    parts.push(`${joinWords(down.map((e) => DEGRADED_LABEL[e]))} search is temporarily unavailable.`);
+  }
+  if (off.length > 0) {
+    parts.push(`${joinWords(off.map((e) => DEGRADED_LABEL[e]))} search is not connected.`);
+  }
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+function joinWords(words: string[]): string {
+  if (words.length <= 1) return words[0] ?? "";
+  return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
+
+function Note({ children }: { children: React.ReactNode }) {
+  return (
+    <p role="status" className="px-3 py-4 text-[13px] leading-snug text-muted-foreground">
+      {children}
+    </p>
   );
 }
