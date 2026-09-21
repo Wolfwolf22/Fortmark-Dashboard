@@ -124,6 +124,11 @@ async function providerResponse(
   const client = new Anthropic({ apiKey });
   const tools = toolParams();
 
+  // The round currently generating. A turn may span several, and cancelling
+  // must stop the one that is running — not the first one, which finished
+  // rounds ago and would leave a live generation nobody will read.
+  let active: { abort: () => void } = { abort: () => {} };
+
   const open: RoundOpener = async (turns, options) => {
     const stream = client.beta.messages.stream(
       {
@@ -152,6 +157,7 @@ async function providerResponse(
       // pays for.
       { signal }
     );
+    active = { abort: () => stream.abort() };
     return {
       iterator: stream[Symbol.asyncIterator]() as AsyncIterator<ProviderEvent>,
       abort: () => stream.abort(),
@@ -191,8 +197,8 @@ async function providerResponse(
       }
     },
     cancel() {
-      // The reader went away; stop generating.
-      first.abort();
+      // The reader went away; stop whichever round is generating now.
+      active.abort();
     },
   });
 

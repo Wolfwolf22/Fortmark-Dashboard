@@ -353,6 +353,10 @@ await Promise.all(results);
   // Cost and correctness properties of the call itself.
   check("a client disconnect is forwarded to the provider",
     route.includes("{ signal }") && route.includes("stream.abort()"));
+  // A turn may span several rounds. Cancelling must stop the one generating
+  // now, not the first one, which finished rounds ago.
+  check("cancelling stops the round that is running",
+    /cancel\(\)[\s\S]{0,160}active\.abort\(\)/.test(route));
   check("the function ceiling is raised for a streamed reply",
     /export const maxDuration = \d+/.test(route));
   check("the response is never cached",
