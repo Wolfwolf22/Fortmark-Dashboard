@@ -166,8 +166,22 @@ function addressOf(row: { addressLine1: string; city: string }): string {
  * and only ones nobody has completed. A deal with no deadline records
  * produces no items — the absence of a milestone is not a milestone.
  */
-export async function transactionAttention(ctx: Ctx, now: Date): Promise<AttentionItem[]> {
-  const horizon = dayKey(new Date(now.getTime() + DEADLINE_SOON_DAYS * 86_400_000));
+export async function transactionAttention(
+  ctx: Ctx,
+  now: Date,
+  /**
+   * How far ahead to look, in whole days. Overdue deadlines are returned
+   * whatever the window, because a passed date is not a forecast.
+   *
+   * Home wants the default: a week is what "needs attention" means on a
+   * dashboard. It is a parameter so a caller that asks a wider question gets a
+   * wider answer from THIS query rather than from a second one — a tool that
+   * advertised a thirty-day window over a hard-coded seven-day predicate would
+   * report "nothing due" about twenty-three days it never looked at.
+   */
+  horizonDays: number = DEADLINE_SOON_DAYS
+): Promise<AttentionItem[]> {
+  const horizon = dayKey(new Date(now.getTime() + horizonDays * 86_400_000));
   const rows = await ctx.db
     .select({
       id: transactionDeadlines.id,

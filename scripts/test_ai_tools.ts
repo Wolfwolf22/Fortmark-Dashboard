@@ -200,6 +200,22 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
   check("list_transactions refuses a fractional row count",
     listTxn.parse({ limit: 2.5 }).ok === false);
 
+  // A window the tool advertises must be a window the query honours. The
+  // domain's default horizon is a week; a tool offering thirty days over a
+  // hard-coded seven-day predicate would report "nothing due" about
+  // twenty-three days it never looked at.
+  const metrics = code("lib/transactions/metrics.ts");
+  const registry = code("lib/ai/tools/registry.ts");
+  check("the deadline horizon is a parameter of the query itself",
+    /transactionAttention\([\s\S]{0,200}horizonDays: number = DEADLINE_SOON_DAYS/.test(metrics) &&
+      /horizonDays \* 86_400_000/.test(metrics));
+  check("the tool pushes its window into the query, not onto the result",
+    /transactionAttention\(resolved\.ctx, ctx\.now, within\)/.test(registry));
+  check("Home still gets the default horizon",
+    /transactionAttention\(ctx, now\)/.test(code("lib/metrics/service.ts")));
+  check("the answer states the window it actually looked at",
+    /windowDays: within/.test(registry));
+
   const deadlines = findTool("get_upcoming_deadlines")!;
   check("deadlines refuse a negative window", deadlines.parse({ within_days: -1 }).ok === false);
   check("deadlines accept no arguments at all", deadlines.parse({}).ok);

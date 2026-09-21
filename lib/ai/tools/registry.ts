@@ -270,9 +270,10 @@ const listContactsTool = defineTool({
 const getUpcomingDeadlines = defineTool({
   name: "get_upcoming_deadlines",
   description:
-    "Transaction deadlines that are overdue or fall due soon, soonest first. Overdue items are always included, " +
-    "whatever the window. `daysAway` is negative when the deadline has passed. This reads recorded deadlines only; " +
-    "it infers nothing about risk.",
+    "Transaction deadlines that are overdue or fall due inside a window, soonest first. Overdue items are always " +
+    "included, whatever the window. `daysAway` is negative when the deadline has passed, and `windowDays` says how " +
+    "far ahead this answer actually looked — say so if it is narrower than what was asked about. This reads " +
+    "recorded deadlines on active deals only; it infers nothing about risk.",
   schema: z.strictObject({
     within_days: z
       .number()
@@ -288,7 +289,10 @@ const getUpcomingDeadlines = defineTool({
     if (!resolved.ok) return fail(resolved.error);
     const within = args.within_days ?? 14;
     const limit = args.limit ?? TOOL_LIMITS.defaultRows;
-    const items = (await transactionAttention(resolved.ctx, ctx.now))
+    // The window is pushed into the query, not applied to its result: the
+    // domain's default horizon is a week, and filtering a week's rows down to
+    // a month would answer a question nobody asked while sounding like it had.
+    const items = (await transactionAttention(resolved.ctx, ctx.now, within))
       .filter((item) => item.daysAway <= within)
       .sort(byDue);
     return ok({
