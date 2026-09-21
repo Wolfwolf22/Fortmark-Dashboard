@@ -23,7 +23,7 @@
  *
  * Run: npm run test:ai:tools
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   executeRound,
   executeTool,
@@ -71,6 +71,7 @@ const ctx: ToolContext = {
   clerkUserId: "user_test",
   env: {},
   now: new Date("2026-03-15T12:00:00.000Z"),
+  traceId: "testtrace",
 };
 
 const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest => ({ id, name, input });
@@ -626,6 +627,49 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
   })());
 }
 
+// --- The action boundary has not moved -----------------------------------------
+//
+// F2's contract types are committed ahead of their implementation so the
+// architecture can be checked rather than agreed with. These assertions are
+// the guard on that: the moment any of them fails, a mutation path exists that
+// nobody reviewed.
+{
+  const registry = code("lib/ai/tools/registry.ts");
+  const loop = code("lib/ai/loop.ts");
+  const route = code("app/api/chat/route.ts");
+  const contract = code("lib/ai/actions/contract.ts");
+
+  check("the model still holds exactly the nine read tools", TOOL_NAMES.length === 9);
+  check("no prepare-action tool is registered",
+    !TOOL_NAMES.some((name) => name.startsWith("prepare_")));
+  check("no execution primitive is registered",
+    !TOOL_NAMES.some((name) => /execute|confirm|apply|commit/.test(name)));
+  check("the action contract is not wired into the assistant",
+    !registry.includes("actions/contract") &&
+      !loop.includes("actions/contract") &&
+      !route.includes("actions/contract"));
+  check("the action contract executes nothing",
+    !/\bfunction\b/.test(contract) && !/=>/.test(contract) && !/\bawait\b/.test(contract));
+  check("no action table has been migrated ahead of review",
+    !readFileSync("lib/db/schema.ts", "utf8").includes("ai_prepared_actions"));
+  check("no action route exists yet", !existsSync("app/api/ai"));
+
+  // The two properties the types are meant to make unspellable.
+  check("an action that needs no confirmation cannot be expressed",
+    /confirmationRequired: true;/.test(contract) && !/confirmationRequired\??: boolean/.test(contract));
+  check("a prepared action carries no actor, brokerage or payload", (() => {
+    const block = contract.slice(
+      contract.indexOf("export interface PreparedAction {"),
+      contract.indexOf("export interface PreparedActionHandle")
+    );
+    return !/actor|brokerage|role|payload|clerk/i.test(block);
+  })());
+  check("the model's handle cannot be read as completion", (() => {
+    const block = contract.slice(contract.indexOf("export interface PreparedActionHandle"));
+    return /awaiting_confirmation/.test(block) && !/executed|done|complete[^d]/i.test(block.slice(0, 400));
+  })());
+}
+
 // --- Logging -------------------------------------------------------------------
 //
 // Rule 23: enough to audit, never the payload.
@@ -636,6 +680,12 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
     [...loop.matchAll(/console\.\w+\(([\s\S]*?)\);/g)].map((m) => m[1]).join(" ");
   check("tool calls are logged by name and verdict",
     /tool=\$\{request\.name\}/.test(logged) && /ok=\$\{outcome\.ok\}/.test(logged));
+  // A trace has to be readable as a route, not as scattered lines.
+  check("a turn's rounds and tool calls share a correlation id",
+    /turn=\$\{ctx\.traceId\}/.test(logged) && (logged.match(/turn=/g) ?? []).length >= 2);
+  check("the correlation id is not derived from the caller",
+    /randomUUID\(\)/.test(code("app/api/chat/route.ts")) &&
+      !/traceId[^\n]*clerkUserId/.test(code("app/api/chat/route.ts")));
   check("tool arguments are never logged",
     !/request\.input/.test(logged) && !/parsed\.value/.test(logged));
   check("tool results are never logged",

@@ -119,7 +119,7 @@ export async function* runAssistant(
       invalid: use.invalid,
     }));
     const executions = await executeRound(requests, ctx, execution);
-    console.info(`[ai] round=${round + 1} tools=${executions.length}`);
+    console.info(`[ai] turn=${ctx.traceId} round=${round + 1} tools=${executions.length}`);
 
     messages.push(assistantTurn(result), toolResultTurn(executions));
 

@@ -403,9 +403,15 @@ await Promise.all(results);
     /assistant: assistantAvailability\(\)/.test(health));
   // Which of the two setup steps is missing, without disclosing either value.
   check("the probe distinguishes an unset flag from an absent key",
-    assistantAvailability({}) === "not_enabled" &&
+    assistantAvailability({ ANTHROPIC_API_KEY: KEY }) === "not_enabled" &&
       assistantAvailability({ AI_CHAT_PROVIDER_ENABLED: "1" }) === "no_credential" &&
       assistantAvailability({ AI_CHAT_PROVIDER_ENABLED: "1", ANTHROPIC_API_KEY: KEY }) === "available");
+  // With both missing, name the credential: an operator who flips the flag on
+  // that advice would come straight back for the second half.
+  check("the probe names the step that would still be blocking",
+    assistantAvailability({}) === "no_credential");
+  check("reporting order never loosens the gate itself",
+    resolveAiCredential({ ANTHROPIC_API_KEY: KEY }).ok === false);
   check("the probe never carries a fragment of the key",
     !JSON.stringify(assistantAvailability({ AI_CHAT_PROVIDER_ENABLED: "1", ANTHROPIC_API_KEY: KEY })).includes(KEY.slice(0, 8)));
   check("the health probe names the running revision",

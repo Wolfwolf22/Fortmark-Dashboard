@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import Anthropic from "@anthropic-ai/sdk";
@@ -178,7 +179,14 @@ async function providerResponse(
     return providerError(primed.error);
   }
 
-  const ctx: ToolContext = { clerkUserId, env: process.env, now: new Date() };
+  // Correlates this turn's rounds and tool calls in the log. Random, never
+  // derived from the caller or their message, and never persisted.
+  const ctx: ToolContext = {
+    clerkUserId,
+    env: process.env,
+    now: new Date(),
+    traceId: randomUUID().slice(0, 8),
+  };
   const encoder = new TextEncoder();
 
   const readable = new ReadableStream<Uint8Array>({

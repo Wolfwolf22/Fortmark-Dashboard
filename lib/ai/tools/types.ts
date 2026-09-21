@@ -32,6 +32,21 @@ export interface ToolContext {
   clerkUserId: string;
   env: EnvLike;
   now: Date;
+  /**
+   * Correlates one turn's log lines, so a trace reads as a route rather than
+   * as unrelated calls interleaved with every other request the instance is
+   * serving:
+   *
+   *     [ai] turn=7f3a1c9b round=1 tools=1
+   *     [ai] turn=7f3a1c9b tool=search_entities ok=true ms=84
+   *     [ai] turn=7f3a1c9b round=2 tools=1
+   *     [ai] turn=7f3a1c9b tool=get_transaction ok=true ms=41
+   *
+   * Random per request and never derived from the user, the session or the
+   * message, so it identifies a turn to an operator reading a log and nothing
+   * to anyone else. It is not a session id and is never persisted.
+   */
+  traceId: string;
 }
 
 /**

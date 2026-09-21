@@ -91,7 +91,8 @@ export async function executeTool(
     const ms = Date.now() - started;
     // Name, verdict, duration. Nothing that identifies a person or a property.
     console.info(
-      `[ai] tool=${request.name} ok=${outcome.ok} ms=${ms}${outcome.ok ? "" : ` reason=${outcome.error}`}`
+      `[ai] turn=${ctx.traceId} tool=${request.name} ok=${outcome.ok} ms=${ms}` +
+        (outcome.ok ? "" : ` reason=${outcome.error}`)
     );
     return { id: request.id, name: request.name, outcome, ms };
   };

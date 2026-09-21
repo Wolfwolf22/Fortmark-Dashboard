@@ -35,7 +35,13 @@ import { resolveAiCredential } from "./provider.ts";
 export type AssistantAvailability = "available" | "not_enabled" | "no_credential";
 
 export function assistantAvailability(env: EnvLike = process.env): AssistantAvailability {
-  const credential = resolveAiCredential(env);
-  if (credential.ok) return "available";
-  return credential.reason === "disabled" ? "not_enabled" : "no_credential";
+  if (resolveAiCredential(env).ok) return "available";
+  // Deliberately checked in the opposite order to the gate. `resolveAiCredential`
+  // looks at the flag first and never reads the key when the assistant is
+  // switched off, which is right for a gate and useless for a report: it would
+  // say "not_enabled" to an operator whose key is also missing, who would flip
+  // the flag and come straight back for the second half. This names the step
+  // that would still be blocking afterwards.
+  if (!env.ANTHROPIC_API_KEY?.trim()) return "no_credential";
+  return "not_enabled";
 }
