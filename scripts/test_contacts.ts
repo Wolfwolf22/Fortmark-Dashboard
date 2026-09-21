@@ -199,6 +199,29 @@ check("the primary need is the newest open one",
   check("an invalid assignee is a 400, not a crash", readFileSync("lib/contacts/http.ts", "utf8").includes('"invalid_assignee" }, { status: 400'));
   const adapter = readFileSync("lib/data/adapters/leads.ts", "utf8");
   check("the adapter asks the server which source is live", adapter.includes('"/api/contacts/source"'));
+
+  // --- Search text never travels in a URL ----------------------------------
+  //
+  // A contacts search string is a client's name, their phone number, their
+  // email. A GET puts it in the request line, and the request line is what the
+  // platform writes to its access logs — so searching from the leads screen
+  // would quietly accumulate a log of the brokerage's clients.
+  const listRoute = readFileSync(files.list, "utf8");
+  const searchRoute = readFileSync("app/api/contacts/search/route.ts", "utf8");
+  check("the GET path refuses to read a search term", /key === "q" \? null/.test(listRoute));
+  check("the adapter sends a search term in a POST body",
+    /filters\?\.query[\s\S]{0,200}"\/api\/contacts\/search"[\s\S]{0,120}method: "POST"/.test(adapter));
+  check("a search term is never appended to a URL",
+    !/p\.set\("q"/.test(adapter) && !/\?q=/.test(adapter));
+  check("the private search route authenticates first",
+    searchRoute.indexOf("await requireCaller()") < searchRoute.indexOf("request.json()"));
+  check("the private search route runs the same authorized service",
+    searchRoute.includes("listContacts(actor.ctx, filters)") &&
+      searchRoute.includes("actorOrResponse(caller.clerkUserId)"));
+  check("both paths share one filter validator",
+    listRoute.includes("parseContactFilters") && searchRoute.includes("parseContactFilters"));
+  check("the private search route accepts no scope from the body",
+    !/brokerage|agentId:\s*record|role/i.test(searchRoute.slice(searchRoute.indexOf("export async function POST"))));
   check("the adapter converts a typed budget to cents", adapter.includes("Math.round(input.budget * 100)"));
   check("a 404 is 'not found', not a failure", /status === 404\) return undefined/.test(adapter));
 }

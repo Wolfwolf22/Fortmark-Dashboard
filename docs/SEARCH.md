@@ -101,9 +101,12 @@ search must refuse anyway (`private, no-store`).
 Nothing on the search path calls `console.*`, so queries do not reach the
 application log either.
 
-**Known gap:** `/api/contacts?q=` — used by the leads screen search box — has
-the same exposure and was not changed in E2. It should move to the same
-treatment.
+`/api/contacts?q=` and `/api/transactions?q=` — the leads and transactions
+search boxes — had the same exposure and were closed in F1-A. Both list routes
+now ignore `q` on the GET path entirely, and a POST form of the same read
+accepts it in a body. Stage, side, source, agent and the date window are not
+identifying and stay in the query string, so a list load with no search term is
+the request it always was.
 
 ## Degradation
 

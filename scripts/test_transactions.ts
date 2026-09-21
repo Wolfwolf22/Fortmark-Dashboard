@@ -351,6 +351,30 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
     /if \(column in map\) map\[column\]\.push\(t\);/.test(readFileSync("components/transactions/kanban-board.tsx", "utf8")));
 }
 
+// --- Search text never travels in a URL --------------------------------------
+//
+// A deal search term is a property address: the one a named client is under
+// contract on. Same exposure as a contact's name, same treatment.
+{
+  const listRoute = readFileSync("app/api/transactions/route.ts", "utf8");
+  const searchRoute = readFileSync("app/api/transactions/search/route.ts", "utf8");
+  const adapter = readFileSync("lib/data/adapters/transactions.ts", "utf8");
+  check("the GET path refuses to read a search term", /key === "q" \? null/.test(listRoute));
+  check("the adapter sends a search term in a POST body",
+    /filters\?\.query[\s\S]{0,200}"\/api\/transactions\/search"[\s\S]{0,120}method: "POST"/.test(adapter));
+  check("a search term is never appended to a URL",
+    !/p\.set\("q"/.test(adapter) && !/\?q=/.test(adapter));
+  check("the private search route authenticates first",
+    searchRoute.indexOf("await requireCaller()") < searchRoute.indexOf("request.json()"));
+  check("the private search route runs the same authorized service",
+    searchRoute.includes("listTransactions(actor.ctx, filters, range)") &&
+      searchRoute.includes("actorOrResponse(caller.clerkUserId)"));
+  check("both paths share one filter validator",
+    listRoute.includes("parseTransactionFilters") && searchRoute.includes("parseTransactionFilters"));
+  check("the date window still travels in the URL, being non-identifying",
+    /read\("from"\)/.test(readFileSync("lib/transactions/filters.ts", "utf8")));
+}
+
 // --- Summary -------------------------------------------------------------------------
 const total = passed + failures.length;
 console.log(`\n${passed}/${total} transaction checks passed`);
