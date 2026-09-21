@@ -21,7 +21,9 @@
     "test:search": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_search.ts",
     "test:ai:tools": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_ai_tools.ts",
     "test:ai:providers": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_ai_providers.ts",
-    "test:ai:actions": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_ai_actions.ts"
+    "test:ai:actions": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_ai_actions.ts",
+    "certify:f2b": "playwright test --project=setup --project=certification e2e/f2b-certification.spec.ts",
+    "certify:f2b:expiry": "playwright test --project=setup --project=certification e2e/expiry.spec.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
@@ -64,6 +66,8 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@clerk/testing": "^2.2.36",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.10.7",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",

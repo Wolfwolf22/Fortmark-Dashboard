@@ -26,3 +26,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 dev-server.log
+
+# Preview certification harness — never commit auth artifacts.
+/e2e/.auth/
+/test-results/
+/playwright-report/
+/blob-report/
