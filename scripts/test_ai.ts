@@ -327,6 +327,24 @@ await Promise.all(results);
     /const flag = strict\("AI_CHAT_PROVIDER_ENABLED"\)/.test(mig));
 }
 
+// --- Suggestion chips ------------------------------------------------------
+//
+// Chips advertise capability. No tools are connected, so a chip must ask
+// only for what the assistant can do without data: draft, structure,
+// explain. Nothing here may promise a lookup.
+{
+  const src = readFileSync("lib/ai/suggestions.ts", "utf8");
+  check("no placeholder chip remains", !/label:\s*"Suggestion \d/.test(src));
+  const labels = [...src.matchAll(/label:\s*"([^"]+)"/g)].map((m) => m[1]);
+  const prompts = [...src.matchAll(/prompt:\s*\n?\s*"([^"]+)"/g)].map((m) => m[1]);
+  check("six chips are defined", labels.length === 6);
+  check("every chip has a real prompt", prompts.length === 6 && prompts.every((p) => p.length > 40));
+  check("no chip advertises a data lookup",
+    !labels.some((l) => /^(search|find|look up|show|pull|list) /i.test(l)) &&
+      !prompts.some((p) => /\b(search|find|look up|pull) (my |the |active )?(listings|transactions|leads|clients|documents|comps)\b/i.test(p)));
+  check("chips do not use exclamation marks or emoji", !/[!\u{1F300}-\u{1FAFF}]/u.test(labels.join(" ") + prompts.join(" ")));
+}
+
 // --- Summary ---------------------------------------------------------------
 const total = passed + failures.length;
 console.log(`\n${passed}/${total} assistant checks passed`);
