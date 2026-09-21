@@ -466,6 +466,22 @@ check("needs-attention has no score, only dated facts", (() => {
   return !/score|health|\/100/i.test(src) && src.includes("daysAway");
 })());
 
+// --- Focus order matches what is on screen -------------------------------------------
+check("the identity card is repositioned in the DOM, never by a CSS order", (() => {
+  const src = code("components/home/bento-grid.tsx");
+  // A visual-only reorder would leave eleven profile controls first in the tab
+  // order while rendering them last on screen.
+  return (
+    !/\border-(first|last|none|\d)\b/.test(src) &&
+    /visible\.slice\(0, 1\)[\s\S]{0,200}fixedLead[\s\S]{0,200}visible\.slice\(1\)/.test(src)
+  );
+})());
+check("the identity card is still permanent", (() => {
+  const src = code("components/home/bento-grid.tsx");
+  // Rendered outside the sortable list, so there is nothing to drag or persist.
+  return /SortableContext items=\{visible\}/.test(src) && !/SortableWidget[^>]*fixedLead/.test(src);
+})());
+
 // --- The readiness probe -----------------------------------------------------------------
 check("the probe reports sources and nothing else", (() => {
   const src = code("app/api/health/route.ts");

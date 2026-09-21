@@ -127,10 +127,8 @@ export function BentoGrid({
   fixedLead,
   // Full width at md so the 6-column grid packs without a hole beside it, and
   // a two-row column only at xl, where the attention panel and the deals table
-  // sit alongside it. Last on a phone: the operating content — the brief above
-  // and "Needs attention" below — is what a mobile visit is for, and a profile
-  // card between them pushed the day's work off the first screen.
-  fixedLeadSpanClass = "order-last md:order-none md:col-span-6 xl:col-span-4 xl:row-span-2",
+  // sit alongside it.
+  fixedLeadSpanClass = "md:col-span-6 xl:col-span-4 xl:row-span-2",
 }: {
   /** Permanent, non-sortable first cell. Omitted when the feature is off. */
   fixedLead?: React.ReactNode;
@@ -213,8 +211,22 @@ function SortableGrid({
       >
         <SortableContext items={visible} strategy={rectSortingStrategy}>
           <div className={GRID_CLASS}>
+            {/* The identity card follows the lead module rather than preceding
+                it. On a phone that puts the day's work — the brief above, then
+                "Needs attention" — ahead of a profile card, and it does so by
+                DOM position rather than by a CSS `order`, so the focus order
+                and the reading order still match what is on screen. The card
+                holds eleven focusable controls; moving it visually while
+                leaving it first in the DOM would have sent a keyboard user
+                through all of them, far below the fold, before reaching
+                anything they came for. It remains permanent either way: still
+                outside the sortable list, still with no drag handle, still
+                with no id to persist. */}
+            {visible.slice(0, 1).map((id) => (
+              <SortableWidget key={id} id={id} />
+            ))}
             {fixedLead && <div className={fixedLeadSpanClass}>{fixedLead}</div>}
-            {visible.map((id) => (
+            {visible.slice(1).map((id) => (
               <SortableWidget key={id} id={id} />
             ))}
           </div>
