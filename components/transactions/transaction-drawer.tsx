@@ -33,6 +33,7 @@ import {
 } from "@/lib/data/types";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { daysToClose, nextStage, SIDE_LABELS } from "./txn-shared";
+import { SampleDataNotice } from "@/components/listings/sample-data-notice";
 
 export interface TransactionDrawerProps {
   transactionId: string | null;
@@ -155,7 +156,9 @@ export function TransactionDrawer({
   // Guard against stale data from a previously opened transaction.
   const txn = data && data.id === transactionId ? data : undefined;
 
-  const agentId = txn?.agentId ?? null;
+  // The sample roster only applies to sample rows; a database row states its
+  // agent's name on the record.
+  const agentId = txn?.source === "sample" ? txn.agentId : null;
   const { data: agent } = useQuery(
     () => (agentId ? getAgent(agentId) : Promise.resolve(undefined)),
     [agentId]
@@ -170,13 +173,15 @@ export function TransactionDrawer({
       // The adapter bumps the data version, so the drawer and every open
       // list refetch on their own.
       await updateTransactionStage(txn.id, to);
+    } catch {
+      // A move the lifecycle refuses leaves the deal where it is.
     } finally {
       setAdvancing(false);
     }
   }
 
   const next = txn ? nextStage(txn.stage) : undefined;
-  const days = txn ? daysToClose(txn.closeDate) : 0;
+  const days = txn ? daysToClose(txn.closeDate) : null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -187,6 +192,11 @@ export function TransactionDrawer({
               <SheetTitle>{txn.address}</SheetTitle>
               <SheetDescription>{txn.city}</SheetDescription>
             </SheetHeader>
+            {txn.source === "sample" && (
+              <div className="mt-3">
+                <SampleDataNotice />
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
               <Badge variant="outline">{SIDE_LABELS[txn.side]}</Badge>
               <Badge variant="muted">{TRANSACTION_STAGE_LABELS[txn.stage]}</Badge>
@@ -211,24 +221,30 @@ export function TransactionDrawer({
                   value={formatCurrency(txn.contractPrice)}
                 />
                 <Fact
-                  label="GCI at close"
+                  label="Projected GCI"
                   numeric
-                  value={formatCurrency(txn.contractPrice * txn.commissionRate)}
+                  value={txn.projectedCommission > 0 ? formatCurrency(txn.projectedCommission) : "—"}
                 />
-                <Fact label="Close date" numeric value={formatDate(txn.closeDate)} />
+                <Fact
+                  label="Close date"
+                  numeric
+                  value={txn.closeDate ? formatDate(txn.closeDate) : "—"}
+                />
                 <Fact
                   label="Days to close"
                   numeric
                   value={
                     txn.stage === "closed"
                       ? "Closed"
-                      : days < 0
-                        ? `${Math.abs(days)} days past due`
-                        : `${days} days`
+                      : days === null
+                        ? "—"
+                        : days < 0
+                          ? `${Math.abs(days)} days past due`
+                          : `${days} days`
                   }
                 />
                 <Fact label="Client" value={txn.clientName} />
-                <Fact label="Listing agent" value={agent?.name ?? "—"} />
+                <Fact label="Agent" value={txn.agentName ?? agent?.name ?? "—"} />
               </div>
               <p className="text-micro mt-6">Milestones</p>
               <ol className="mt-3">
@@ -246,7 +262,7 @@ export function TransactionDrawer({
                 <Button onClick={() => advance(next)} disabled={advancing}>
                   Advance to {TRANSACTION_STAGE_LABELS[next].toLowerCase()}
                 </Button>
-                {txn.stage === "clearToClose" && (
+                {txn.stage === "closing_prep" && (
                   <Button
                     variant="ghost"
                     onClick={() => advance("closed")}

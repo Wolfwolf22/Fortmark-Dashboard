@@ -90,9 +90,9 @@ function sortValue(t: Transaction, key: SortKey): string | number {
     case "contractDate":
       return new Date(t.contractDate).getTime();
     case "closeDate":
-      return new Date(t.closeDate).getTime();
+      return t.closeDate ? new Date(t.closeDate).getTime() : Number.MAX_SAFE_INTEGER;
     case "days":
-      return daysToClose(t.closeDate);
+      return daysToClose(t.closeDate) ?? Number.MAX_SAFE_INTEGER;
     case "status":
       return STATUS_RANK[t.status];
   }
@@ -272,10 +272,10 @@ export function TransactionsTable({
                       {formatDate(t.contractDate)}
                     </TableCell>
                     <TableCell className="tabular text-muted-foreground">
-                      {formatDate(t.closeDate)}
+                      {t.closeDate ? formatDate(t.closeDate) : "—"}
                     </TableCell>
                     <TableCell className="tabular text-right">
-                      {t.stage === "closed" ? "—" : `${days}d`}
+                      {t.stage === "closed" || days === null ? "—" : `${days}d`}
                     </TableCell>
                     <TableCell>
                       <StatusPill tone={t.status}>{t.statusLabel}</StatusPill>

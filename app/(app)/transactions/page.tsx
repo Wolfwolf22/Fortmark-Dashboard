@@ -25,7 +25,7 @@ import { getTransactions } from "@/lib/data/adapters/transactions";
 import { useQuery } from "@/lib/data/hooks";
 import { useDateRange } from "@/lib/stores/date-range";
 
-type SideFilter = "all" | "list" | "buy";
+type SideFilter = "all" | "listing" | "buyer";
 type View = "board" | "table";
 
 function PageSkeleton() {
@@ -127,8 +127,8 @@ function TransactionsPageInner() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All sides</SelectItem>
-            <SelectItem value="list">List side</SelectItem>
-            <SelectItem value="buy">Buy side</SelectItem>
+            <SelectItem value="listing">Listing side</SelectItem>
+            <SelectItem value="buyer">Buyer side</SelectItem>
           </SelectContent>
         </Select>
         <div className="ml-auto">

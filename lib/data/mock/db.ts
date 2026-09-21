@@ -22,7 +22,6 @@ import {
   MilestoneKey,
   PriceEvent,
   PropertyType,
-  MILESTONE_LABELS,
   Transaction,
   TransactionDocument,
   TransactionStage,
@@ -328,30 +327,33 @@ function milestonesFor(
   stage: TransactionStage
 ): Milestone[] {
   const span = Math.max(20, Math.round((closeDate.getTime() - contractDate.getTime()) / DAY));
-  const offsets: [MilestoneKey, number][] = [
-    ["offerAccepted", 0],
-    ["inspection", Math.round(span * 0.22)],
-    ["appraisal", Math.round(span * 0.45)],
-    ["financing", Math.round(span * 0.65)],
-    ["clearToClose", Math.round(span * 0.85)],
-    ["closing", span],
+  const offsets: [MilestoneKey, string, number][] = [
+    ["inspection", "Inspection period ends", Math.round(span * 0.22)],
+    ["appraisal", "Appraisal", Math.round(span * 0.45)],
+    ["financing", "Loan commitment", Math.round(span * 0.65)],
+    ["title", "Clear to close", Math.round(span * 0.85)],
+    ["closing", "Closing", span],
   ];
   const stageOrder: Record<TransactionStage, number> = {
+    opportunity: -1,
     offer: 0,
-    underContract: 1,
-    inspection: 2,
-    appraisal: 3,
-    financing: 4,
-    clearToClose: 5,
-    closed: 6,
+    under_contract: 1,
+    due_diligence: 1,
+    financing: 3,
+    closing_prep: 4,
+    closed: 5,
+    cancelled: 5,
+    withdrawn: 5,
+    on_hold: 1,
+    fell_through: 5,
   };
   const reached = stageOrder[stage];
-  return offsets.map(([key, off], idx) => {
+  return offsets.map(([key, label, off], idx) => {
     const date = new Date(contractDate.getTime() + off * DAY);
     let state: Milestone["state"];
     if (idx < reached || stage === "closed") state = "done";
     else state = date.getTime() < NOW.getTime() ? "overdue" : "upcoming";
-    return { key, label: MILESTONE_LABELS[key], date: iso(date), state };
+    return { id: key, key, label, date: iso(date), state };
   });
 }
 
@@ -362,7 +364,7 @@ export const transactions: Transaction[] = Array.from({ length: 34 }, (_, i) => 
   const stage: TransactionStage = isClosed ? "closed" : pick(rng, activeStages);
   const listing = pick(rng, listings);
   const client = pick(rng, clients);
-  const side = chance(rng, 0.55) ? ("list" as const) : ("buy" as const);
+  const side = chance(rng, 0.55) ? ("listing" as const) : ("buyer" as const);
 
   const contractDaysAgo = isClosed ? int(rng, 40, 350) : int(rng, 3, 55);
   const contractDate = daysAgo(contractDaysAgo);
@@ -370,6 +372,7 @@ export const transactions: Transaction[] = Array.from({ length: 34 }, (_, i) => 
   const closeDate = new Date(contractDate.getTime() + escrowDays * DAY);
 
   const contractPrice = Math.round((listing.listPrice * float(rng, 0.94, 1.03)) / 1000) * 1000;
+  const commissionRate = pick(rng, [0.025, 0.03, 0.03, 0.035]);
   const milestones = milestonesFor(contractDate, closeDate, stage);
   const overdue = milestones.filter((m) => m.state === "overdue");
   const worstOverdueDays = overdue.length
@@ -385,9 +388,11 @@ export const transactions: Transaction[] = Array.from({ length: 34 }, (_, i) => 
     clientId: client.id,
     clientName: client.name,
     side,
+    transactionType: listing.propertyType === "land" ? ("land" as const) : ("residential_sale" as const),
     stage,
     contractPrice,
-    commissionRate: pick(rng, [0.025, 0.03, 0.03, 0.035]),
+    commissionRate,
+    projectedCommission: Math.round(contractPrice * commissionRate),
     contractDate: iso(contractDate),
     closeDate: iso(closeDate),
     agentId: pick(rng, sellingAgents).id,
@@ -395,6 +400,7 @@ export const transactions: Transaction[] = Array.from({ length: 34 }, (_, i) => 
     status,
     statusLabel:
       stage === "closed" ? "Closed" : status === "bad" ? "Off track" : status === "warn" ? "At risk" : "On track",
+    source: "sample" as const,
   };
 });
 
@@ -639,7 +645,7 @@ export const complianceItems: ComplianceItem[] = (() => {
         id: `comp-insp-${i}`,
         kind: "inspectionDeadline",
         title: `Inspection period ends — ${t.address}`,
-        detail: `${t.clientName} · ${t.side === "list" ? "List side" : "Buy side"}`,
+        detail: `${t.clientName} · ${t.side === "listing" ? "List side" : "Buy side"}`,
         dueDate: m.date,
         severity: m.state === "overdue" ? "bad" : "warn",
         href: `/transactions?open=${t.id}`,

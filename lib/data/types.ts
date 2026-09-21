@@ -160,82 +160,137 @@ export interface ListingPage {
 
 // ---------------------------------------------------------------------------
 // Transactions
+//
+// The lifecycle is the brokerage's, not a residential-buyer funnel: six active
+// stages from opportunity to closing prep, closed, and four ways out. Values
+// match the database enum in `lib/db/schema.ts`; the rules for moving between
+// them live in `lib/transactions/stages.ts`.
 
 export type TransactionStage =
+  | "opportunity"
   | "offer"
-  | "underContract"
-  | "inspection"
-  | "appraisal"
+  | "under_contract"
+  | "due_diligence"
   | "financing"
-  | "clearToClose"
-  | "closed";
+  | "closing_prep"
+  | "closed"
+  | "cancelled"
+  | "withdrawn"
+  | "on_hold"
+  | "fell_through";
 
+/** Pipeline columns, in order. Terminal exits and on-hold are not columns. */
 export const TRANSACTION_STAGES: TransactionStage[] = [
+  "opportunity",
   "offer",
-  "underContract",
-  "inspection",
-  "appraisal",
+  "under_contract",
+  "due_diligence",
   "financing",
-  "clearToClose",
+  "closing_prep",
   "closed",
 ];
 
+/** Stages a deal leaves the pipeline by, other than closing. */
+export const TRANSACTION_EXIT_STAGES: TransactionStage[] = [
+  "cancelled",
+  "withdrawn",
+  "fell_through",
+];
+
 export const TRANSACTION_STAGE_LABELS: Record<TransactionStage, string> = {
+  opportunity: "Opportunity",
   offer: "Offer",
-  underContract: "Under contract",
-  inspection: "Inspection",
-  appraisal: "Appraisal",
+  under_contract: "Under contract",
+  due_diligence: "Due diligence",
   financing: "Financing",
-  clearToClose: "Clear to close",
+  closing_prep: "Closing prep",
   closed: "Closed",
+  cancelled: "Cancelled",
+  withdrawn: "Withdrawn",
+  on_hold: "On hold",
+  fell_through: "Fell through",
 };
 
+/** Which side FortMark represents. */
+export type TransactionSide = "listing" | "buyer" | "dual" | "landlord" | "tenant";
+
+export type TransactionType =
+  | "residential_sale"
+  | "residential_lease"
+  | "commercial_sale"
+  | "commercial_lease"
+  | "land";
+
+/** A milestone is an entered deadline of one of these kinds. */
 export type MilestoneKey =
-  | "offerAccepted"
   | "inspection"
-  | "appraisal"
   | "financing"
-  | "clearToClose"
-  | "closing";
+  | "appraisal"
+  | "hoa_condo_application"
+  | "title"
+  | "closing"
+  | "possession"
+  | "other";
 
 export const MILESTONE_LABELS: Record<MilestoneKey, string> = {
-  offerAccepted: "Offer accepted",
   inspection: "Inspection",
-  appraisal: "Appraisal",
   financing: "Financing",
-  clearToClose: "Clear to close",
+  appraisal: "Appraisal",
+  hoa_condo_application: "HOA / condo application",
+  title: "Title",
   closing: "Closing",
+  possession: "Possession",
+  other: "Milestone",
 };
 
 export interface Milestone {
+  /** Deadline id for database rows; the kind for sample rows. */
+  id: string;
   key: MilestoneKey;
   label: string;
-  date: string; // ISO — completed date or due date
+  date: string; // ISO — due date
   state: "done" | "upcoming" | "overdue";
 }
 
+/** Where a transaction row came from. Sample rows are labelled in the UI. */
+export type TransactionSource = "db" | "sample";
+
 export interface Transaction {
   id: string;
+  /** MLS ListingKey when the deal is linked to a listing FortMark can see. */
   listingId?: string;
   address: string;
   city: string;
+  /** The primary client party's id; empty when none is recorded yet. */
   clientId: string;
+  /** The primary client party's name; "—" when none is recorded yet. */
   clientName: string;
-  side: "list" | "buy";
+  side: TransactionSide;
+  transactionType: TransactionType;
   stage: TransactionStage;
+  /** Dollars. 0 when no price has been entered. */
   contractPrice: number;
-  commissionRate: number; // e.g. 0.03
-  contractDate: string; // ISO — offer accepted
-  closeDate: string; // ISO — scheduled or actual
+  /** Fraction, e.g. 0.03. 0 when no rate has been entered. */
+  commissionRate: number;
+  /** Projected gross commission in dollars, from the entered terms. */
+  projectedCommission: number;
+  /** ISO — contract execution date, or the record's creation when none. */
+  contractDate: string;
+  /** ISO — scheduled (or actual) closing. Absent until one is entered. */
+  closeDate?: string;
+  /** The responsible agent: a sample roster id, or a dashboard user id. */
   agentId: string;
+  /** The responsible agent's display name, when the source states it. */
+  agentName?: string;
   milestones: Milestone[];
   status: StatusTone; // on track / at risk / off track rollup
-  statusLabel: string; // "On track" | "At risk" | "Off track"
+  statusLabel: string; // "On track" | "At risk" | "Off track" | terminal label
+  source: TransactionSource;
 }
 
 export interface TransactionFilters {
   stage?: TransactionStage[];
-  side?: ("list" | "buy")[];
+  side?: TransactionSide[];
   agentId?: string;
   query?: string;
 }

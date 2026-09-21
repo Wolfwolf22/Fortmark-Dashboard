@@ -27,6 +27,7 @@ import {
 import { WidgetCard, useWidgetExpanded } from "@/components/widgets/widget-card";
 import { getTransactions } from "@/lib/data/adapters/transactions";
 import { useQuery } from "@/lib/data/hooks";
+import { SIDE_SHORT } from "@/components/transactions/txn-shared";
 import {
   TRANSACTION_STAGES,
   TRANSACTION_STAGE_LABELS,
@@ -76,7 +77,7 @@ function sortValue(t: Transaction, key: SortKey): string | number {
       return t.contractPrice;
     case "closeDate":
     case "days":
-      return new Date(t.closeDate).getTime();
+      return t.closeDate ? new Date(t.closeDate).getTime() : Number.MAX_SAFE_INTEGER;
     case "status":
       return STATUS_ORDER[t.status] ?? 4;
   }
@@ -304,7 +305,7 @@ function TransactionsBody({
         </TableHeader>
         <TableBody>
           {visible.map((t) => {
-            const days = daysBetween(now, t.closeDate);
+            const days = t.closeDate ? daysBetween(now, t.closeDate) : null;
             return (
               <TableRow
                 key={t.id}
@@ -324,7 +325,7 @@ function TransactionsBody({
                 </TableCell>
                 <TableCell className="whitespace-nowrap">{t.clientName}</TableCell>
                 <TableCell>
-                  <Badge variant="outline">{t.side === "list" ? "List" : "Buy"}</Badge>
+                  <Badge variant="outline">{SIDE_SHORT[t.side]}</Badge>
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   {TRANSACTION_STAGE_LABELS[t.stage]}
@@ -333,10 +334,10 @@ function TransactionsBody({
                   {formatCurrency(t.contractPrice)}
                 </TableCell>
                 <TableCell className="tabular whitespace-nowrap">
-                  {formatDateShort(t.closeDate)}
+                  {t.closeDate ? formatDateShort(t.closeDate) : "—"}
                 </TableCell>
                 <TableCell className="tabular whitespace-nowrap text-right">
-                  {t.stage === "closed" ? (
+                  {t.stage === "closed" || days === null ? (
                     <span className="text-muted-foreground">—</span>
                   ) : (
                     `${days}d`

@@ -101,7 +101,7 @@ export function QuickCreateDialog() {
           address: get("address"),
           city: get("city") || "Fort Lauderdale",
           clientName: get("client"),
-          side: (get("side") || "list") as "list" | "buy",
+          side: (get("side") || "listing") as "listing" | "buyer",
           contractPrice: Number(get("price")) || 0,
           closeDate: new Date(
             get("closeDate") || now().getTime() + 45 * 86400000
@@ -199,8 +199,8 @@ export function QuickCreateDialog() {
                   name="side"
                   defaultValue="list"
                   options={[
-                    ["list", "List side"],
-                    ["buy", "Buy side"],
+                    ["listing", "Listing side"],
+                    ["buyer", "Buyer side"],
                   ]}
                 />
               </div>

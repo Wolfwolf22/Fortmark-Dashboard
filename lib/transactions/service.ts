@@ -1,0 +1,335 @@
+import "server-only";
+
+/**
+ * Server-only transactions service.
+ *
+ * Every read and write is scoped by the caller's brokerage and, for
+ * non-privileged roles, by the caller's own agent id — resolved from the
+ * database row the verified Clerk session maps to, never from a request.
+ * There is no request shape that addresses another agent's deal: an id that
+ * exists but is out of scope is answered exactly like one that does not.
+ *
+ * Reads fetch a page of deals, then their parties and deadlines in two
+ * further queries keyed by the page's ids — three round trips for a screen,
+ * never one per row.
+ */
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { getDb, type Db } from "../db/client.ts";
+import {
+  auditEvents,
+  dashboardUsers,
+  FORTMARK_BROKERAGE_KEY,
+  professionalProfiles,
+  transactionDeadlines,
+  transactionEvents,
+  transactionParties,
+  transactions,
+  type TransactionRow,
+} from "../db/schema.ts";
+import { transactionsDatabaseEnabled, type EnvLike } from "../flags.ts";
+import type { DateRange, Transaction, TransactionFilters, TransactionStage } from "../data/types.ts";
+import {
+  canCreateFor,
+  canSee,
+  canWrite,
+  isPrivileged,
+  toTransaction,
+  type Actor,
+  type CreateTransactionInput,
+  type DbRole,
+} from "./domain.ts";
+import { canTransition, isTerminalStage } from "./stages.ts";
+
+/** Keys that must never appear in event metadata. Same rule as audit. */
+const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
+
+function scrub(meta: Record<string, unknown> | undefined) {
+  if (!meta) return null;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(meta)) {
+    if (FORBIDDEN_META.test(k)) continue;
+    if (typeof v === "string" && /^user_[A-Za-z0-9]{8,}$/.test(v)) continue;
+    out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+export type ServiceFailure =
+  | "disabled"
+  | "unavailable"
+  | "no_identity"
+  | "not_found"
+  | "forbidden"
+  | "invalid_transition";
+
+export type ServiceResult<T> = { ok: true; value: T } | { ok: false; reason: ServiceFailure };
+
+/**
+ * The caller as an actor: their dashboard_users row and role.
+ *
+ * A signed-in, allowlisted caller with no dashboard_users row has no
+ * brokerage identity yet (the profile sync has not run for them) and cannot
+ * own or see deals. That is `no_identity`, distinct from "forbidden".
+ */
+export async function resolveActor(
+  clerkUserId: string,
+  env: EnvLike = process.env
+): Promise<ServiceResult<{ actor: Actor; db: Db }>> {
+  if (!transactionsDatabaseEnabled(env)) return { ok: false, reason: "disabled" };
+  const db = getDb();
+  if (!db) return { ok: false, reason: "unavailable" };
+  try {
+    const rows = await db
+      .select({ id: dashboardUsers.id, role: dashboardUsers.role, status: dashboardUsers.status })
+      .from(dashboardUsers)
+      .where(eq(dashboardUsers.clerkUserId, clerkUserId))
+      .limit(1);
+    const user = rows[0];
+    if (!user || user.status === "suspended") return { ok: false, reason: "no_identity" };
+    return {
+      ok: true,
+      value: {
+        actor: { userId: user.id, role: user.role as DbRole, brokerageKey: FORTMARK_BROKERAGE_KEY },
+        db,
+      },
+    };
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+}
+
+/** The visibility predicate, as SQL. Mirrors `canSee` for a query. */
+function visibleTo(actor: Actor) {
+  const tenant = eq(transactions.brokerageKey, actor.brokerageKey);
+  return isPrivileged(actor) ? tenant : and(tenant, eq(transactions.agentUserId, actor.userId));
+}
+
+async function bundle(db: Db, rows: TransactionRow[], now: Date): Promise<Transaction[]> {
+  if (rows.length === 0) return [];
+  const ids = rows.map((r) => r.id);
+  const agentIds = Array.from(new Set(rows.map((r) => r.agentUserId)));
+  const [parties, deadlines, agents] = await Promise.all([
+    db.select().from(transactionParties).where(inArray(transactionParties.transactionId, ids)),
+    db.select().from(transactionDeadlines).where(inArray(transactionDeadlines.transactionId, ids)),
+    db
+      .select({
+        userId: professionalProfiles.userId,
+        display: professionalProfiles.preferredDisplayName,
+        first: professionalProfiles.legalFirstName,
+        last: professionalProfiles.legalLastName,
+      })
+      .from(professionalProfiles)
+      .where(inArray(professionalProfiles.userId, agentIds)),
+  ]);
+  const names = new Map<string, string>();
+  for (const a of agents) {
+    const name = a.display?.trim() || [a.first, a.last].filter(Boolean).join(" ").trim();
+    if (name) names.set(a.userId, name);
+  }
+  return rows.map((row) =>
+    toTransaction(
+      {
+        row,
+        parties: parties.filter((p) => p.transactionId === row.id),
+        deadlines: deadlines.filter((d) => d.transactionId === row.id),
+        agentName: names.get(row.agentUserId),
+      },
+      now
+    )
+  );
+}
+
+function toDateOnly(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Cap on rows returned to a screen. The UI pages within it. */
+export const MAX_LIST_ROWS = 200;
+
+export async function listTransactions(
+  ctx: { actor: Actor; db: Db },
+  filters: TransactionFilters = {},
+  range?: DateRange,
+  now: Date = new Date()
+): Promise<Transaction[]> {
+  const clauses = [visibleTo(ctx.actor)];
+  if (filters.stage?.length) clauses.push(inArray(transactions.stage, filters.stage));
+  if (filters.side?.length) clauses.push(inArray(transactions.side, filters.side));
+  if (filters.agentId && isPrivileged(ctx.actor)) clauses.push(eq(transactions.agentUserId, filters.agentId));
+  if (range) {
+    const from = toDateOnly(range.from);
+    const to = toDateOnly(range.to);
+    // In the period when it went under contract or is due to close in it.
+    clauses.push(
+      or(
+        and(sql`${transactions.contractExecutionDate} >= ${from}`, sql`${transactions.contractExecutionDate} <= ${to}`),
+        and(sql`${transactions.closingDate} >= ${from}`, sql`${transactions.closingDate} <= ${to}`)
+      )!
+    );
+  }
+  if (filters.query) {
+    const q = `%${filters.query.trim().toLowerCase().replace(/[%_]/g, "")}%`;
+    clauses.push(
+      or(
+        sql`lower(${transactions.addressLine1}) like ${q}`,
+        sql`lower(${transactions.city}) like ${q}`,
+        sql`exists (select 1 from ${transactionParties} p where p.transaction_id = ${transactions.id} and lower(p.display_name) like ${q})`
+      )!
+    );
+  }
+  const rows = await ctx.db
+    .select()
+    .from(transactions)
+    .where(and(...clauses))
+    .orderBy(sql`${transactions.closingDate} asc nulls last`, desc(transactions.createdAt))
+    .limit(MAX_LIST_ROWS);
+  return bundle(ctx.db, rows, now);
+}
+
+export async function getTransaction(
+  ctx: { actor: Actor; db: Db },
+  id: string,
+  now: Date = new Date()
+): Promise<Transaction | null> {
+  const rows = await ctx.db
+    .select()
+    .from(transactions)
+    .where(and(eq(transactions.id, id), visibleTo(ctx.actor)))
+    .limit(1);
+  const row = rows[0];
+  if (!row || !canSee(ctx.actor, row)) return null;
+  return (await bundle(ctx.db, [row], now))[0] ?? null;
+}
+
+async function recordEvent(
+  db: Db,
+  transactionId: string,
+  actorUserId: string,
+  eventType: "transaction_created" | "transaction_updated" | "transaction_stage_changed",
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  const safe = scrub(metadata);
+  try {
+    await db.insert(transactionEvents).values({ transactionId, actorUserId, eventType, safeMetadata: safe });
+    await db.insert(auditEvents).values({
+      eventType,
+      actorUserId,
+      targetUserId: null,
+      safeMetadata: safe ? { transactionId, ...safe } : { transactionId },
+    });
+  } catch {
+    // History must never break the write it describes.
+  }
+}
+
+export async function createTransaction(
+  ctx: { actor: Actor; db: Db },
+  input: CreateTransactionInput,
+  now: Date = new Date()
+): Promise<ServiceResult<Transaction>> {
+  // Ownership: the actor, unless a privileged actor names someone else.
+  const agentUserId =
+    input.agentUserId && isPrivileged(ctx.actor) ? input.agentUserId : ctx.actor.userId;
+  if (!canCreateFor(ctx.actor, agentUserId)) return { ok: false, reason: "forbidden" };
+
+  const inserted = await ctx.db
+    .insert(transactions)
+    .values({
+      brokerageKey: ctx.actor.brokerageKey,
+      agentUserId,
+      createdByUserId: ctx.actor.userId,
+      updatedByUserId: ctx.actor.userId,
+      transactionType: input.transactionType,
+      side: input.side,
+      stage: input.contractExecutionDate ? "under_contract" : "opportunity",
+      addressLine1: input.addressLine1,
+      addressLine2: input.addressLine2 ?? null,
+      city: input.city,
+      state: input.state?.toUpperCase() ?? "FL",
+      postalCode: input.postalCode ?? null,
+      listingKey: input.listingKey ?? null,
+      mlsNumber: input.mlsNumber ?? null,
+      contractPriceCents: input.contractPriceCents ?? null,
+      listPriceCents: input.listPriceCents ?? null,
+      commissionRateBps: input.commissionRateBps ?? null,
+      commissionFlatCents: input.commissionFlatCents ?? null,
+      agentSplitBps: input.agentSplitBps ?? null,
+      contractExecutionDate: input.contractExecutionDate ?? null,
+      closingDate: input.closingDate ?? null,
+      notes: input.notes ?? null,
+    })
+    .returning();
+  const row = inserted[0];
+  if (!row) return { ok: false, reason: "unavailable" };
+
+  if (input.parties?.length) {
+    await ctx.db.insert(transactionParties).values(
+      input.parties.map((p) => ({
+        transactionId: row.id,
+        role: p.role,
+        displayName: p.displayName,
+        company: p.company ?? null,
+        email: p.email ?? null,
+        phoneE164: p.phone ?? null,
+        isPrimary: p.isPrimary ?? false,
+      }))
+    );
+  }
+  const deadlines = [...(input.deadlines ?? [])];
+  // A scheduled closing is a deadline too, so it shows up in "coming up".
+  if (input.closingDate && !deadlines.some((d) => d.kind === "closing")) {
+    deadlines.push({ kind: "closing", label: "Closing", dueDate: input.closingDate });
+  }
+  if (deadlines.length) {
+    await ctx.db.insert(transactionDeadlines).values(
+      deadlines.map((d, i) => ({
+        transactionId: row.id,
+        kind: d.kind,
+        label: d.label,
+        dueDate: d.dueDate,
+        note: d.note ?? null,
+        sortOrder: i,
+      }))
+    );
+  }
+  await recordEvent(ctx.db, row.id, ctx.actor.userId, "transaction_created", {
+    stage: row.stage,
+    side: row.side,
+    transactionType: row.transactionType,
+  });
+  const created = await getTransaction(ctx, row.id, now);
+  return created ? { ok: true, value: created } : { ok: false, reason: "unavailable" };
+}
+
+export async function changeStage(
+  ctx: { actor: Actor; db: Db },
+  id: string,
+  to: TransactionStage,
+  now: Date = new Date()
+): Promise<ServiceResult<Transaction>> {
+  const rows = await ctx.db
+    .select()
+    .from(transactions)
+    .where(and(eq(transactions.id, id), visibleTo(ctx.actor)))
+    .limit(1);
+  const row = rows[0];
+  if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
+  if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
+  const from = row.stage as TransactionStage;
+  if (!canTransition(from, to)) return { ok: false, reason: "invalid_transition" };
+
+  const today = toDateOnly(now);
+  await ctx.db
+    .update(transactions)
+    .set({
+      stage: to,
+      updatedByUserId: ctx.actor.userId,
+      updatedAt: now,
+      closedDate: to === "closed" ? today : row.closedDate,
+      cancelledDate: isTerminalStage(to) && to !== "closed" ? today : row.cancelledDate,
+    })
+    .where(eq(transactions.id, row.id));
+  await recordEvent(ctx.db, row.id, ctx.actor.userId, "transaction_stage_changed", { from, to });
+  const updated = await getTransaction(ctx, row.id, now);
+  return updated ? { ok: true, value: updated } : { ok: false, reason: "unavailable" };
+}

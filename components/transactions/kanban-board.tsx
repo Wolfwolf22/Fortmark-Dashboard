@@ -26,6 +26,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/ui/status-pill";
 import { updateTransactionStage } from "@/lib/data/adapters/transactions";
+import { bumpDataVersion } from "@/lib/data/store";
 import {
   Transaction,
   TransactionStage,
@@ -55,7 +56,7 @@ function CardBody({ txn }: { txn: Transaction }) {
         {formatCurrency(txn.contractPrice)}
       </p>
       <p className="tabular mt-0.5 text-xs text-muted-foreground">
-        {formatDateShort(txn.closeDate)} · {closeCountdown(txn)}
+        {txn.closeDate ? `${formatDateShort(txn.closeDate)} · ` : ""}{closeCountdown(txn)}
       </p>
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         <StatusPill tone={txn.status}>{txn.statusLabel}</StatusPill>
@@ -195,7 +196,10 @@ export function KanbanBoard({ transactions, loading, onOpen }: KanbanBoardProps)
       TRANSACTION_STAGES.map((s) => [s, [] as Transaction[]])
     ) as Record<TransactionStage, Transaction[]>;
     for (const t of transactions ?? []) {
-      map[overrides[t.id] ?? t.stage].push(t);
+      // Exited and on-hold deals are not pipeline columns; the table shows
+      // them. Bucketing them here would index a column that does not exist.
+      const column = overrides[t.id] ?? t.stage;
+      if (column in map) map[column].push(t);
     }
     return map;
   }, [transactions, overrides]);
@@ -239,7 +243,9 @@ export function KanbanBoard({ transactions, loading, onOpen }: KanbanBoardProps)
     const current = overrides[txn.id] ?? txn.stage;
     if (target === current) return;
     setOverrides((prev) => ({ ...prev, [txn.id]: target }));
-    void updateTransactionStage(txn.id, target);
+    // A move the lifecycle refuses throws; a refetch drops the optimistic
+    // override and the card returns to where the deal actually is.
+    void updateTransactionStage(txn.id, target).catch(() => bumpDataVersion());
   }
 
   return (

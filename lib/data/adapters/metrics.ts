@@ -87,8 +87,8 @@ function gciInBucket(bucket: Bucket): number {
   return transactions
     .filter(
       (t) =>
-        (t.stage === "closed" && inRange(t.closeDate, range)) ||
-        (t.stage !== "closed" && inRange(t.closeDate, range))
+        (t.stage === "closed" && (t.closeDate ? inRange(t.closeDate, range) : false)) ||
+        (t.stage !== "closed" && (t.closeDate ? inRange(t.closeDate, range) : false))
     )
     .reduce((sum, t) => sum + t.contractPrice * t.commissionRate, 0);
 }
@@ -107,17 +107,17 @@ export async function getDashboardMetrics(
   const underContractCount = enteredContract.filter((t) => t.stage !== "closed").length;
 
   const closedInRange = transactions.filter(
-    (t) => t.stage === "closed" && inRange(t.closeDate, range)
+    (t) => t.stage === "closed" && (t.closeDate ? inRange(t.closeDate, range) : false)
   );
   const prev = previousRange(range);
   const closedPrev = transactions.filter(
-    (t) => t.stage === "closed" && inRange(t.closeDate, prev)
+    (t) => t.stage === "closed" && (t.closeDate ? inRange(t.closeDate, prev) : false)
   );
 
   const pipeline = transactions.filter(
     (t) =>
       t.stage !== "closed" &&
-      (inRange(t.contractDate, range) || inRange(t.closeDate, range))
+      (inRange(t.contractDate, range) || (t.closeDate ? inRange(t.closeDate, range) : false))
   );
   const pipelineValue = pipeline.reduce((sum, t) => sum + t.contractPrice, 0);
   const projectedGci = pipeline.reduce(
@@ -138,6 +138,7 @@ export async function getDashboardMetrics(
       .filter(
         (t) =>
           t.stage === "closed" &&
+          t.closeDate !== undefined &&
           new Date(t.closeDate) >= from &&
           new Date(t.closeDate) < to
       )
@@ -191,7 +192,7 @@ export async function getClosedVolumeSeries(preset: DateRangePreset): Promise<Re
     active: b.active,
     value: transactions
       .filter(
-        (t) => t.stage === "closed" && inRange(t.closeDate, { from: b.from, to: b.to })
+        (t) => t.stage === "closed" && (t.closeDate ? inRange(t.closeDate, { from: b.from, to: b.to }) : false)
       )
       .reduce((sum, t) => sum + t.contractPrice, 0),
   }));
