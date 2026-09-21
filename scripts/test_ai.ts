@@ -289,7 +289,8 @@ await Promise.all(results);
   // Cost and correctness properties of the call itself, in both adapters.
   check("a client disconnect is forwarded to both providers",
     /\{ signal \}/.test(anthropic) && /stream\.abort\(\)/.test(anthropic) &&
-      /signal\.addEventListener\("abort"/.test(openai) && /controller\.abort\(\)/.test(openai));
+      /AbortSignal\.any\(\[signal, controller\.signal\]\)/.test(openai) &&
+      /controller\.abort\(\)/.test(openai));
   // A turn may span several rounds. Cancelling must stop the one generating
   // now, not the first one, which finished rounds ago.
   check("cancelling stops the round that is running",

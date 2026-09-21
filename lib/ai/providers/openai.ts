@@ -56,12 +56,15 @@ export function openaiProvider(
     model,
     classify,
     async openRound(turns: NeutralTurn[], options: RoundOptions): Promise<OpenedRound> {
+      // Two ways this round can be cancelled, and both must reach the vendor:
+      // the caller disconnecting, and the loop giving up on a later round.
+      // Composed rather than wired by hand, so a turn that runs the full
+      // budget does not accumulate a listener per round on the request.
+      //
+      // Without either, closing the thread leaves a generation running that
+      // nobody will read and everybody pays for.
       const controller = new AbortController();
-      // Forwards a client disconnect to the provider. Without it, closing the
-      // thread leaves a generation running that nobody will read and everybody
-      // pays for.
-      if (signal.aborted) controller.abort();
-      else signal.addEventListener("abort", () => controller.abort(), { once: true });
+      const cancel = AbortSignal.any([signal, controller.signal]);
 
       const stream = await client.responses.create(
         {
@@ -80,7 +83,7 @@ export function openaiProvider(
           store: false,
           stream: true,
         },
-        { signal: controller.signal }
+        { signal: cancel }
       );
 
       const wire = stream[Symbol.asyncIterator]() as AsyncIterator<WireEvent>;
