@@ -191,6 +191,50 @@ check("each vendor's credential variable is named once, in one place",
     JSON.stringify(assistantHealth({ AI_PROVIDER: "gemini" })) ===
       '{"provider":null,"status":"invalid_provider"}');
 
+  // Anthropic, fully configured. The mirror of the OpenAI case above, so
+  // neither vendor's happy path depends on the other's.
+  check("a fully configured Anthropic deployment is available",
+    JSON.stringify(
+      assistantHealth({
+        AI_CHAT_PROVIDER_ENABLED: "1",
+        AI_PROVIDER: "anthropic",
+        ANTHROPIC_API_KEY: ANTHROPIC_KEY,
+      })
+    ) === '{"provider":"anthropic","status":"available"}');
+  check("an unset vendor with an Anthropic key is available as the default",
+    JSON.stringify(
+      assistantHealth({ AI_CHAT_PROVIDER_ENABLED: "1", ANTHROPIC_API_KEY: ANTHROPIC_KEY })
+    ) === '{"provider":"anthropic","status":"available"}');
+
+  // The crux of an explicit selection: setting AI_PROVIDER=openai must beat
+  // the default, and must do so even when an Anthropic key is also present.
+  // If a deployment reports "anthropic" while AI_PROVIDER=openai is set, the
+  // variable is not reaching the runtime — the resolver is not the problem.
+  check("an explicit openai selection beats the default, key or no key",
+    assistantHealth({ AI_CHAT_PROVIDER_ENABLED: "1", AI_PROVIDER: "openai" }).provider === "openai" &&
+      assistantHealth({
+        AI_CHAT_PROVIDER_ENABLED: "1",
+        AI_PROVIDER: "openai",
+        ANTHROPIC_API_KEY: ANTHROPIC_KEY,
+      }).provider === "openai" &&
+      assistantHealth({
+        AI_CHAT_PROVIDER_ENABLED: "1",
+        AI_PROVIDER: "openai",
+        ANTHROPIC_API_KEY: ANTHROPIC_KEY,
+        OPENAI_API_KEY: OPENAI_KEY,
+      }).status === "available");
+
+  // The probe and the chat runtime must answer from the same resolver, or a
+  // green health check would prove nothing about what a turn would do.
+  const availability = code("lib/ai/availability.ts");
+  const chatRoute = code("app/api/chat/route.ts");
+  check("the probe and the runtime share one resolver",
+    /from "\.\/providers\/select\.ts"/.test(availability) &&
+      /resolveProvider/.test(availability) &&
+      /resolveProvider\(\)/.test(chatRoute));
+  check("no second copy of the selection rule exists",
+    !/AI_PROVIDER/.test(availability) && !/AI_PROVIDER/.test(code("lib/ai/provider.ts")));
+
   // The report names the step that would STILL be blocking after the obvious
   // one is done, which is why its order differs from the gate's.
   check("with both missing, the credential is named rather than the flag",
