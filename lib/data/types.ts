@@ -297,52 +297,82 @@ export interface TransactionFilters {
 
 // ---------------------------------------------------------------------------
 // Leads
+//
+// The screen still says "leads"; the record is a contact — one person whose
+// relationship with the brokerage has a stage, and whose needs are
+// opportunities. Values match the database enums in `lib/db/schema.ts`; the
+// rules for moving between stages live in `lib/contacts/stages.ts`.
 
 export type LeadStage =
-  | "new"
+  | "lead"
   | "contacted"
   | "qualified"
-  | "touring"
-  | "negotiating"
-  | "converted"
-  | "lost";
+  | "appointment"
+  | "representation"
+  | "active_client"
+  | "under_contract"
+  | "closed"
+  | "past_client"
+  | "lost"
+  | "archived";
 
+/** Stages shown on the pipeline strip, in order. Archived is not one. */
 export const LEAD_STAGES: LeadStage[] = [
-  "new",
+  "lead",
   "contacted",
   "qualified",
-  "touring",
-  "negotiating",
-  "converted",
+  "appointment",
+  "representation",
+  "active_client",
+  "under_contract",
+  "closed",
+  "past_client",
   "lost",
 ];
 
 export const LEAD_STAGE_LABELS: Record<LeadStage, string> = {
-  new: "New",
+  lead: "Lead",
   contacted: "Contacted",
   qualified: "Qualified",
-  touring: "Touring",
-  negotiating: "Negotiating",
-  converted: "Converted",
+  appointment: "Appointment",
+  representation: "Representation",
+  active_client: "Active client",
+  under_contract: "Under contract",
+  closed: "Closed",
+  past_client: "Past client",
   lost: "Lost",
+  archived: "Archived",
 };
 
 export type LeadSource =
   | "referral"
   | "sphere"
-  | "signCall"
+  | "sign_call"
   | "website"
-  | "openHouse"
-  | "pastClient";
+  | "open_house"
+  | "past_client"
+  | "social"
+  | "advertising"
+  | "walk_in"
+  | "other";
 
 export const LEAD_SOURCE_LABELS: Record<LeadSource, string> = {
   referral: "Referral",
   sphere: "Sphere",
-  signCall: "Sign call",
+  sign_call: "Sign call",
   website: "Website",
-  openHouse: "Open house",
-  pastClient: "Past client",
+  open_house: "Open house",
+  past_client: "Past client",
+  social: "Social",
+  advertising: "Advertising",
+  walk_in: "Walk-in",
+  other: "Other",
 };
+
+/** What the person needs, summarised from their open opportunities. */
+export type LeadIntent = "buy" | "sell" | "both" | "lease" | "invest" | "other";
+
+export type LeadSourceOfRecord = "db" | "sample";
 
 export interface Lead {
   id: string;
@@ -351,13 +381,21 @@ export interface Lead {
   phone: string;
   stage: LeadStage;
   source: LeadSource;
-  intent: "buy" | "sell" | "both";
+  intent: LeadIntent;
+  /** Dollars — the primary open opportunity's upper budget, when stated. */
   budget?: number;
+  /** The primary open opportunity's area, when stated. */
   neighborhood?: string;
+  /** A sample roster id, or a dashboard user id. */
   assignedAgentId: string;
+  /** The assigned agent's display name, when the source states it. */
+  assignedAgentName?: string;
   createdDate: string; // ISO
-  lastContactDate: string; // ISO
+  /** ISO — the latest activity, or creation when there is none. */
+  lastContactDate: string;
+  nextFollowUpDate?: string; // ISO
   notes: string;
+  recordSource: LeadSourceOfRecord;
 }
 
 // ---------------------------------------------------------------------------

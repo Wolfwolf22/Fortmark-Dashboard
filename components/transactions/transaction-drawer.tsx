@@ -194,7 +194,7 @@ export function TransactionDrawer({
             </SheetHeader>
             {txn.source === "sample" && (
               <div className="mt-3">
-                <SampleDataNotice />
+                <SampleDataNotice subject="This deal is generated for development and is not a real transaction." />
               </div>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-1.5">

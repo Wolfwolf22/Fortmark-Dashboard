@@ -86,7 +86,7 @@ export function LeadsTable({
   onOpen,
 }: {
   leads: Lead[] | undefined;
-  agents: Agent[] | undefined;
+  agents: Pick<Agent, "id" | "name">[] | undefined;
   loading: boolean;
   hasFilters: boolean;
   onClearFilters: () => void;
@@ -206,7 +206,8 @@ export function LeadsTable({
             </TableHeader>
             <TableBody>
               {pageRows.map((lead) => {
-                const agent = agentById.get(lead.assignedAgentId);
+                const agentName =
+                  lead.assignedAgentName ?? agentById.get(lead.assignedAgentId)?.name;
                 const overdue = needsFollowUp(lead.lastContactDate);
                 return (
                   <TableRow
@@ -248,14 +249,14 @@ export function LeadsTable({
                       {lead.neighborhood ?? "—"}
                     </TableCell>
                     <TableCell>
-                      {agent ? (
+                      {agentName ? (
                         <span className="flex items-center gap-2 whitespace-nowrap">
                           <Avatar className="h-6 w-6">
                             <AvatarFallback className="text-[9px]">
-                              {initials(agent.name)}
+                              {initials(agentName)}
                             </AvatarFallback>
                           </Avatar>
-                          {lastName(agent.name)}
+                          {lastName(agentName)}
                         </span>
                       ) : (
                         "—"

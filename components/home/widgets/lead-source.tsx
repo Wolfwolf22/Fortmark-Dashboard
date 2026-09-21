@@ -20,20 +20,28 @@ import { LEAD_SOURCE_LABELS, type LeadSource } from "@/lib/data/types";
 const SOURCE_ORDER: LeadSource[] = [
   "referral",
   "sphere",
-  "signCall",
+  "sign_call",
   "website",
-  "openHouse",
-  "pastClient",
+  "open_house",
+  "past_client",
+  "social",
+  "advertising",
+  "walk_in",
+  "other",
 ];
 
-/** Lightness steps assigned in fixed order; the sixth repeats step 3. */
+/** Lightness steps assigned in fixed order, cycling from the sixth on. */
 const SOURCE_FILL: Record<LeadSource, string> = {
   referral: chartColor("active"),
   sphere: chartColor("2"),
-  signCall: chartColor("3"),
+  sign_call: chartColor("3"),
   website: chartColor("4"),
-  openHouse: chartColor("5"),
-  pastClient: chartColor("3"),
+  open_house: chartColor("5"),
+  past_client: chartColor("3"),
+  social: chartColor("2"),
+  advertising: chartColor("4"),
+  walk_in: chartColor("5"),
+  other: chartColor("3"),
 };
 
 interface Slice {

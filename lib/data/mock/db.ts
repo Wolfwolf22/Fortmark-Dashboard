@@ -408,22 +408,25 @@ export const transactions: Transaction[] = Array.from({ length: 34 }, (_, i) => 
 // Leads
 
 const LEAD_STAGE_WEIGHTS: [LeadStage, number][] = [
-  ["new", 0.2],
-  ["contacted", 0.22],
-  ["qualified", 0.18],
-  ["touring", 0.14],
-  ["negotiating", 0.08],
-  ["converted", 0.1],
-  ["lost", 0.08],
+  ["lead", 0.2],
+  ["contacted", 0.2],
+  ["qualified", 0.16],
+  ["appointment", 0.12],
+  ["representation", 0.06],
+  ["active_client", 0.08],
+  ["under_contract", 0.04],
+  ["closed", 0.04],
+  ["past_client", 0.04],
+  ["lost", 0.06],
 ];
 
 const LEAD_SOURCES: [LeadSource, number][] = [
   ["referral", 0.3],
   ["sphere", 0.22],
-  ["signCall", 0.12],
+  ["sign_call", 0.12],
   ["website", 0.16],
-  ["openHouse", 0.1],
-  ["pastClient", 0.1],
+  ["open_house", 0.1],
+  ["past_client", 0.1],
 ];
 
 function weighted<T>(pairs: [T, number][]): T {
@@ -466,6 +469,7 @@ export const leads: Lead[] = Array.from({ length: 52 }, (_, i) => {
     createdDate: iso(daysAgo(createdDaysAgo)),
     lastContactDate: iso(daysAgo(lastContactDaysAgo)),
     notes: pick(rng, LEAD_NOTES),
+    recordSource: "sample" as const,
   };
 });
 

@@ -37,7 +37,7 @@ export function PipelineSummary({
         const active = activeStage === stage;
         return (
           <span key={stage} className="flex flex-none items-stretch gap-2">
-            {stage === "converted" && (
+            {stage === "closed" && (
               <span aria-hidden className="my-2 w-px flex-none bg-border" />
             )}
             <button

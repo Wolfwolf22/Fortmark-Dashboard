@@ -19,8 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getAgents } from "@/lib/data/adapters/agents";
-import { getLeads } from "@/lib/data/adapters/leads";
+import { getLeadAgents, getLeads } from "@/lib/data/adapters/leads";
 import { useQuery } from "@/lib/data/hooks";
 import {
   LEAD_SOURCE_LABELS,
@@ -91,7 +90,7 @@ function LeadsPageInner() {
     [debouncedSearch, source, agentId]
   );
 
-  const { data: agents } = useQuery(() => getAgents(), []);
+  const { data: agents } = useQuery(() => getLeadAgents(), []);
 
   const counts = useMemo(() => {
     if (!leads) return undefined;

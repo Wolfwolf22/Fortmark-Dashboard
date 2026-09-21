@@ -26,8 +26,14 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/ui/status-pill";
+import { SampleDataNotice } from "@/components/listings/sample-data-notice";
 import { getAgent } from "@/lib/data/adapters/agents";
-import { getLead, updateLeadStage } from "@/lib/data/adapters/leads";
+import {
+  getLead,
+  LeadsError,
+  markContacted,
+  updateLeadStage,
+} from "@/lib/data/adapters/leads";
 import { useQuery } from "@/lib/data/hooks";
 import {
   Lead,
@@ -91,6 +97,16 @@ function DrawerSkeleton() {
   );
 }
 
+/** What a refused write means to the person, without the wire detail. */
+function describe(error: unknown): string {
+  if (error instanceof LeadsError) {
+    if (error.code === "invalid_transition") return "That stage change is not allowed from here.";
+    if (error.status === 403) return "You do not have permission to change this contact.";
+    if (error.status === 404) return "This contact is no longer available.";
+  }
+  return "The change could not be saved. Try again.";
+}
+
 export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
   const { data, loading } = useQuery<Lead | undefined>(
     () => (leadId ? getLead(leadId) : Promise.resolve(undefined)),
@@ -99,24 +115,36 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
   // Guard against stale data from a previously opened lead.
   const lead = data && data.id === leadId ? data : undefined;
 
-  const agentId = lead?.assignedAgentId ?? null;
+  // A stored contact carries its agent's name; only the sample roster needs
+  // the agents adapter looked up by id.
+  const sampleAgentId = lead?.recordSource === "sample" ? lead.assignedAgentId : null;
   const { data: agent } = useQuery(
-    () => (agentId ? getAgent(agentId) : Promise.resolve(undefined)),
-    [agentId]
+    () => (sampleAgentId ? getAgent(sampleAgentId) : Promise.resolve(undefined)),
+    [sampleAgentId]
   );
+  const agentName = lead?.assignedAgentName ?? agent?.name;
 
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  async function changeStage(stage: LeadStage) {
+  async function run(action: () => Promise<unknown>) {
     if (!lead || saving) return;
     setSaving(true);
+    setError(null);
     try {
       // The adapter bumps the data version, so the drawer, the table, and
       // the summary strip all refetch on their own.
-      await updateLeadStage(lead.id, stage);
+      await action();
+    } catch (e) {
+      setError(describe(e));
     } finally {
       setSaving(false);
     }
+  }
+
+  function changeStage(stage: LeadStage) {
+    if (!lead || stage === lead.stage) return;
+    void run(() => updateLeadStage(lead.id, stage));
   }
 
   const overdue = lead ? needsFollowUp(lead.lastContactDate) : false;
@@ -132,6 +160,11 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 {lead.email} · {lead.phone}
               </SheetDescription>
             </SheetHeader>
+            {lead.recordSource === "sample" && (
+              <div className="mt-3">
+                <SampleDataNotice subject="This contact is generated for development and is not a real person." />
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
               <Badge variant="outline">{LEAD_SOURCE_LABELS[lead.source]}</Badge>
               <Badge variant="secondary">{LEAD_STAGE_LABELS[lead.stage]}</Badge>
@@ -149,14 +182,14 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 <Fact
                   label="Assigned agent"
                   value={
-                    agent ? (
+                    agentName ? (
                       <span className="flex items-center gap-2">
                         <Avatar className="h-5 w-5">
                           <AvatarFallback className="text-[9px]">
-                            {initials(agent.name)}
+                            {initials(agentName)}
                           </AvatarFallback>
                         </Avatar>
-                        {agent.name}
+                        {agentName}
                       </span>
                     ) : (
                       "—"
@@ -192,6 +225,11 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                   </SelectContent>
                 </Select>
               </div>
+              {error && (
+                <p role="alert" className="mt-2 text-sm text-destructive">
+                  {error}
+                </p>
+              )}
               <p className="text-micro mt-6">Notes</p>
               <p
                 className={cn(
@@ -205,7 +243,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
             <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border pt-4">
               <Button
                 variant="outline"
-                onClick={() => changeStage(lead.stage)}
+                onClick={() => void run(() => markContacted(lead.id))}
                 disabled={saving}
               >
                 Mark contacted today

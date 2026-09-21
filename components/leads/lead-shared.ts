@@ -7,7 +7,10 @@ import { Lead } from "@/lib/data/types";
 export const INTENT_LABELS: Record<Lead["intent"], string> = {
   buy: "Buying",
   sell: "Selling",
-  both: "Both",
+  both: "Buying and selling",
+  lease: "Leasing",
+  invest: "Investing",
+  other: "Other",
 };
 
 /** A lead untouched for longer than this needs a follow up. */

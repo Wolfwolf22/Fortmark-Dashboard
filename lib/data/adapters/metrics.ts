@@ -234,10 +234,14 @@ export interface LeadSourceRoi {
 const SOURCE_SPEND: Record<LeadSource, number> = {
   referral: 1200,
   sphere: 800,
-  signCall: 600,
+  sign_call: 600,
   website: 2400,
-  openHouse: 900,
-  pastClient: 300,
+  open_house: 900,
+  past_client: 300,
+  social: 700,
+  advertising: 1500,
+  walk_in: 200,
+  other: 100,
 };
 
 export async function getLeadSourceRoi(range: DateRange): Promise<LeadSourceRoi[]> {
@@ -251,7 +255,7 @@ export async function getLeadSourceRoi(range: DateRange): Promise<LeadSourceRoi[
       const pool = leads.filter(
         (l) => l.source === source && inRange(l.createdDate, range)
       );
-      const converted = pool.filter((l) => l.stage === "converted").length;
+      const converted = pool.filter((l) => l.stage === "closed" || l.stage === "past_client").length;
       const closedDollars = Math.round(converted * avgGci);
       const spend = SOURCE_SPEND[source];
       return {
