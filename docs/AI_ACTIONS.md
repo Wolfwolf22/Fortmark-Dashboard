@@ -1,9 +1,15 @@
 # AI-assisted actions — architecture
 
-> **Status: design only.** Nothing in this document is implemented. No
-> mutation tool exists, no execution endpoint exists, and the assistant's tool
-> registry still contains exactly nine read-only tools. This is the contract to
-> be argued with before any of it is built.
+> **Status: F2-B implemented; everything beyond it is still design.**
+>
+> One action exists — **schedule a contact follow-up** — behind
+> `AI_ACTIONS_ENABLED`. The registry holds nine read tools and one proposing
+> tool; there is still no execution primitive a model can call. Sections 1–22
+> describe the contract as built, with the departures recorded in §26.
+> Sections 23 (F2-C onward) and 25 remain design.
+>
+> Offline proof: `npm run test:ai:actions`. Live proof, against a real
+> database and a real provider: `docs/AI_ACTION_CERTIFICATION.md`.
 
 ---
 
@@ -629,19 +635,20 @@ annoying.
 
 ---
 
-## 24. Open questions for review
+## 24. Open questions — resolved for F2-B
 
-1. **Ten minutes** — right, or too short for a user who asks three follow-up
-   questions before confirming?
-2. **The framed chat stream.** Today `/api/chat` streams plain text. Cards need
-   a frame (NDJSON events). That is an F2-A protocol change with its own
-   compatibility surface — worth doing once, properly.
-3. **Typed confirmation for `moderate`.** Real friction, or theatre that trains
-   people to type names without reading?
-4. **Does an expired action auto-re-prepare?** Convenient, and it quietly
-   re-runs authorization and validation, which is good — but it also means a
-   click can produce a new proposal, which blurs §13.
-5. **Batched transaction vs a second driver** (§19).
+1. **Ten minutes** — kept. `ACTION_TTL_MS = 10 * 60 * 1000`. Nobody has used it
+   in anger yet, so this is the question most likely to be reopened by the
+   first real user; the constant is in one place for that reason.
+2. **The framed chat stream** — **not built.** See §26.
+3. **Typed confirmation for `moderate`** — not reached. F2-B's only action is
+   `low`, so no typed confirmation exists to be theatre or otherwise.
+4. **Does an expired action auto-re-prepare?** — **no.** An expired card says
+   so and stops offering a button; preparing another one takes another ask.
+   Re-preparing on a click would mean a click produced a proposal, which is
+   exactly the blur §13 exists to prevent.
+5. **Batched transaction vs a second driver** — `db.batch`, no second driver.
+   See §26.
 
 ---
 
@@ -653,3 +660,55 @@ annoying.
   window, against unchanged state.
 - No AI path bypasses a domain rule.
 - The human is the actor in the audit trail.
+
+---
+
+## 26. As built — where F2-B departs from this design
+
+Three departures, each deliberate.
+
+### The chat stream was not framed
+
+The design assumed cards would arrive as NDJSON frames on `/api/chat` (§24.2).
+They do not. `/api/chat` still streams plain text, and when a turn ends the
+thread calls `GET /api/ai/actions` and renders what the server says is pending.
+
+This was not a shortcut around the protocol change — it is a stronger position
+to be in while the pipeline is new. A framed stream puts the authoritative
+action payload on the same channel the model writes into, which means the
+parser is the boundary. Fetching it separately means the payload arrives over
+an authenticated route, built from the row, and the model's channel carries no
+authority at all. The cost is one extra request per turn.
+
+Framing remains the right refinement once there is more than one action type
+and the card needs to appear inline at the point in the reply it belongs to.
+Recorded in `lib/ai/actions/client.ts` so it is found by whoever does it.
+
+### Execution is not a domain service call
+
+§12 says the domain remains authoritative and execution should run the same
+service the screens run. F2-B writes the four statements directly inside
+`db.batch` instead, because the atomicity requirement (§19) and the existing
+services are incompatible: `logActivity` and friends each own their own write
+and their own audit, and calling them in sequence is exactly the "four
+independent awaits" the design forbids.
+
+What is preserved is the part that matters — every read is `visibleTo`, the
+actor is resolved the same way, the stage rule is the repository's own
+(`followUpWarnings` warns where `logActivity` permits), and the audit event
+type comes from the closed `RELEASE_1_AUDIT_EVENTS` list. What is not
+preserved is the call graph. The honest way to close this is a transaction-
+aware service seam — services that take a batch to append to rather than
+owning their own write — and that is a refactor F2-C should do rather than
+something to retrofit here (§51 of the F2-B brief: do not rewrite
+`changeStage` under cover of this phase).
+
+### The registry is no longer `READ_ONLY_TOOLS`
+
+It could not honestly keep the name once it contained a tool that writes a row.
+Every tool now declares `effect: "read" | "propose"`, and the union has no
+third member — so an execution tool cannot be expressed without editing
+`lib/ai/tools/types.ts`, which is the review gate the old name was standing in
+for. F1's tripwires against this phase were replaced by F2-B's own guards
+rather than deleted; `scripts/test_ai_actions.ts` fails if an execution-capable
+tool ever enters the registry.

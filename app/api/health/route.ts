@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { contactsSource } from "@/lib/contacts/http";
 import { transactionsSource } from "@/lib/transactions/http";
 import { listingAvailability } from "@/lib/mls/config";
-import { sampleDashboardEnabled } from "@/lib/flags";
+import { aiActionsEnabled, sampleDashboardEnabled } from "@/lib/flags";
 import { assistantHealth } from "@/lib/ai/availability";
 
 export const runtime = "nodejs";
@@ -56,6 +56,19 @@ export async function GET() {
          * surface says it is not connected.
          */
         assistant: assistantHealth(),
+        /**
+         * Whether this deployment can prepare AI-assisted actions at all.
+         *
+         * Reported for the same reason as everything else here: a proposal
+         * that never appears is indistinguishable from a flag scoped to the
+         * wrong environment, and the difference decides whether anyone should
+         * be debugging the model. It says only whether the capability is on —
+         * never what can be prepared, and never that anything was.
+         *
+         * "Enabled" is not "permitted": a signed-in caller still has to pass
+         * the allowlist, resolve to a brokerage identity, and own the record.
+         */
+        actions: aiActionsEnabled() ? "enabled" : "disabled",
       },
     },
     { headers: { "Cache-Control": "no-store" } }
