@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
 import { getSampleListing } from "@/lib/data/sample-listings";
+import { sampleListingsEnabled } from "@/lib/mls/config";
 import { failureResponse, mlsConfig, notConfigured, NO_STORE } from "@/lib/mls/http";
 import { getListing } from "@/lib/mls/service";
 
@@ -28,7 +29,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
 
   const config = mlsConfig();
   if (!config.ok) {
-    if (config.reason === "disabled") {
+    // Generated rows only where a deployment asked for them by name.
+    if (sampleListingsEnabled()) {
       const listing = getSampleListing(id);
       return listing
         ? NextResponse.json({ listing }, { headers: NO_STORE })

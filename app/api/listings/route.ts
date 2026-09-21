@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
 import { searchSampleListings } from "@/lib/data/sample-listings";
+import { sampleListingsEnabled } from "@/lib/mls/config";
 import { failureResponse, mlsConfig, notConfigured, NO_STORE } from "@/lib/mls/http";
 import { parseListingQuery } from "@/lib/mls/query";
 import { searchListings } from "@/lib/mls/service";
@@ -26,7 +27,10 @@ export async function GET(request: NextRequest) {
 
   const config = mlsConfig();
   if (!config.ok) {
-    if (config.reason === "disabled") {
+    // Generated rows are served only where a deployment asked for them by
+    // name. "The MLS is not configured" is not a request for invented
+    // properties — it is the reason there are none to show.
+    if (sampleListingsEnabled()) {
       return NextResponse.json(searchSampleListings(query), { headers: NO_STORE });
     }
     return notConfigured();

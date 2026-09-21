@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
 import { getSampleComparables, getSampleListing } from "@/lib/data/sample-listings";
+import { sampleListingsEnabled } from "@/lib/mls/config";
 import { failureResponse, mlsConfig, notConfigured, NO_STORE } from "@/lib/mls/http";
 import { findComparables, getListing } from "@/lib/mls/service";
 
@@ -28,7 +29,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
 
   const config = mlsConfig();
   if (!config.ok) {
-    if (config.reason === "disabled") {
+    // Generated rows only where a deployment asked for them by name.
+    if (sampleListingsEnabled()) {
       const subject = getSampleListing(id);
       if (!subject) {
         return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });

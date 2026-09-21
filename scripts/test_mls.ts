@@ -17,7 +17,12 @@
  */
 import { readFileSync } from "node:fs";
 import { bridgeRequest, BridgeError, MAX_TOP } from "../lib/mls/bridge.ts";
-import { listingSource, mlsListingsEnabled, resolveBridgeConfig } from "../lib/mls/config.ts";
+import {
+  listingAvailability,
+  mlsListingsEnabled,
+  resolveBridgeConfig,
+  sampleListingsEnabled,
+} from "../lib/mls/config.ts";
 import { PROPERTY_FIELDS, UNVERIFIED_PROPERTY_FIELDS } from "../lib/mls/fields.ts";
 import {
   toListing,
@@ -87,9 +92,30 @@ check("whitespace token is absent",
   check("the default base URL is Bridge",
     (resolveBridgeConfig(env()) as { config?: { baseUrl: string } }).config?.baseUrl === "https://api.bridgedataoutput.com/api/v2/OData");
 }
-check("source is sample when off", listingSource({}) === "sample");
-check("source is sample when flag on but credential missing", listingSource({ MLS_LISTINGS_ENABLED: "1" }) === "sample");
-check("source is mls when configured", listingSource(env()) === "mls");
+// --- What a deployment can actually show ------------------------------------
+//
+// The single most important property here: a MISSING MLS must never resolve to
+// generated properties. It used to. Every one of these cases returned
+// "sample", so a deployment that had simply never been given a Bridge
+// credential served invented addresses and prices through the real screens.
+check("nothing configured means nothing to show, not generated rows",
+  listingAvailability({}) === "not_configured");
+check("a flag on with no token is not configured, not sample",
+  listingAvailability({ MLS_LISTINGS_ENABLED: "1" }) === "not_configured");
+check("a flag on with no dataset is not configured, not sample",
+  listingAvailability({ MLS_LISTINGS_ENABLED: "1", BRIDGE_API_TOKEN: "t" }) === "not_configured");
+check("a working MLS is the MLS", listingAvailability(env()) === "mls");
+
+// Fixture mode is something a deployment opts into by name.
+check("fixture mode must be asked for by name",
+  listingAvailability({ SAMPLE_LISTINGS_ENABLED: "1" }) === "sample");
+check("fixture mode is strict about its value",
+  !sampleListingsEnabled({ SAMPLE_LISTINGS_ENABLED: "true" }) &&
+    !sampleListingsEnabled({ SAMPLE_LISTINGS_ENABLED: "yes" }) &&
+    !sampleListingsEnabled({ SAMPLE_LISTINGS_ENABLED: " 1 " }) &&
+    sampleListingsEnabled({ SAMPLE_LISTINGS_ENABLED: "1" }));
+check("a real MLS always beats the fixture flag",
+  listingAvailability({ ...env(), SAMPLE_LISTINGS_ENABLED: "1" }) === "mls");
 
 // --- OData helpers -----------------------------------------------------------
 check("single quotes are doubled", escapeODataString("O'Brien's") === "O''Brien''s");
@@ -431,14 +457,38 @@ try {
     check(`${name} route is dynamic and node`, src.includes('export const dynamic = "force-dynamic"') && src.includes('export const runtime = "nodejs"'));
   }
   for (const [name, src] of [["search", search], ["detail", detail], ["comparables", comps], ["featured", featured]] as const) {
-    check(`${name} route serves the sample set only when the flag is off`,
-      /config\.reason === "disabled"/.test(src) && src.includes("return notConfigured()"));
+    // The correction at the heart of this release. A route may reach for the
+    // generator only when a deployment asked for fixture mode BY NAME. It used
+    // to reach for it whenever the MLS flag happened to be off, which made
+    // "nobody configured an MLS" indistinguishable from "show me invented
+    // properties" — and the second is never what the first meant.
+    check(`${name} route serves generated rows only in explicit fixture mode`,
+      /if \(sampleListingsEnabled\(\)\)/.test(src) &&
+        src.includes("return notConfigured()"));
+    check(`${name} route no longer treats an absent MLS as a request for fiction`,
+      !/config\.reason === "disabled"/.test(src));
     check(`${name} route never forwards an upstream body`, !/error\.(message|detail)/.test(src));
   }
   check("flag on with a missing credential is 503, never sample rows",
     http.includes("status: 503") && /console\.error\([\s\S]{0,200}missing_token/.test(http));
   check("a rejected credential is logged as ours to fix, without the token",
     /unauthorized[\s\S]{0,300}rejected BRIDGE_API_TOKEN/.test(http) && !/config\.token|\.token\b/.test(http));
+  // The adapter is the path that actually served invented properties: the
+  // route would 503, but the browser had already been told "sample" and never
+  // asked. It must now fail the read instead of reaching for the generator.
+  check("the adapter refuses to invent listings when nothing is configured",
+    /availableSource\(\)/.test(adapter) &&
+      /source === "not_configured"\) throw new ListingsError\("mls_not_configured", 503\)/.test(adapter));
+  check("no listing read still consults the raw source directly", (() => {
+    const body = adapter.slice(adapter.indexOf("export async function searchListings"));
+    return !/await getListingSource\(\)/.test(body);
+  })());
+  check("the probe reports what can be shown, in the same vocabulary",
+    readFileSync("app/api/health/route.ts", "utf8").includes("listings: listingAvailability()") &&
+      source.includes("listingAvailability()"));
+  check("fixture mode is documented for an operator",
+    /^SAMPLE_LISTINGS_ENABLED=$/m.test(readFileSync(".env.example", "utf8")));
+
   check("an id must be a bounded printable token", detail.includes("ID_SHAPE") && /\{1,64\}/.test(detail));
   check("the MLS module is server-only", config.includes('import "server-only"') && bridge.includes('import "server-only"'));
   check("the credential is never a client value", !config.includes("NEXT_PUBLIC_BRIDGE") && !readFileSync(".env.example", "utf8").includes("NEXT_PUBLIC_BRIDGE"));

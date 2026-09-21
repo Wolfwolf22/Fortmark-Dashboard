@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { LISTING_STATUS_PILL, StatusPill } from "@/components/ui/status-pill";
 import { WidgetCard } from "@/components/widgets/widget-card";
 import { getAgent } from "@/lib/data/adapters/agents";
-import { getFeaturedListing } from "@/lib/data/adapters/listings";
+import { getFeaturedListing, ListingsError } from "@/lib/data/adapters/listings";
 import { useQuery } from "@/lib/data/hooks";
 import type { Agent, Listing } from "@/lib/data/types";
 import { formatCurrency, initials } from "@/lib/utils";
@@ -48,15 +48,26 @@ export default function FeaturedListingWidget() {
   // rather than a generated property.
   const connected = data?.listing?.source === "mls";
 
+  // "No MLS is configured" is not a failure to load — it is a standing fact
+  // about this deployment, and it reads as a bug if the card calls it an
+  // error. It lands in the same not-connected state an unconfigured feed
+  // always produced.
+  const unconfigured = error instanceof ListingsError && error.code === "mls_not_configured";
+
   return (
     <WidgetCard
       icon={Building2}
-      title={connected ? "Featured listing" : "MLS"}
+      title={connected && !unconfigured ? "Featured listing" : "MLS"}
       preset={null}
       expandable={false}
       contentClassName="flex flex-col"
     >
-      {error ? (
+      {unconfigured ? (
+        <UnavailableBody
+          availability="not_configured"
+          detail="Listings appear here once the MLS feed is connected."
+        />
+      ) : error ? (
         <p className="text-[13px] text-muted-foreground">
           The featured listing failed to load. Refresh the page to retry.
         </p>

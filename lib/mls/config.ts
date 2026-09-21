@@ -66,14 +66,50 @@ export function resolveBridgeConfig(env: EnvLike = process.env): BridgeConfigRes
 }
 
 /**
- * Where the listings screen gets its rows from.
+ * Permit the generated listing set.
  *
- * `sample` is the seeded generator set that the dashboard has always shown.
- * It is reported to the browser by name so the UI can label it — sample rows
- * must never be mistaken for the brokerage's MLS.
+ * This flag did not exist, and its absence was a lie the dashboard told.
+ * `listingSource()` used to return "sample" for every reason the MLS was not
+ * configured, so a deployment that had simply never been given a Bridge
+ * credential served invented properties — with invented addresses, prices and
+ * photographs — through the same screens, the same adapter and the same
+ * `/api/health` label that a working MLS would use. Nothing chose that. It
+ * was the default.
+ *
+ * Generated listings are now something a deployment opts into, by name, the
+ * same way Home's sample brokerage is. Strict — only the exact string "1" —
+ * because it makes the product state things that are not true, and a flag
+ * like that should never be switched on by a generous reading of a typo.
+ *
+ * It never overrides a live MLS: where Bridge is configured, real listings
+ * win and this flag changes nothing.
  */
-export type ListingSource = "mls" | "sample";
+export function sampleListingsEnabled(env: EnvLike = process.env): boolean {
+  return env.SAMPLE_LISTINGS_ENABLED === "1";
+}
 
-export function listingSource(env: EnvLike = process.env): ListingSource {
-  return resolveBridgeConfig(env).ok ? "mls" : "sample";
+/**
+ * What this deployment can actually show on a listings screen.
+ *
+ *   mls             Bridge is configured. Rows are the brokerage's own MLS.
+ *   sample          fixture mode is explicitly on. Rows are generated, and
+ *                   every screen that shows them says so.
+ *   not_configured  no MLS, no fixture mode. There are no listings to show,
+ *                   and the screens say that rather than inventing some.
+ *
+ * Note what is NOT here: `unavailable`. That is the outcome of a call, not a
+ * property of the configuration, and this function does not make one. A
+ * Bridge that is configured but failing is reported as `unavailable` by the
+ * thing that actually tried — the listings routes, the search provider, the
+ * metrics service — each of which knows because its own request failed.
+ * Probing Bridge from an unauthenticated health endpoint would turn a
+ * readiness check into a billable upstream request that anyone could trigger,
+ * so this reports what is configured and says so plainly.
+ */
+export type ListingAvailability = "mls" | "sample" | "not_configured";
+
+export function listingAvailability(env: EnvLike = process.env): ListingAvailability {
+  if (resolveBridgeConfig(env).ok) return "mls";
+  if (sampleListingsEnabled(env)) return "sample";
+  return "not_configured";
 }

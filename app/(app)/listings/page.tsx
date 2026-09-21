@@ -36,8 +36,9 @@ function failureCopy(error: Error): { title: string; description: string } {
   switch (code) {
     case "mls_not_configured":
       return {
-        title: "The MLS connection is not configured.",
-        description: "Listings are switched to the MLS but the credential is missing. An administrator needs to set it.",
+        title: "No listing source is connected.",
+        description:
+          "This deployment has no MLS credential, so there are no listings to show. An administrator needs to connect one.",
       };
     case "mls_rejected_query":
       return {

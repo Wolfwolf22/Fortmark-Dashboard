@@ -493,7 +493,7 @@ check("the probe reports sources and nothing else", (() => {
   return (
     src.includes("transactionsSource()") &&
     src.includes("contactsSource()") &&
-    src.includes("listingSource()") &&
+    src.includes("listingAvailability()") &&
     src.includes("assistantAvailability()") &&
     envReads.every((name) => name === "VERCEL_GIT_COMMIT_SHA") &&
     // The build id is truncated, so it is an identifier rather than a handle.
