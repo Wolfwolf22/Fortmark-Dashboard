@@ -1,8 +1,21 @@
 /**
- * Metrics adapter — dashboard rollups and Reports series, all computed from
- * the same transaction/lead records the rest of the app reads. Swap the
- * bodies for the analytics service and the UI is untouched.
+ * Metrics adapter.
+ *
+ * Two things live here, and the difference between them matters.
+ *
+ * `getBrokerageMetrics` is the real path: it asks the server, which asks the
+ * transaction and contact domain services, and every group in the answer
+ * carries its own availability. It never falls back to anything. If a domain
+ * cannot answer, the caller is told that, and Home renders it as "not
+ * connected" or "unavailable" rather than a number.
+ *
+ * `getDashboardMetrics` is the generated sample series that still powers the
+ * Reports screen. It is fiction, it is labelled as such, and Home no longer
+ * touches it. Reports is the next screen to be made real (Phase E3); until
+ * then nothing in this file lets sample figures reach the live dashboard.
  */
+import { apiPath } from "@/lib/routes";
+import type { BrokerageMetrics } from "@/lib/metrics/types";
 import {
   endOfMonth,
   endOfQuarter,
@@ -23,6 +36,28 @@ import {
 import { leads, listings, now, transactions } from "../mock/db";
 import { inRange, previousRange } from "@/lib/dates";
 import { delay } from "./latency";
+
+export class MetricsError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`Metrics request failed (${status})`);
+    this.name = "MetricsError";
+    this.status = status;
+  }
+}
+
+/**
+ * The real brokerage metrics for the signed-in caller.
+ *
+ * A failed request throws. It deliberately does not return the sample set on
+ * error: a dashboard that quietly shows a healthy invented brokerage when the
+ * server is down is worse than one that says it cannot reach the server.
+ */
+export async function getBrokerageMetrics(): Promise<BrokerageMetrics> {
+  const response = await fetch(apiPath("/api/metrics"), { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new MetricsError(response.status);
+  return (await response.json()) as BrokerageMetrics;
+}
 
 // Monthly brokerage goals, scaled to the selected period.
 const MONTHLY_GOALS = { underContract: 8, closed: 6 };

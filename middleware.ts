@@ -18,6 +18,10 @@ import { signInUrl } from "@/lib/routes";
 const isPublicRoute = createRouteMatcher([
   // Clerk's own frontend endpoints must stay reachable to establish a session.
   "/__clerk/(.*)",
+  // The readiness probe. It reports which data source each domain resolved to
+  // and nothing else — no records, no counts, no configuration values — and it
+  // has to answer before anyone signs in, which is the whole point of it.
+  "/api/health",
 ]);
 
 /**
