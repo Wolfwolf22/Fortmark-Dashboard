@@ -521,6 +521,63 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
     !/stage_change|assignment|email|document/i.test(statuses));
 }
 
+// =============================================================================
+// The confirmation surface (§24, §26-§29)
+//
+// The card is the thing a person consents to, so what it may be built from is
+// as much a security property as anything on the server.
+// =============================================================================
+{
+  const card = code("components/ai/action-card.tsx");
+  const page = code("app/(app)/ai/page.tsx");
+  const client = code("lib/ai/actions/client.ts");
+
+  // The property this whole design turns on: no authoritative field is ever
+  // parsed out of the model's prose.
+  check("the thread asks the server what is pending",
+    /fetchPendingActions/.test(page) && /api\/ai\/actions/.test(client));
+  check("the thread parses no action out of the assistant's text",
+    !/JSON\.parse/.test(page) && !/action/i.test(page.slice(page.indexOf("for await"), page.indexOf("if (!text)"))));
+  check("the card renders only fields the server supplied",
+    /action\.summary/.test(card) && /action\.changes/.test(card) && /action\.warnings/.test(card));
+
+  // Consent has to be informed and deliberate.
+  check("the card shows what the value is changing from",
+    /change\.from \?\? "No follow-up scheduled"/.test(card));
+  check("the card shows what the value is changing to", /change\.to/.test(card));
+  check("the card surfaces the server's warnings", /action\.warnings\.map/.test(card));
+  check("the card says nothing has happened yet",
+    /Nothing changes until you confirm it/.test(card));
+  check("confirming is an explicit press, with declining equally reachable",
+    /onClick=\{\(\) => void run\("confirmed"\)\}/.test(card) &&
+      /onClick=\{\(\) => void run\("declined"\)\}/.test(card) &&
+      /: "Confirm"\}/.test(card) && /: "Decline"\}/.test(card));
+  check("neither choice is pre-selected or auto-fired",
+    !/autoFocus/.test(card) && !/useEffect\([^)]*confirmAction/.test(card));
+
+  // An expired or refused proposal must never read as success.
+  check("an expired card stops offering a button",
+    /expired \?/.test(card) && /This suggestion expired/.test(card));
+  check("a declined card states that nothing changed",
+    /Declined\. Nothing was changed/.test(card));
+  check("a refused confirmation is shown, not swallowed",
+    /role="alert"/.test(card) && /setError\(/.test(card));
+  check("the card never reports success on a failed confirmation", (() => {
+    const run = card.slice(card.indexOf("async function run("), card.indexOf("const done ="));
+    // setSettled is reached only on the success path, before the catch.
+    return run.indexOf("setSettled(choice)") < run.indexOf("} catch");
+  })());
+
+  // The request carries an id and nothing else.
+  check("confirming sends only the action id",
+    /confirmAction[\s\S]{0,400}method: "POST"/.test(client) &&
+      !/body: JSON\.stringify/.test(client));
+  check("the browser fetches through the basePath-aware helper",
+    /apiPath\(/.test(client) && !/fetch\("\/api/.test(client));
+  check("expiry, staleness and cancellation each get their own wording",
+    /expired:/.test(client) && /stale:/.test(client) && /cancelled:/.test(client));
+}
+
 // --- Report ------------------------------------------------------------------
 
 console.log(`\n${passed}/${passed + failures.length} AI action checks passed`);

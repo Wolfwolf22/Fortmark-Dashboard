@@ -7,12 +7,15 @@
  */
 import * as React from "react";
 import { Sparkles } from "lucide-react";
+import { ActionCard } from "@/components/ai/action-card";
 import { Composer } from "@/components/ai/composer";
 import { MessageBubble } from "@/components/ai/message-bubble";
 import { ThreadSidebar } from "@/components/ai/thread-sidebar";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ChatError, sendMessage } from "@/lib/ai/client";
+import { fetchPendingActions } from "@/lib/ai/actions/client";
+import type { PreparedAction } from "@/lib/ai/actions/contract";
 import { useAiStore } from "@/lib/ai/store";
 import { ChatRole } from "@/lib/ai/types";
 
@@ -32,6 +35,17 @@ export default function Page() {
   const [error, setError] = React.useState<string | null>(null);
   const [mounted, setMounted] = React.useState(false);
 
+  /**
+   * Proposals the server says are waiting for this user.
+   *
+   * Fetched from the API, never parsed out of the reply. The assistant's
+   * stream is plain text and text from a model is not authority: it can
+   * describe a change it never prepared, or describe one it did prepare
+   * incorrectly. Asking the server closes both gaps — a card exists only if a
+   * row exists, and it says what the row says.
+   */
+  const [pending, setPending] = React.useState<PreparedAction[]>([]);
+
   const abortRef = React.useRef<AbortController | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const transcriptRef = React.useRef<HTMLDivElement>(null);
@@ -42,6 +56,17 @@ export default function Page() {
 
   // Abort any in-flight stream when the page unmounts.
   React.useEffect(() => () => abortRef.current?.abort(), []);
+
+  // A proposal prepared in an earlier visit may still be live. Surfacing it is
+  // what lets someone decline it; left unseen it would simply expire, which is
+  // safe but leaves them unable to say no.
+  React.useEffect(() => {
+    const controller = new AbortController();
+    void fetchPendingActions(controller.signal)
+      .then(setPending)
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
 
   const active = threads.find((t) => t.id === activeId);
   const messages = React.useMemo(() => active?.messages ?? [], [active]);
@@ -95,6 +120,26 @@ export default function Page() {
       abortRef.current = null;
       setStreamingId(null);
     }
+
+    // The turn is over; ask what it left behind. A failure here is silent by
+    // design: no card is the correct rendering of "nothing is pending", and a
+    // deployment without actions has no pending list to report on.
+    try {
+      setPending(await fetchPendingActions());
+    } catch {
+      // Leave whatever was already on screen; it is server-authored either way.
+    }
+  }
+
+  /**
+   * A settled proposal leaves the pending list.
+   *
+   * The card renders its own outcome until the thread moves on, so the row is
+   * dropped here rather than re-fetched: the server has already recorded the
+   * decision, and asking again would only risk showing a stale card.
+   */
+  function settleAction(actionId: string) {
+    setPending((current) => current.filter((action) => action.actionId !== actionId));
   }
 
   function submit() {
@@ -180,6 +225,12 @@ export default function Page() {
                 />
               ))
             )}
+
+            {/* Below the reply they belong to, and above any error: a
+                proposal is the last thing that happened in the turn. */}
+            {pending.map((action) => (
+              <ActionCard key={action.actionId} action={action} onSettled={settleAction} />
+            ))}
 
             {error && (
               <div
