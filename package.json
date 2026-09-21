@@ -8,7 +8,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:auth": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_dashboard_access.ts",
-    "test": "npm run typecheck && npm run test:auth && npm run test:profile && npm run test:ai && npm run test:mls && npm run test:transactions && npm run test:contacts",
+    "test": "npm run typecheck && npm run test:auth && npm run test:profile && npm run test:ai && npm run test:mls && npm run test:transactions && npm run test:contacts && npm run test:metrics",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/migrate.mjs --force",
     "db:check": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/db_check.ts",
@@ -16,7 +16,8 @@
     "test:ai": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_ai.ts",
     "test:mls": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_mls.ts",
     "test:transactions": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_transactions.ts",
-    "test:contacts": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_contacts.ts"
+    "test:contacts": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_contacts.ts",
+    "test:metrics": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_metrics.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
