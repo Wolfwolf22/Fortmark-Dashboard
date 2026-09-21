@@ -21,48 +21,26 @@ import type {
   TransactionPartyRow,
   TransactionRow,
 } from "../db/schema.ts";
+import { canCreateOwnedFor, canSeeOwned, canWriteOwned, type Actor } from "../auth/actor.ts";
 import { centsToDollars, projectCommission } from "./money.ts";
 import { ALL_STAGES, isTerminalStage, STAGE_LABELS } from "./stages.ts";
 
 // --- Who ---------------------------------------------------------------------
+// Ownership rules are shared with every brokerage-owned domain; see
+// lib/auth/actor.ts. Restated here only as the transaction row's shape.
 
-export type DbRole = "admin" | "broker" | "transaction_coordinator" | "agent" | "member";
+export { isPrivileged, PRIVILEGED_ROLES, type Actor, type DbRole } from "../auth/actor.ts";
 
-/** Roles that see and may change every deal in the brokerage. */
-export const PRIVILEGED_ROLES: readonly DbRole[] = ["admin", "broker", "transaction_coordinator"];
-
-export interface Actor {
-  /** dashboard_users.id — never the Clerk id. */
-  userId: string;
-  role: DbRole;
-  brokerageKey: string;
-}
-
-export function isPrivileged(actor: Actor): boolean {
-  return PRIVILEGED_ROLES.includes(actor.role);
-}
-
-/**
- * May this actor see this row? The brokerage boundary is checked first and
- * unconditionally; within it, a privileged role sees everything and anyone
- * else sees only the deals they are responsible for. A `member` with no deals
- * therefore sees an empty screen, which is correct.
- */
 export function canSee(actor: Actor, row: Pick<TransactionRow, "brokerageKey" | "agentUserId">): boolean {
-  if (row.brokerageKey !== actor.brokerageKey) return false;
-  return isPrivileged(actor) || row.agentUserId === actor.userId;
+  return canSeeOwned(actor, { brokerageKey: row.brokerageKey, ownerUserId: row.agentUserId });
 }
 
-/** May this actor change this row? Same rule as seeing it; members may not. */
 export function canWrite(actor: Actor, row: Pick<TransactionRow, "brokerageKey" | "agentUserId">): boolean {
-  if (actor.role === "member") return false;
-  return canSee(actor, row);
+  return canWriteOwned(actor, { brokerageKey: row.brokerageKey, ownerUserId: row.agentUserId });
 }
 
-/** May this actor create a deal for this agent? Agents only for themselves. */
 export function canCreateFor(actor: Actor, agentUserId: string): boolean {
-  if (actor.role === "member") return false;
-  return isPrivileged(actor) || agentUserId === actor.userId;
+  return canCreateOwnedFor(actor, agentUserId);
 }
 
 // --- Request shapes -----------------------------------------------------------

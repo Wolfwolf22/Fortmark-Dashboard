@@ -32,6 +32,8 @@ export function failure(reason: ServiceFailure): NextResponse {
       return NextResponse.json({ error: "no_identity" }, { status: 403, headers: NO_STORE });
     case "invalid_transition":
       return NextResponse.json({ error: "invalid_transition" }, { status: 409, headers: NO_STORE });
+    case "invalid_assignee":
+      return NextResponse.json({ error: "invalid_assignee" }, { status: 400, headers: NO_STORE });
     case "disabled":
       // Never reached when the route serves the sample set; kept so a route
       // that forgets to branch on source fails closed rather than open.

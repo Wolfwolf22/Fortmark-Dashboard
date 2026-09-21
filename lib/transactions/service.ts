@@ -17,8 +17,6 @@ import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { getDb, type Db } from "../db/client.ts";
 import {
   auditEvents,
-  dashboardUsers,
-  FORTMARK_BROKERAGE_KEY,
   professionalProfiles,
   transactionDeadlines,
   transactionEvents,
@@ -28,15 +26,13 @@ import {
 } from "../db/schema.ts";
 import { transactionsDatabaseEnabled, type EnvLike } from "../flags.ts";
 import type { DateRange, Transaction, TransactionFilters, TransactionStage } from "../data/types.ts";
+import { canOwnRecords, isPrivileged, resolveActor as resolveBrokerageActor, type Actor } from "../auth/actor.ts";
 import {
   canCreateFor,
   canSee,
   canWrite,
-  isPrivileged,
   toTransaction,
-  type Actor,
   type CreateTransactionInput,
-  type DbRole,
 } from "./domain.ts";
 import { canTransition, isTerminalStage } from "./stages.ts";
 
@@ -60,42 +56,19 @@ export type ServiceFailure =
   | "no_identity"
   | "not_found"
   | "forbidden"
-  | "invalid_transition";
+  | "invalid_transition"
+  | "invalid_assignee";
 
 export type ServiceResult<T> = { ok: true; value: T } | { ok: false; reason: ServiceFailure };
 
-/**
- * The caller as an actor: their dashboard_users row and role.
- *
- * A signed-in, allowlisted caller with no dashboard_users row has no
- * brokerage identity yet (the profile sync has not run for them) and cannot
- * own or see deals. That is `no_identity`, distinct from "forbidden".
- */
+/** The caller as an actor for this domain. See lib/auth/actor.ts. */
 export async function resolveActor(
   clerkUserId: string,
   env: EnvLike = process.env
 ): Promise<ServiceResult<{ actor: Actor; db: Db }>> {
-  if (!transactionsDatabaseEnabled(env)) return { ok: false, reason: "disabled" };
-  const db = getDb();
-  if (!db) return { ok: false, reason: "unavailable" };
-  try {
-    const rows = await db
-      .select({ id: dashboardUsers.id, role: dashboardUsers.role, status: dashboardUsers.status })
-      .from(dashboardUsers)
-      .where(eq(dashboardUsers.clerkUserId, clerkUserId))
-      .limit(1);
-    const user = rows[0];
-    if (!user || user.status === "suspended") return { ok: false, reason: "no_identity" };
-    return {
-      ok: true,
-      value: {
-        actor: { userId: user.id, role: user.role as DbRole, brokerageKey: FORTMARK_BROKERAGE_KEY },
-        db,
-      },
-    };
-  } catch {
-    return { ok: false, reason: "unavailable" };
-  }
+  const result = await resolveBrokerageActor(clerkUserId, transactionsDatabaseEnabled(env));
+  if (!result.ok) return { ok: false, reason: result.reason };
+  return { ok: true, value: { actor: result.actor, db: result.db } };
 }
 
 /** The visibility predicate, as SQL. Mirrors `canSee` for a query. */
@@ -231,6 +204,10 @@ export async function createTransaction(
   const agentUserId =
     input.agentUserId && isPrivileged(ctx.actor) ? input.agentUserId : ctx.actor.userId;
   if (!canCreateFor(ctx.actor, agentUserId)) return { ok: false, reason: "forbidden" };
+  // A named owner is a request-supplied id: it must be someone who can own work.
+  if (agentUserId !== ctx.actor.userId && !(await canOwnRecords(ctx.db, agentUserId))) {
+    return { ok: false, reason: "invalid_assignee" };
+  }
 
   const inserted = await ctx.db
     .insert(transactions)
