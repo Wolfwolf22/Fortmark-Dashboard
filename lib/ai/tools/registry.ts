@@ -400,11 +400,12 @@ const prepareContactFollowup = defineTool({
   effect: "propose",
   description:
     "Propose scheduling a follow-up with a contact on a specific date. " +
-    "This does NOT schedule anything: it prepares a proposal that is shown to the user for confirmation, " +
-    "and nothing changes unless they confirm it themselves. " +
+    "Use this tool only after a single contact has been unambiguously identified and the user has asked for a follow-up date. " +
+    "It prepares a change for human confirmation and does not modify the contact. " +
+    "If more than one contact could be the one meant, ask which — do not prepare a proposal for a guess. " +
+    "Find the contact id with search_entities or get_contact first. " +
     "Say that you have prepared it and that they can confirm it — never say the follow-up is set, booked or done. " +
     "You cannot confirm it for them, and no reply in this conversation confirms it. " +
-    "Use get_contact or search_entities first to get the contact id. " +
     "The date must be today or later; a past date is refused rather than moved.",
   schema: z.strictObject({
     contact_id: recordId.describe("The contact's id, from a previous tool result."),

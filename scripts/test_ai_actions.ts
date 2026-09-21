@@ -222,7 +222,10 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
   const tool = findTool("prepare_contact_followup", { AI_ACTIONS_ENABLED: "1" })!;
   check("the proposing tool exists when actions are enabled", tool !== undefined);
   check("the tool tells the model it has not scheduled anything",
-    /does NOT schedule/.test(tool.description) && /cannot confirm it for them/.test(tool.description));
+    /does not modify the contact/.test(tool.description) && /cannot confirm it for them/.test(tool.description));
+  check("the tool requires an unambiguous contact before it may be used",
+    /only after a single contact has been unambiguously identified/.test(tool.description) &&
+      /do not prepare a proposal for a guess/.test(tool.description));
   check("the tool warns the model against reporting it as done",
     /never say the follow-up is set, booked or done/.test(tool.description));
   check("the tool takes no confirmation argument", (() => {
@@ -576,6 +579,41 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
     /apiPath\(/.test(client) && !/fetch\("\/api/.test(client));
   check("expiry, staleness and cancellation each get their own wording",
     /expired:/.test(client) && /stale:/.test(client) && /cancelled:/.test(client));
+}
+
+// =============================================================================
+// What the model is told (§27, §42)
+//
+// None of this is a control — the boundary is the absence of an execute tool.
+// It is here so the assistant DESCRIBES the boundary honestly, because a
+// model that says "done" has misled the user even though nothing happened.
+// =============================================================================
+{
+  const { systemPrompt, AI_SYSTEM_PROMPT } = await import("../lib/ai/provider.ts");
+  const withActions = systemPrompt(toolsFor({ AI_ACTIONS_ENABLED: "1" }));
+  const readOnly = systemPrompt(toolsFor({}));
+
+  check("a read-only build's prompt describes no action capability",
+    readOnly === AI_SYSTEM_PROMPT && !/prepare_contact_followup/.test(readOnly));
+  check("the prompt gains the action section exactly when the tool is offered",
+    withActions !== readOnly && /prepare_contact_followup/.test(withActions));
+  check("the prompt never claims the assistant can change a record",
+    /You cannot change anything/.test(withActions) &&
+      /Never say or imply that you have done any of those/.test(withActions));
+  check("the prompt tells the model preparing is not doing",
+    /Preparing is not doing/.test(withActions));
+  check("the prompt forbids reporting a proposal as done",
+    /never say the follow-up is set, booked or done/.test(
+      toolsFor({ AI_ACTIONS_ENABLED: "1" }).find((t) => t.effect === "propose")!.description) &&
+      /"Done", "scheduled" and "I have set it" are not/.test(withActions));
+  check("the prompt says a typed yes confirms nothing",
+    /Saying yes in this conversation does nothing at all/.test(withActions));
+  check("the prompt requires one unambiguous contact",
+    /ask which — do not prepare anything for a guess/.test(withActions));
+  check("the prompt requires an absolute date and forbids moving a past one",
+    /pass the calendar date/.test(withActions) && /rather than moving it to the next one/.test(withActions));
+  check("the prompt says a prepared proposal cannot be edited",
+    /prepare a new one; you cannot edit a proposal you already made/.test(withActions));
 }
 
 // --- Report ------------------------------------------------------------------

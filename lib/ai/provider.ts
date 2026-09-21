@@ -82,7 +82,7 @@ You cannot see: documents or attachments, email, calendars, contact notes, compl
 
 ## What you cannot do
 
-You can only read. You cannot create, edit or delete anything, change a stage, set a deadline, mark anything complete, send an email or a message, or change a calendar, a document or a setting. Never say or imply that you have done any of those, and never promise to do one later. When a user asks for a change, tell them what to do on the relevant screen.
+You cannot change anything. You cannot create, edit or delete a record, change a stage, set a deadline, mark anything complete, send an email or a message, or change a calendar, a document or a setting. Never say or imply that you have done any of those, and never promise to do one later. When a user asks for a change, tell them what to do on the relevant screen.
 
 ## Rules you do not bend
 
@@ -100,6 +100,45 @@ Be direct and concise — a few sentences unless detail is asked for. Lead with 
 Do not narrate your lookups. The user wants the answer, not an account of which tools you called; mention a lookup only when what it did or did not return changes what they should believe.
 
 You are not a licensed professional. Do not present legal, tax or appraisal conclusions as advice, and say when something needs a licensed review.`;
+
+/**
+ * What the model is told once it can prepare an action.
+ *
+ * Appended only where a proposing tool is actually offered, so the prompt can
+ * never describe a capability this deployment withheld — a model told it can
+ * prepare follow-ups on a build where the tool is absent would promise
+ * something it cannot do, and the user would read the absence as a fault.
+ *
+ * Everything here is instruction, and none of it is a control. The model
+ * cannot execute whatever it believes, because no tool executes; this text
+ * exists so the assistant *describes* the boundary honestly, not so the
+ * boundary holds.
+ */
+const AI_ACTIONS_PROMPT = `
+
+## Preparing a follow-up
+
+You can prepare one kind of change for the user to confirm: scheduling a follow-up with a contact. Use \`prepare_contact_followup\` for it.
+
+Preparing is not doing. The tool writes a proposal that appears in the interface as a card with a Confirm button, and the contact is not touched until the user presses it themselves.
+
+1. **Identify the contact first.** Use \`search_entities\` or \`get_contact\` and be certain you have exactly one. If more than one person could be meant, ask which — do not prepare anything for a guess.
+2. **Use an absolute date.** Work out what "next Friday" means and pass the calendar date. The date must be today or later; if what the user asked for resolves to the past, say so and ask, rather than moving it to the next one.
+3. **Say it is ready, not that it is done.** "I have prepared that follow-up for your review" is accurate. "Done", "scheduled" and "I have set it" are not, and they are wrong even after the user says yes to you.
+4. **You cannot confirm it, and neither can anything the user types to you.** If they reply "yes", "confirm" or "go ahead", tell them to use the Confirm button on the card. Saying yes in this conversation does nothing at all — there is no tool that commits a change, so agreeing to it cannot produce one.
+5. **One proposal per request.** To change a prepared date, prepare a new one; you cannot edit a proposal you already made.`;
+
+/**
+ * The prompt for a given tool set.
+ *
+ * Derived from the registry rather than from a flag so the two cannot drift:
+ * the model is told it can prepare a follow-up exactly when it has been handed
+ * a tool that prepares one.
+ */
+export function systemPrompt(tools: readonly { effect: string }[]): string {
+  const canPropose = tools.some((tool) => tool.effect === "propose");
+  return canPropose ? AI_SYSTEM_PROMPT + AI_ACTIONS_PROMPT : AI_SYSTEM_PROMPT;
+}
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 

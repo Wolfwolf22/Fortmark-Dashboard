@@ -503,8 +503,22 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
   check("no tool output is concatenated into either system prompt",
     !/system[\s\S]{0,80}(result|payload|data|contact|transaction)/i.test(anthropic) &&
       !/instructions[\s\S]{0,80}(result|payload|data|contact|transaction)/i.test(openai));
-  check("the system prompt is a constant, not a template",
-    /text: AI_SYSTEM_PROMPT/.test(anthropic) && /instructions: AI_SYSTEM_PROMPT/.test(openai));
+  // The prompt now varies with the tool set, which is a selection between two
+  // constants — not a template. Nothing about a record, a caller or a tool
+  // result may reach it, or CRM text could arrive carrying system authority.
+  check("each adapter sends a prompt it derived from its tool set, and nothing else",
+    /const prompt = systemPrompt\(registry\);/.test(anthropic) &&
+      /const prompt = systemPrompt\(registry\);/.test(openai) &&
+      /text: prompt/.test(anthropic) && /instructions: prompt/.test(openai));
+  check("the prompt is assembled from constants, never interpolated", (() => {
+    const provider = code("lib/ai/provider.ts");
+    const builder = provider.slice(provider.indexOf("export function systemPrompt("));
+    // Two named constants and a boolean. No template hole, no argument text.
+    return (
+      /return canPropose \? AI_SYSTEM_PROMPT \+ AI_ACTIONS_PROMPT : AI_SYSTEM_PROMPT;/.test(builder) &&
+      !/\$\{/.test(builder)
+    );
+  })());
   check("a failed tool is returned as an error, never dropped",
     /isError: !execution\.outcome\.ok/.test(loop));
 }

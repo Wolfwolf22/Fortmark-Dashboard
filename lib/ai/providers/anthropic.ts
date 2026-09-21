@@ -17,7 +17,7 @@ import "server-only";
  * identically whichever vendor answered.
  */
 import Anthropic from "@anthropic-ai/sdk";
-import { AI_EFFORT, AI_MAX_TOKENS, AI_SYSTEM_PROMPT } from "../provider.ts";
+import { AI_EFFORT, AI_MAX_TOKENS, systemPrompt } from "../provider.ts";
 import type { FortmarkTool } from "../tools/types.ts";
 import type {
   AiProvider,
@@ -41,6 +41,9 @@ export function anthropicProvider(
   // Which tools exist is FortMark's decision, made before the adapter is
   // constructed. An adapter never consults a flag or the environment.
   const tools = toolDefinitions(registry);
+  // The prompt describes exactly the tools that were handed over, so it can
+  // never claim a capability this deployment withheld.
+  const prompt = systemPrompt(registry);
 
   return {
     name: "anthropic",
@@ -51,7 +54,7 @@ export function anthropicProvider(
         {
           model,
           max_tokens: AI_MAX_TOKENS,
-          system: [{ type: "text", text: AI_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+          system: [{ type: "text", text: prompt, cache_control: { type: "ephemeral" } }],
           messages: turns.map(toMessage),
           tools,
           // The final round is opened unable to ask for anything more, so the

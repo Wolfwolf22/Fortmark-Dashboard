@@ -29,7 +29,7 @@ import "server-only";
  */
 import OpenAI from "openai";
 import type { Responses } from "openai/resources/responses/responses";
-import { AI_MAX_TOKENS, AI_SYSTEM_PROMPT, AI_EFFORT } from "../provider.ts";
+import { AI_MAX_TOKENS, systemPrompt, AI_EFFORT } from "../provider.ts";
 import type { FortmarkTool } from "../tools/types.ts";
 import type {
   AiProvider,
@@ -53,6 +53,9 @@ export function openaiProvider(
   // Which tools exist is FortMark's decision, made before the adapter is
   // constructed. An adapter never consults a flag or the environment.
   const tools = toolDefinitions(registry);
+  // The prompt describes exactly the tools that were handed over, so it can
+  // never claim a capability this deployment withheld.
+  const prompt = systemPrompt(registry);
 
   return {
     name: "openai",
@@ -72,7 +75,7 @@ export function openaiProvider(
       const stream = await client.responses.create(
         {
           model,
-          instructions: AI_SYSTEM_PROMPT,
+          instructions: prompt,
           input: turns.flatMap(toInputItems),
           tools,
           // The final round is opened unable to ask for anything more, so the
