@@ -12,6 +12,7 @@ import type {
   OpenedRound,
   ProviderFailureKind,
 } from "@/lib/ai/providers/types";
+import { toolsFor } from "@/lib/ai/tools/registry";
 import type { ToolContext } from "@/lib/ai/tools/types";
 import { decideAccess, isConfigFailure } from "@/lib/auth/dashboard-access";
 
@@ -104,10 +105,13 @@ export async function POST(request: NextRequest) {
   }
 
   // `userId` is non-null here: `decideAccess` refused every anonymous case.
+  // One registry, resolved once for this deployment and handed to whichever
+  // adapter answers. Both vendors are shown exactly the same tools.
+  const registry = toolsFor();
   const provider =
     selection.name === "openai"
-      ? openaiProvider(selection.apiKey, selection.model, request.signal)
-      : anthropicProvider(selection.apiKey, selection.model, request.signal);
+      ? openaiProvider(selection.apiKey, selection.model, request.signal, registry)
+      : anthropicProvider(selection.apiKey, selection.model, request.signal, registry);
 
   // The adapter already holds the request's abort signal: a disconnect is
   // forwarded to whichever vendor is generating.

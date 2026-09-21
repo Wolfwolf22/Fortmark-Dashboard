@@ -693,3 +693,69 @@ export type TransactionInsert = typeof transactions.$inferInsert;
 export type TransactionPartyRow = typeof transactionParties.$inferSelect;
 export type TransactionDeadlineRow = typeof transactionDeadlines.$inferSelect;
 export type TransactionEventRow = typeof transactionEvents.$inferSelect;
+
+// ===========================================================================
+// Release F2 — AI-prepared actions
+//
+// The model proposes; a human confirms; FortMark executes. This table is the
+// proposal, and it is the reason the model never holds the mutation: a
+// prepared action is inert until someone clicks, and everything that decides
+// what will happen — actor, brokerage, target, payload — lives here, server
+// side, where a browser cannot reach it.
+//
+// `preview` is stored rather than recomputed so the audit can answer *what the
+// human was actually shown*, which is the question that matters if a change is
+// later disputed.
+//
+// Deliberately absent: model reasoning, prompts, conversation history, API
+// keys, and any contact field the action does not touch.
+// ===========================================================================
+
+export const aiActionStatus = pgEnum("ai_action_status", [
+  "prepared",
+  "executing",
+  "executed",
+  "failed",
+  "stale",
+  "expired",
+  "cancelled",
+]);
+
+export const aiPreparedActions = pgTable(
+  "ai_prepared_actions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Tenant boundary. Set from the actor server-side, never from a request. */
+    brokerageKey: text("brokerage_key").notNull().default(FORTMARK_BROKERAGE_KEY),
+    /** The human who prepared it, and the only one who may confirm it. */
+    actorUserId: uuid("actor_user_id")
+      .notNull()
+      .references(() => dashboardUsers.id, { onDelete: "cascade" }),
+    actionType: text("action_type").notNull(),
+    targetType: text("target_type").notNull(),
+    targetId: uuid("target_id").notNull(),
+    /** The server's own instruction. Never rendered, never sent to a browser. */
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    /** The diff the human was shown, exactly as shown. */
+    preview: jsonb("preview").$type<Record<string, unknown>>().notNull(),
+    /**
+     * sha256 over only the target fields this action depends on. A whole-row
+     * hash would make an unrelated edit by a colleague invalidate a follow-up
+     * date nobody else touched.
+     */
+    expectedFingerprint: text("expected_fingerprint").notNull(),
+    status: aiActionStatus("status").notNull().default("prepared"),
+    preparedAt: timestamp("prepared_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    executedAt: timestamp("executed_at", { withTimezone: true }),
+    /** Coarse reason only — never an upstream message or a record field. */
+    failureReason: text("failure_reason"),
+  },
+  (t) => [
+    index("ai_prepared_actions_actor_status_idx").on(t.actorUserId, t.status),
+    index("ai_prepared_actions_target_idx").on(t.targetType, t.targetId),
+    index("ai_prepared_actions_expires_idx").on(t.expiresAt),
+  ]
+);
+
+export type AiPreparedActionRow = typeof aiPreparedActions.$inferSelect;

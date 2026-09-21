@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * The read-only FortMark tool registry.
+ * The FortMark tool registry.
  *
  * Every tool in this file is a thin wrapper over a domain service the
  * application already uses. There is no AI-only query, no AI-only service, no
@@ -17,18 +17,33 @@ import "server-only";
  * none of them has a field for one. An assignment or ownership filter the
  * model might want is the actor's, and the actor is the session's.
  *
- * Everything here reads. Nothing here writes, sends, schedules or deletes.
+ * Every tool here either reads or proposes. Nothing here changes a record.
+ *
+ * `prepare_contact_followup` is the single exception to "reads only", and it
+ * is a narrow one: it writes a row to `ai_prepared_actions` describing a
+ * change that has not happened. The contact is untouched. Committing that
+ * proposal takes a human pressing a button, which calls a route the model has
+ * never been told exists and cannot name, and which re-reads and re-authorizes
+ * everything the proposal assumed. There is no execute tool, no confirm tool
+ * and no "apply" argument anywhere in this file — saying "yes" to the model
+ * accomplishes nothing, because the model has nothing to say yes with.
  */
 import { z } from "zod";
 import { resolveActor, type Actor } from "../../auth/actor.ts";
 import type { Db } from "../../db/client.ts";
-import { contactsDatabaseEnabled, transactionsDatabaseEnabled } from "../../flags.ts";
+import {
+  aiActionsEnabled,
+  contactsDatabaseEnabled,
+  transactionsDatabaseEnabled,
+  type EnvLike,
+} from "../../flags.ts";
 import { getContact, listContacts } from "../../contacts/service.ts";
 import { getTransaction, listTransactions } from "../../transactions/service.ts";
 import { contactActivity, contactAttention } from "../../contacts/metrics.ts";
 import { transactionActivity, transactionAttention } from "../../transactions/metrics.ts";
 import { brokerageMetrics } from "../../metrics/service.ts";
 import { search } from "../../search/service.ts";
+import { prepareFollowup } from "../actions/service.ts";
 import { ALL_STAGES } from "../../transactions/stages.ts";
 import { SIDES } from "../../transactions/filters.ts";
 import { ALL_CONTACT_STAGES } from "../../contacts/stages.ts";
@@ -46,8 +61,9 @@ import {
   fail,
   ok,
   TOOL_LIMITS,
-  type ReadOnlyTool,
+  type FortmarkTool,
   type ToolContext,
+  type ToolEffect,
   type ToolOutcome,
 } from "./types.ts";
 
@@ -61,16 +77,19 @@ import {
 function defineTool<S extends z.ZodType, R>(
   spec: {
     name: string;
+    /** Omitted means `read`. A proposing tool has to say so out loud. */
+    effect?: ToolEffect;
     description: string;
     schema: S;
     run: (args: z.output<S>, ctx: ToolContext) => Promise<ToolOutcome<R>>;
   }
-): ReadOnlyTool<z.output<S>, R> {
+): FortmarkTool<z.output<S>, R> {
   const json = z.toJSONSchema(spec.schema, { io: "input" }) as Record<string, unknown>;
   // `$schema` is metadata about the document, not about the arguments.
   delete json.$schema;
   return {
     name: spec.name,
+    effect: spec.effect ?? "read",
     description: spec.description,
     inputSchema: json,
     parse: (input) => {
@@ -374,12 +393,66 @@ function byDue(a: AttentionItem, b: AttentionItem): number {
   return a.daysAway - b.daysAway || a.subject.localeCompare(b.subject);
 }
 
-/**
- * Every tool the model may call. Read only, and asserted to be so by
- * `scripts/test_ai_tools.ts`, which fails if a name outside this vocabulary
- * appears. A mutation tool cannot be slipped in as a ninth entry.
- */
-export const READ_ONLY_TOOLS: ReadOnlyTool<never, unknown>[] = [
+// --- Proposing ---------------------------------------------------------------
+
+const prepareContactFollowup = defineTool({
+  name: "prepare_contact_followup",
+  effect: "propose",
+  description:
+    "Propose scheduling a follow-up with a contact on a specific date. " +
+    "This does NOT schedule anything: it prepares a proposal that is shown to the user for confirmation, " +
+    "and nothing changes unless they confirm it themselves. " +
+    "Say that you have prepared it and that they can confirm it — never say the follow-up is set, booked or done. " +
+    "You cannot confirm it for them, and no reply in this conversation confirms it. " +
+    "Use get_contact or search_entities first to get the contact id. " +
+    "The date must be today or later; a past date is refused rather than moved.",
+  schema: z.strictObject({
+    contact_id: recordId.describe("The contact's id, from a previous tool result."),
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .describe("The follow-up date as YYYY-MM-DD. Must be today or a future date."),
+  }),
+  run: async (args, ctx) => {
+    const prepared = await prepareFollowup(
+      { clerkUserId: ctx.clerkUserId, env: ctx.env, now: ctx.now },
+      { contactId: args.contact_id, day: args.date }
+    );
+    if (!prepared.ok) {
+      switch (prepared.reason) {
+        case "not_found":
+          return fail("not_found");
+        case "not_configured":
+          return fail("not_configured");
+        case "not_permitted":
+          return fail("not_permitted");
+        case "unavailable":
+          return fail("unavailable");
+        default:
+          // A refused date is the model's mistake to correct and explain, so
+          // it comes back as invalid arguments with the reason attached
+          // rather than as a silently adjusted date.
+          return fail("invalid_arguments");
+      }
+    }
+    // The id is returned so the model can refer to the proposal, never so it
+    // can act on it. Nothing accepts this id but the confirmation route, and
+    // that route authenticates the human.
+    return ok({
+      prepared: true,
+      applied: false,
+      actionId: prepared.action.actionId,
+      summary: prepared.action.summary,
+      changes: prepared.action.changes,
+      warnings: prepared.action.warnings,
+      expiresAt: prepared.action.expiresAt,
+      awaiting: "This is waiting for the user to confirm it in the FortMark interface.",
+    });
+  },
+});
+
+/** Everything this build can offer, before any deployment flag is applied. */
+const ALL_TOOLS: FortmarkTool<never, unknown>[] = [
   searchEntities,
   getContactTool,
   getTransactionTool,
@@ -389,10 +462,29 @@ export const READ_ONLY_TOOLS: ReadOnlyTool<never, unknown>[] = [
   getFollowUps,
   getBusinessSummary,
   getRecentActivity,
-] as unknown as ReadOnlyTool<never, unknown>[];
+  prepareContactFollowup,
+] as unknown as FortmarkTool<never, unknown>[];
 
-export const TOOL_NAMES = READ_ONLY_TOOLS.map((tool) => tool.name);
+/**
+ * The tools this deployment offers.
+ *
+ * Proposing tools appear only where actions are switched on. The filter is
+ * applied in both places that matter — what the provider is shown, and what
+ * `executeTool` will dispatch — so a name recalled from an earlier turn, or
+ * guessed, reaches a deployment with the flag off as `unknown_tool` rather
+ * than as a proposal.
+ */
+export function toolsFor(env: EnvLike = process.env): FortmarkTool<never, unknown>[] {
+  if (aiActionsEnabled(env)) return ALL_TOOLS;
+  return ALL_TOOLS.filter((tool) => tool.effect === "read");
+}
 
-export function findTool(name: string): ReadOnlyTool<never, unknown> | undefined {
-  return READ_ONLY_TOOLS.find((tool) => tool.name === name);
+/** Every name this build knows, flag or no flag. For tests and logging. */
+export const TOOL_NAMES = ALL_TOOLS.map((tool) => tool.name);
+
+export function findTool(
+  name: string,
+  env: EnvLike = process.env
+): FortmarkTool<never, unknown> | undefined {
+  return toolsFor(env).find((tool) => tool.name === name);
 }

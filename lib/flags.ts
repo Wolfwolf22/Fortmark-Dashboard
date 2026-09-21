@@ -96,6 +96,23 @@ export function sampleDashboardEnabled(env: EnvLike = process.env): boolean {
 }
 
 /**
+ * Permit AI-prepared actions — the model proposing a change for a human to
+ * confirm. Off means the prepare tool is not offered to any provider and the
+ * action routes refuse, so the assistant is read-only exactly as it was.
+ *
+ * Strict: only the exact string "1". This is the flag that lets a model's
+ * suggestion become a row a person can commit, and a typo should fail closed.
+ *
+ * It grants nothing on its own. Every prepared action is still authorized at
+ * preparation AND again at execution, still confirmed by a human through the
+ * application's own control, and still executed by FortMark rather than by the
+ * model.
+ */
+export function aiActionsEnabled(env: EnvLike = process.env): boolean {
+  return env.AI_ACTIONS_ENABLED === "1";
+}
+
+/**
  * Hand dashboard authorization to the database.
  *
  * Hard-disabled in Release 1. The constant below is the guard: even if the

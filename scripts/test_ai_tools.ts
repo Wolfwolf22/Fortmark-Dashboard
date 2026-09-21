@@ -30,12 +30,13 @@ import {
   toolResultPayload,
   type ToolRequest,
 } from "../lib/ai/tools/execute.ts";
-import { findTool, READ_ONLY_TOOLS, TOOL_NAMES } from "../lib/ai/tools/registry.ts";
+import { findTool, toolsFor, TOOL_NAMES } from "../lib/ai/tools/registry.ts";
+
 import {
   MAX_TOOL_CALLS_PER_ROUND,
   TOOL_ERROR_MEANING,
   TOOL_LIMITS,
-  type ReadOnlyTool,
+  type FortmarkTool,
   type ToolContext,
 } from "../lib/ai/tools/types.ts";
 import { businessSummary, contactDetail, transactionDetail } from "../lib/ai/tools/dto.ts";
@@ -45,6 +46,15 @@ import type { NeutralTurn, OpenedRound, TurnEvent } from "../lib/ai/providers/ty
 import { MAX_TOOL_ROUNDS } from "../lib/ai/provider.ts";
 import type { Lead, Transaction } from "../lib/data/types.ts";
 import type { BrokerageMetrics } from "../lib/metrics/types.ts";
+
+/**
+ * Every tool this build can offer, proposing ones included. The registry
+ * withholds those unless actions are switched on, and the withholding itself
+ * is asserted in `scripts/test_ai_actions.ts`; here we want the full surface
+ * under test, because a tool that is only sometimes offered must still obey
+ * every rule below whenever it IS offered.
+ */
+const ALL = toolsFor({ AI_ACTIONS_ENABLED: "1" });
 
 let passed = 0;
 const failures: string[] = [];
@@ -85,13 +95,23 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
 {
   const registry = code("lib/ai/tools/registry.ts");
 
-  check("the registry holds the tools F1 specified", TOOL_NAMES.length === 9);
+  const reads = ALL.filter((tool) => tool.effect === "read");
+  const proposes = ALL.filter((tool) => tool.effect === "propose");
+
+  check("the registry holds the nine read tools and the one proposing tool",
+    ALL.length === 10 && reads.length === 9 && proposes.length === 1);
   check("every tool name is unique", new Set(TOOL_NAMES).size === TOOL_NAMES.length);
-  check("every tool name reads as a read",
-    TOOL_NAMES.every((name) => /^(get|list|search)_/.test(name)));
-  check("no tool name suggests a side effect",
-    !TOOL_NAMES.some((name) =>
-      /(create|add|update|edit|change|set|delete|remove|send|email|upload|schedule|mark|log|complete|assign)/.test(name)));
+  check("every reading tool is named as a read",
+    reads.every((tool) => /^(get|list|search)_/.test(tool.name)));
+  check("no reading tool's name suggests a side effect",
+    !reads.some((tool) =>
+      /(create|add|update|edit|change|set|delete|remove|send|email|upload|schedule|mark|log|complete|assign)/.test(tool.name)));
+  // A proposing tool says "prepare" and nothing stronger. A model reads these
+  // names, and "schedule_followup" would invite it to report the thing as done.
+  check("the proposing tool is named as a proposal",
+    proposes.every((tool) => /^prepare_/.test(tool.name)));
+  check("no tool is named as an execution, at any flag setting",
+    !TOOL_NAMES.some((name) => /execute|confirm|apply|commit|approve/.test(name)));
 
   // The domain's own mutation functions. Importing one here is the only way a
   // write could reach the model, so their absence is the real assertion.
@@ -106,6 +126,12 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
   ];
   check("the registry imports no domain mutation",
     !MUTATIONS.some((fn) => new RegExp(`\\b${fn}\\b`).test(registry)));
+  // The proposing tool reaches its write the same way every other tool reaches
+  // its read: through one service, named here so that a second one cannot be
+  // added quietly.
+  check("the registry's only write path is the reviewed action service",
+    /import \{ prepareFollowup \} from "\.\.\/actions\/service\.ts";/.test(registry) &&
+      !/executePreparedAction|cancelPreparedAction/.test(registry));
   check("the registry writes no SQL of its own",
     !/\b(insert|update|delete)\s*\(/i.test(registry) && !/drizzle-orm/.test(registry));
   check("the registry reaches the database only through domain services",
@@ -117,13 +143,13 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
   }
 
   check("every tool has a description written for the model",
-    READ_ONLY_TOOLS.every((tool) => tool.description.length > 80));
+    ALL.every((tool) => tool.description.length > 80));
   check("every tool has an object schema",
-    READ_ONLY_TOOLS.every((tool) => tool.inputSchema.type === "object"));
+    ALL.every((tool) => tool.inputSchema.type === "object"));
   check("no schema accepts an unknown field",
-    READ_ONLY_TOOLS.every((tool) => tool.inputSchema.additionalProperties === false));
+    ALL.every((tool) => tool.inputSchema.additionalProperties === false));
   check("no schema carries JSON Schema metadata into the request",
-    READ_ONLY_TOOLS.every((tool) => !("$schema" in tool.inputSchema)));
+    ALL.every((tool) => !("$schema" in tool.inputSchema)));
 
   // The provider is not relied on to enforce the schema — strict mode limits
   // which keywords a tool may declare, and a keyword it refuses is a 400 on
@@ -158,7 +184,7 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
     "all_agents",
   ];
 
-  for (const tool of READ_ONLY_TOOLS) {
+  for (const tool of ALL) {
     const properties = Object.keys((tool.inputSchema.properties ?? {}) as Record<string, unknown>);
     check(`${tool.name} declares no scope field`,
       !properties.some((field) => SCOPE_FIELDS.includes(field)));
@@ -241,8 +267,13 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
             ? { contact_id: "c-1" }
             : name === "get_transaction"
               ? { transaction_id: "t-1" }
-              : {};
-      return [name, await executeTool(request(name, input), ctx)] as const;
+              : name === "prepare_contact_followup"
+                ? { contact_id: "c-1", date: "2026-04-01" }
+                : {};
+      // Proposing tools need the flag, or the honest answer is that no such
+      // tool exists here — which is asserted separately, in the action suite.
+      const env = name === "prepare_contact_followup" ? { AI_ACTIONS_ENABLED: "1" } : {};
+      return [name, await executeTool(request(name, input), { ...ctx, env })] as const;
     })
   );
 
@@ -281,15 +312,17 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
 
   // A tool that hangs, and a tool that throws. Injected, because neither can
   // be provoked from the real registry without a database to break.
-  const hangs: ReadOnlyTool = {
+  const hangs: FortmarkTool = {
     name: "hangs",
+    effect: "read",
     description: "never returns",
     parse: () => ({ ok: true, value: {} }),
     inputSchema: { type: "object" },
     run: () => new Promise(() => {}),
   };
-  const throws: ReadOnlyTool = {
+  const throws: FortmarkTool = {
     name: "throws",
+    effect: "read",
     description: "explodes",
     parse: () => ({ ok: true, value: {} }),
     inputSchema: { type: "object" },
@@ -298,7 +331,7 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
     },
   };
   const lookup = (name: string) =>
-    (name === "hangs" ? hangs : name === "throws" ? throws : undefined) as ReadOnlyTool<never, unknown> | undefined;
+    (name === "hangs" ? hangs : name === "throws" ? throws : undefined) as FortmarkTool<never, unknown> | undefined;
 
   const slow = await executeTool(request("hangs"), ctx, { tools: lookup, timeoutMs: 20 });
   check("a tool that overstays becomes a timeout, not a result",
@@ -627,32 +660,44 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
   })());
 }
 
-// --- The action boundary has not moved -----------------------------------------
+// --- The action boundary -------------------------------------------------------
 //
-// F2's contract types are committed ahead of their implementation so the
-// architecture can be checked rather than agreed with. These assertions are
-// the guard on that: the moment any of them fails, a mutation path exists that
-// nobody reviewed.
+// F2-B moved this boundary exactly once, and these assertions are what holds
+// it where it was put. The model may propose one thing. It may not commit
+// anything, and it may not learn how commits happen: the moment any of these
+// fails, a mutation path exists that nobody reviewed.
 {
   const registry = code("lib/ai/tools/registry.ts");
   const loop = code("lib/ai/loop.ts");
   const route = code("app/api/chat/route.ts");
   const contract = code("lib/ai/actions/contract.ts");
 
-  check("the model still holds exactly the nine read tools", TOOL_NAMES.length === 9);
-  check("no prepare-action tool is registered",
-    !TOOL_NAMES.some((name) => name.startsWith("prepare_")));
+  check("exactly one proposing tool exists", ALL.filter((t) => t.effect === "propose").length === 1);
   check("no execution primitive is registered",
     !TOOL_NAMES.some((name) => /execute|confirm|apply|commit/.test(name)));
-  check("the action contract is not wired into the assistant",
-    !registry.includes("actions/contract") &&
-      !loop.includes("actions/contract") &&
-      !route.includes("actions/contract"));
+
+  // The three files the model's turn runs through. None of them may so much as
+  // mention committing: not the registry it is offered, not the loop that runs
+  // it, not the route that streams it.
+  // Note `executeTool` is the read-tool dispatcher and is expected here; what
+  // must be absent is any reference to the action service's commit functions
+  // or to the API that fronts them.
+  const EXECUTION = /executePreparedAction|cancelPreparedAction|api\/ai\/actions/;
+  check("the assistant's own path cannot commit an action",
+    !EXECUTION.test(registry) && !EXECUTION.test(loop) && !EXECUTION.test(route));
   check("the action contract executes nothing",
     !/\bfunction\b/.test(contract) && !/=>/.test(contract) && !/\bawait\b/.test(contract));
-  check("no action table has been migrated ahead of review",
-    !readFileSync("lib/db/schema.ts", "utf8").includes("ai_prepared_actions"));
-  check("no action route exists yet", !existsSync("app/api/ai"));
+
+  // Committing lives behind its own route, under its own authentication, and
+  // it is reached by a person rather than by a turn.
+  check("execution is a route of its own",
+    existsSync("app/api/ai/actions/[id]/execute/route.ts"));
+  check("the execute route authenticates its own caller",
+    /requireCaller\(\)/.test(code("app/api/ai/actions/[id]/execute/route.ts")));
+  check("the execute route takes nothing from its request body", (() => {
+    const src = code("app/api/ai/actions/[id]/execute/route.ts");
+    return !/request\.json\(\)/.test(src) && /_request: Request/.test(src);
+  })());
 
   // The two properties the types are meant to make unspellable.
   check("an action that needs no confirmation cannot be expressed",

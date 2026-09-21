@@ -30,7 +30,7 @@ import "server-only";
 import OpenAI from "openai";
 import type { Responses } from "openai/resources/responses/responses";
 import { AI_MAX_TOKENS, AI_SYSTEM_PROMPT, AI_EFFORT } from "../provider.ts";
-import { READ_ONLY_TOOLS } from "../tools/registry.ts";
+import type { FortmarkTool } from "../tools/types.ts";
 import type {
   AiProvider,
   NeutralToolCall,
@@ -46,10 +46,13 @@ export type WireEvent = Responses.ResponseStreamEvent;
 export function openaiProvider(
   apiKey: string,
   model: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  registry: FortmarkTool<never, unknown>[]
 ): AiProvider {
   const client = new OpenAI({ apiKey });
-  const tools = toolDefinitions();
+  // Which tools exist is FortMark's decision, made before the adapter is
+  // constructed. An adapter never consults a flag or the environment.
+  const tools = toolDefinitions(registry);
 
   return {
     name: "openai",
@@ -100,8 +103,10 @@ export function openaiProvider(
 }
 
 /** The tools, rendered into OpenAI's shape from the one registry. */
-export function toolDefinitions(): Responses.FunctionTool[] {
-  return READ_ONLY_TOOLS.map((tool) => ({
+export function toolDefinitions(
+  registry: FortmarkTool<never, unknown>[]
+): Responses.FunctionTool[] {
+  return registry.map((tool) => ({
     type: "function" as const,
     name: tool.name,
     description: tool.description,

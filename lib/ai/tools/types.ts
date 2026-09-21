@@ -3,11 +3,15 @@
  *
  * Three rules shape this file, and none of them is negotiable.
  *
- * **Every tool is read only.** There is no create, update, delete, send or
- * upload in this registry, and none is added "for later": a mutation tool that
- * exists is a mutation tool the model can call. `ReadOnlyTool` has no field
- * that could describe a side effect, so a write tool cannot be expressed here
- * without changing this type first — which is the review gate.
+ * **No tool changes a record.** A tool either reads, or it proposes — and
+ * `ToolEffect` has exactly those two members. There is no create, update,
+ * delete, send or upload here, and none is added "for later": a mutation tool
+ * that exists is a mutation tool the model can call. A proposing tool writes
+ * only to `ai_prepared_actions`, which is a row describing a change that has
+ * not happened and will not happen until a person confirms it through a route
+ * no tool can name. Executing is not an effect a tool can declare, so an
+ * execution tool cannot be expressed here without changing this type first —
+ * which is the review gate.
  *
  * **The model cannot choose its own authorization scope.** A tool receives a
  * `ToolContext` carrying the *verified* Clerk user id and nothing else about
@@ -87,6 +91,16 @@ export const ok = <T>(data: T): ToolOutcome<T> => ({ ok: true, data });
 export const fail = <T = never>(error: ToolErrorCode): ToolOutcome<T> => ({ ok: false, error });
 
 /**
+ * What a tool is permitted to do.
+ *
+ * `read` answers a question and leaves the database as it found it.
+ * `propose` additionally writes one `ai_prepared_actions` row: a described,
+ * expiring, single-use proposal that changes nothing until a human confirms
+ * it. There is deliberately no third member — see the header.
+ */
+export type ToolEffect = "read" | "propose";
+
+/**
  * One tool.
  *
  * `schema` is the single source of truth for what the model may send: the
@@ -94,8 +108,10 @@ export const fail = <T = never>(error: ToolErrorCode): ToolOutcome<T> => ({ ok: 
  * validates the arguments that come back. There is no path where a tool runs
  * on an argument object that was not parsed by its own schema.
  */
-export interface ReadOnlyTool<A = unknown, R = unknown> {
+export interface FortmarkTool<A = unknown, R = unknown> {
   name: string;
+  /** Declared, not inferred. Asserted by `scripts/test_ai_tools.ts`. */
+  effect: ToolEffect;
   /** Written for the model: what it answers, and what it deliberately does not. */
   description: string;
   /** Parses and narrows the model's arguments. Rejection is a tool error. */

@@ -107,6 +107,16 @@ const RELEASE_C_TABLES = [
  *  nullable contact link on transaction_parties. */
 const RELEASE_D_TABLES = ["contacts", "contact_opportunities", "contact_activities"];
 
+/**
+ * Release F2-B: the prepared-action table (migration 0007).
+ *
+ * One table. It holds proposals an assistant has prepared and a human has not
+ * yet confirmed, and the execute path depends on being able to claim a row
+ * conditionally — so a deployment where this table is missing must fail here,
+ * loudly, rather than at the moment someone presses Confirm.
+ */
+const RELEASE_F2B_TABLES = ["ai_prepared_actions"];
+
 const force = process.argv.includes("--force");
 
 /**
@@ -403,6 +413,12 @@ try {
     bail(`MISSING Release D contact tables: ${missingD.join(", ")}`);
   }
   console.log("[migrate] all three Release D contact tables present");
+
+  const missingF2B = RELEASE_F2B_TABLES.filter((t) => !present.includes(t));
+  if (missingF2B.length > 0) {
+    bail(`MISSING Release F2-B action tables: ${missingF2B.join(", ")}`);
+  }
+  console.log("[migrate] Release F2-B prepared-action table present");
 
   // Column-level verification. Names only — never a value.
   const colRows = await sql`

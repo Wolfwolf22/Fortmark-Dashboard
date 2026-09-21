@@ -20,7 +20,7 @@ import "server-only";
  * the result, which is the record itself.
  */
 import { findTool } from "./registry.ts";
-import type { ReadOnlyTool } from "./types.ts";
+import type { FortmarkTool } from "./types.ts";
 import {
   MAX_TOOL_CALLS_PER_ROUND,
   TOOL_ERROR_MEANING,
@@ -57,7 +57,7 @@ export interface ToolExecution {
  * the application passes anything but the defaults.
  */
 export interface ExecuteOptions {
-  tools?: (name: string) => ReadOnlyTool<never, unknown> | undefined;
+  tools?: (name: string) => FortmarkTool<never, unknown> | undefined;
   timeoutMs?: number;
 }
 
@@ -97,7 +97,11 @@ export async function executeTool(
     return { id: request.id, name: request.name, outcome, ms };
   };
 
-  const tool = (options.tools ?? findTool)(request.name);
+  // Resolved against what THIS deployment offers, not against every name the
+  // build knows: a tool the flag withholds is unknown here too, so a name
+  // carried over from another deployment or recalled from an earlier turn
+  // cannot reach a service.
+  const tool = (options.tools ?? ((name: string) => findTool(name, ctx.env)))(request.name);
   if (!tool) return done({ ok: false, error: "unknown_tool" });
   if (request.invalid) return done({ ok: false, error: "invalid_arguments" });
 

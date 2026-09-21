@@ -18,7 +18,7 @@ import "server-only";
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { AI_EFFORT, AI_MAX_TOKENS, AI_SYSTEM_PROMPT } from "../provider.ts";
-import { READ_ONLY_TOOLS } from "../tools/registry.ts";
+import type { FortmarkTool } from "../tools/types.ts";
 import type {
   AiProvider,
   NeutralToolCall,
@@ -34,10 +34,13 @@ export type WireEvent = Anthropic.Beta.BetaRawMessageStreamEvent;
 export function anthropicProvider(
   apiKey: string,
   model: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  registry: FortmarkTool<never, unknown>[]
 ): AiProvider {
   const client = new Anthropic({ apiKey });
-  const tools = toolDefinitions();
+  // Which tools exist is FortMark's decision, made before the adapter is
+  // constructed. An adapter never consults a flag or the environment.
+  const tools = toolDefinitions(registry);
 
   return {
     name: "anthropic",
@@ -86,8 +89,10 @@ export function anthropicProvider(
 }
 
 /** The tools, rendered into Anthropic's shape from the one registry. */
-export function toolDefinitions(): Anthropic.Beta.BetaTool[] {
-  return READ_ONLY_TOOLS.map((tool) => ({
+export function toolDefinitions(
+  registry: FortmarkTool<never, unknown>[]
+): Anthropic.Beta.BetaTool[] {
+  return registry.map((tool) => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.inputSchema as Anthropic.Beta.BetaTool["input_schema"],

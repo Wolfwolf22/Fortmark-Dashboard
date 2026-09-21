@@ -44,7 +44,7 @@ import { assistantHealth } from "../lib/ai/availability.ts";
 import { runAssistant } from "../lib/ai/loop.ts";
 import { EMPTY_TURN_TEXT, INTERRUPTED_TEXT, TOOL_BUDGET_TEXT } from "../lib/ai/stream.ts";
 import { MAX_TOOL_ROUNDS } from "../lib/ai/provider.ts";
-import { TOOL_NAMES } from "../lib/ai/tools/registry.ts";
+import { TOOL_NAMES, toolsFor } from "../lib/ai/tools/registry.ts";
 import type { ToolContext } from "../lib/ai/tools/types.ts";
 import type { NeutralTurn, OpenedRound, TurnEvent } from "../lib/ai/providers/types.ts";
 import { startAnthropicStub, startOpenaiStub } from "./provider-stubs.ts";
@@ -267,8 +267,11 @@ check("each vendor's credential variable is named once, in one place",
 // One tool registry, two renderings
 // =============================================================================
 {
-  const anthropic = anthropicTools();
-  const openai = openaiTools();
+  // The same registry both adapters are handed in production, with actions on
+  // so the proposing tool is part of the comparison.
+  const registry = toolsFor({ AI_ACTIONS_ENABLED: "1" });
+  const anthropic = anthropicTools(registry);
+  const openai = openaiTools(registry);
 
   check("both vendors are offered every FortMark tool",
     anthropic.length === TOOL_NAMES.length && openai.length === TOOL_NAMES.length);
@@ -286,7 +289,7 @@ check("each vendor's credential variable is named once, in one place",
   const openaiSrc = code("lib/ai/providers/openai.ts");
   for (const [name, src] of [["anthropic", anthropicSrc], ["openai", openaiSrc]] as const) {
     check(`the ${name} adapter defines no tool of its own`,
-      /READ_ONLY_TOOLS\.map/.test(src) && !/name: "(get|list|search)_/.test(src));
+      /registry\.map/.test(src) && !/name: "(get|list|search)_/.test(src));
     check(`the ${name} adapter reads no record and resolves no actor`,
       !/resolveActor|visibleTo|getContact|listTransactions|brokerageMetrics|\bdb\b/.test(src));
     // It parses argument JSON into an object — that is translation — but it
@@ -682,7 +685,7 @@ for (const scenario of SCENARIOS) {
   // The official SDK reads this itself; the adapter is unchanged.
   process.env.OPENAI_BASE_URL = stub.baseUrl;
   const { openaiProvider } = await import("../lib/ai/providers/openai.ts");
-  const provider = openaiProvider(OPENAI_KEY, "gpt-5.5", new AbortController().signal);
+  const provider = openaiProvider(OPENAI_KEY, "gpt-5.5", new AbortController().signal, toolsFor({ AI_ACTIONS_ENABLED: "1" }));
 
   const round = await provider.openRound(
     [{ role: "user", text: "how is my month going?" }],
@@ -737,7 +740,7 @@ for (const scenario of SCENARIOS) {
 
   process.env.ANTHROPIC_BASE_URL = stub.baseUrl;
   const { anthropicProvider } = await import("../lib/ai/providers/anthropic.ts");
-  const provider = anthropicProvider(ANTHROPIC_KEY, "claude-opus-5", new AbortController().signal);
+  const provider = anthropicProvider(ANTHROPIC_KEY, "claude-opus-5", new AbortController().signal, toolsFor({ AI_ACTIONS_ENABLED: "1" }));
 
   const round = await provider.openRound(
     [{ role: "user", text: "how is my month going?" }],
