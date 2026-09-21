@@ -12,7 +12,7 @@ import { MessageBubble } from "@/components/ai/message-bubble";
 import { ThreadSidebar } from "@/components/ai/thread-sidebar";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { sendMessage } from "@/lib/ai/client";
+import { ChatError, sendMessage } from "@/lib/ai/client";
 import { useAiStore } from "@/lib/ai/store";
 import { ChatRole } from "@/lib/ai/types";
 
@@ -81,10 +81,14 @@ export default function Page() {
         if (!text) removeMessage(threadId, assistantId);
       } else {
         removeMessage(threadId, assistantId);
+        // A ChatError already carries the route's own reason, phrased for a
+        // person; anything else is a transport failure worth retrying.
         setError(
-          e instanceof Error
-            ? `${e.message}. Check your connection and send it again.`
-            : "The reply could not be loaded. Send it again."
+          e instanceof ChatError
+            ? e.message
+            : e instanceof Error
+              ? `${e.message}. Check your connection and send it again.`
+              : "The reply could not be loaded. Send it again."
         );
       }
     } finally {

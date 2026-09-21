@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { ClipboardList, FileText, HelpCircle, Mail, MessageSquare, Scale } from "lucide-react";
+import { CalendarClock, ClipboardList, FileText, Mail, MessageSquare, TrendingUp } from "lucide-react";
 
 /**
  * Suggestion chips under the AI composer. Edit this array — and only this
@@ -7,12 +7,12 @@ import { ClipboardList, FileText, HelpCircle, Mail, MessageSquare, Scale } from 
  * composer (falling back to `label` when `prompt` is empty) and focuses the
  * caret at the end. It never auto-sends.
  *
- * Every chip must be something the assistant can actually do TODAY. No tools
- * are connected yet — it cannot read listings, transactions, leads or
- * documents — so nothing here asks it to look anything up. These are the
- * drafting, structuring and explaining tasks it does well without data. When
- * listing tools land, chips that search or compare listings belong here;
- * not before.
+ * Every chip must be something the assistant can actually do TODAY. The first
+ * three now depend on real records, because the assistant has read-only tools
+ * over this user's contacts, transactions, deadlines and follow-ups; the rest
+ * need no data at all. Nothing here asks it to read a document, send an email
+ * or change a record — it cannot do any of those, and a chip that implies
+ * otherwise teaches the wrong thing about the product.
  */
 export interface Suggestion {
   id: string;
@@ -25,6 +25,30 @@ export interface Suggestion {
 }
 
 export const SUGGESTIONS: Suggestion[] = [
+  {
+    id: "needs-attention",
+    label: "What needs my attention?",
+    prompt:
+      "What needs my attention this week? Check my transaction deadlines and any follow-ups that are due, and tell me what is overdue first.",
+    icon: CalendarClock,
+    description: "Deadlines and follow-ups, overdue first.",
+  },
+  {
+    id: "month-so-far",
+    label: "How is my month going?",
+    prompt:
+      "Summarize how my month is going: what has closed, what is scheduled to close, and where my pipeline stands. Say plainly if anything could not be read.",
+    icon: TrendingUp,
+    description: "Closed, scheduled, and pipeline to date.",
+  },
+  {
+    id: "pipeline-review",
+    label: "Walk my pipeline",
+    prompt:
+      "Walk me through my active transactions, newest first. For each one give the stage, the client, and the next deadline if there is one.",
+    icon: ClipboardList,
+    description: "Every active deal, with its next deadline.",
+  },
   {
     id: "price-reduction-email",
     label: "Draft a price-reduction email",
@@ -40,30 +64,6 @@ export const SUGGESTIONS: Suggestion[] = [
       "Draft a short follow-up to a buyer's agent after Saturday's showing. Keep it to one paragraph, state the next step, and don't pressure.",
     icon: MessageSquare,
     description: "One paragraph, next step stated, no pressure.",
-  },
-  {
-    id: "cma-structure",
-    label: "Structure a CMA",
-    prompt:
-      "Lay out the structure of a comparative market analysis I can fill in: the sections, what each needs, and how to present the adjustments. I'll supply the comps.",
-    icon: Scale,
-    description: "The sections and adjustment grid, for you to fill in.",
-  },
-  {
-    id: "listing-appointment-checklist",
-    label: "Listing appointment checklist",
-    prompt:
-      "Give me a checklist for a listing appointment on a South Florida single-family home: what to bring, what to ask, and what to leave with the seller.",
-    icon: ClipboardList,
-    description: "What to bring, ask, and leave behind.",
-  },
-  {
-    id: "explain-inspection",
-    label: "Explain the inspection period",
-    prompt:
-      "Explain to a first-time buyer what happens during the inspection period on a Florida residential contract, in plain language, and what decisions they'll face.",
-    icon: HelpCircle,
-    description: "Plain language for a first-time buyer.",
   },
   {
     id: "offer-summary",

@@ -291,19 +291,19 @@ if (url && url !== "[SENSITIVE]") {
   }
 
   // The assistant provider. Both halves are required, so report both and say
-  // which way the route will actually resolve — "flag on, key absent" is a
-  // silent fallback to the mock, and that is not obvious from two booleans.
+  // which way the route will actually resolve. There is no fallback any more:
+  // without both, the assistant answers nothing and says so.
   {
     const flag = strict("AI_CHAT_PROVIDER_ENABLED");
     const key = Boolean(process.env.ANTHROPIC_API_KEY?.trim());
     console.log(
       `[migrate] assistant AI_CHAT_PROVIDER_ENABLED=${flag} ANTHROPIC_API_KEY present=${key} ` +
-        `-> ${flag === "on" && key ? "provider" : "mock replies"}`
+        `-> ${flag === "on" && key ? "answers over real records" : "not connected"}`
     );
     if (flag === "on" && !key) {
       console.log(
         "[migrate] WARNING: the assistant provider is enabled but ANTHROPIC_API_KEY is absent — " +
-          "the assistant will serve built-in mock replies, which read as real answers"
+          "the assistant will refuse every turn as not_configured"
       );
     }
   }

@@ -3,6 +3,7 @@ import { contactsSource } from "@/lib/contacts/http";
 import { transactionsSource } from "@/lib/transactions/http";
 import { listingSource } from "@/lib/mls/config";
 import { sampleDashboardEnabled } from "@/lib/flags";
+import { assistantAvailability } from "@/lib/ai/availability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,6 +38,8 @@ export async function GET() {
         listings: listingSource(),
         /** Whether Home may show the generated sample brokerage. */
         homeMetrics: sampleDashboardEnabled() ? "sample-permitted" : "real-only",
+        /** Whether the assistant has a model behind it. It has no other mode. */
+        assistant: assistantAvailability(),
       },
     },
     { headers: { "Cache-Control": "no-store" } }
