@@ -482,6 +482,30 @@ check("the identity card is still permanent", (() => {
   return /SortableContext items=\{visible\}/.test(src) && !/SortableWidget[^>]*fixedLead/.test(src);
 })());
 
+// --- Enum columns are never compared against a bound array ------------------
+//
+// `stage` is a Postgres enum. Interpolating a JavaScript array into a raw
+// comparison binds it as `text[]`, and Postgres rejects the whole statement
+// with `operator does not exist: transaction_stage = text`. The aggregate
+// throws, `attempt()` reports `unavailable`, and the dashboard truthfully
+// says it cannot read your transactions — for a reason that has nothing to do
+// with the database. It fails identically with zero rows, which is why it
+// survived until a live run asked the query with a real actor.
+check("no metrics query compares an enum column to a bound array", (() => {
+  const sources = [code("lib/transactions/metrics.ts"), code("lib/contacts/metrics.ts")];
+  return sources.every((src) => !/=\s*any\(\$\{/.test(src));
+})());
+check("stage predicates go through drizzle's typed helpers", (() => {
+  const txn = code("lib/transactions/metrics.ts");
+  const contacts = code("lib/contacts/metrics.ts");
+  return (
+    /inArray\(transactions\.stage, ACTIVE/.test(txn) &&
+    /eq\(transactions\.stage, PAUSED_STAGE\)/.test(txn) &&
+    /inArray\(contacts\.stage, ACTIVE_CLIENTS/.test(contacts) &&
+    /inArray\(contacts\.stage, OPEN_PIPELINE/.test(contacts)
+  );
+})());
+
 // --- The readiness probe -----------------------------------------------------------------
 check("the probe reports sources and nothing else", (() => {
   const src = code("app/api/health/route.ts");

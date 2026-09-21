@@ -59,15 +59,34 @@ export const DEADLINE_SOON_DAYS = 7;
  * costs nothing extra and the numbers cannot disagree with each other by
  * being taken at different moments.
  */
+/**
+ * NOTE ON THE STAGE PREDICATES BELOW.
+ *
+ * They read `${inArray(...)}` rather than the obvious `= any(${ACTIVE})`,
+ * because `stage` is a Postgres ENUM and the obvious form does not work: an
+ * interpolated JavaScript array binds as `text[]`, and Postgres refuses with
+ * `operator does not exist: transaction_stage = text`. The whole aggregate
+ * throws, which `attempt()` upstream faithfully reports as `unavailable` —
+ * so the dashboard said "we could not read your transactions" on every
+ * request, truthfully, for a reason that had nothing to do with the database
+ * being reachable.
+ *
+ * It was invisible for a long time because it fails identically whether or
+ * not any rows exist, and nothing had yet asked this query with a resolved
+ * actor against a populated database. Live certification did, and found it.
+ *
+ * `inArray` and `eq` emit correctly-typed placeholders. Keep using them here;
+ * a raw comparison against an enum column is the bug, not the style.
+ */
 async function totals(ctx: Ctx, now: Date) {
   const month = monthWindow(now);
   const rows = await ctx.db
     .select({
-      activeCount: sql<number>`count(*) filter (where ${transactions.stage} = any(${ACTIVE}))`,
-      onHoldCount: sql<number>`count(*) filter (where ${transactions.stage} = ${PAUSED_STAGE})`,
-      activeVolume: sql<string>`coalesce(sum(${transactions.contractPriceCents}) filter (where ${transactions.stage} = any(${ACTIVE})), 0)::text`,
-      unpriced: sql<number>`count(*) filter (where ${transactions.stage} = any(${ACTIVE}) and ${transactions.contractPriceCents} is null)`,
-      scheduled: sql<number>`count(*) filter (where ${transactions.stage} = any(${ACTIVE}) and ${transactions.closingDate} >= ${month.start} and ${transactions.closingDate} <= ${month.end})`,
+      activeCount: sql<number>`count(*) filter (where ${inArray(transactions.stage, ACTIVE as TransactionStage[])})`,
+      onHoldCount: sql<number>`count(*) filter (where ${eq(transactions.stage, PAUSED_STAGE)})`,
+      activeVolume: sql<string>`coalesce(sum(${transactions.contractPriceCents}) filter (where ${inArray(transactions.stage, ACTIVE as TransactionStage[])}), 0)::text`,
+      unpriced: sql<number>`count(*) filter (where ${inArray(transactions.stage, ACTIVE as TransactionStage[])} and ${transactions.contractPriceCents} is null)`,
+      scheduled: sql<number>`count(*) filter (where ${inArray(transactions.stage, ACTIVE as TransactionStage[])} and ${transactions.closingDate} >= ${month.start} and ${transactions.closingDate} <= ${month.end})`,
       closedCount: sql<number>`count(*) filter (where ${transactions.stage} = 'closed' and ${transactions.closedDate} >= ${month.start} and ${transactions.closedDate} <= ${month.end})`,
       closedVolume: sql<string>`coalesce(sum(${transactions.contractPriceCents}) filter (where ${transactions.stage} = 'closed' and ${transactions.closedDate} >= ${month.start} and ${transactions.closedDate} <= ${month.end}), 0)::text`,
     })
@@ -282,7 +301,7 @@ export async function transactionLeaderboard(ctx: Ctx, now: Date): Promise<Leade
       agentUserId: transactions.agentUserId,
       closedCount: sql<number>`count(*) filter (where ${transactions.stage} = 'closed' and ${transactions.closedDate} >= ${start})`,
       closedVolume: sql<string>`coalesce(sum(${transactions.contractPriceCents}) filter (where ${transactions.stage} = 'closed' and ${transactions.closedDate} >= ${start}), 0)::text`,
-      activeCount: sql<number>`count(*) filter (where ${transactions.stage} = any(${ACTIVE}))`,
+      activeCount: sql<number>`count(*) filter (where ${inArray(transactions.stage, ACTIVE as TransactionStage[])})`,
     })
     .from(transactions)
     .where(visibleTo(ctx.actor))

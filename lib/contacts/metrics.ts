@@ -48,6 +48,12 @@ function endOfToday(now: Date): Date {
   return new Date(`${dayKey(now)}T23:59:59.999Z`);
 }
 
+/**
+ * The stage predicates use `${inArray(...)}` rather than `= any(${...})` for
+ * the reason documented in `lib/transactions/metrics.ts`: `stage` is a
+ * Postgres enum, an interpolated array binds as `text[]`, and the comparison
+ * is rejected outright — taking the whole aggregate down with it.
+ */
 export async function contactMetrics(ctx: Ctx, now: Date): Promise<ContactMetrics> {
   const monthStart = monthStartInstant(now);
   const dueBy = endOfToday(now);
@@ -55,9 +61,9 @@ export async function contactMetrics(ctx: Ctx, now: Date): Promise<ContactMetric
   const [agg, byStage, bySource] = await Promise.all([
     ctx.db
       .select({
-        activeClients: sql<number>`count(*) filter (where ${contacts.stage} = any(${ACTIVE_CLIENTS}))`,
+        activeClients: sql<number>`count(*) filter (where ${inArray(contacts.stage, ACTIVE_CLIENTS as ContactStage[])})`,
         newThisMonth: sql<number>`count(*) filter (where ${contacts.createdAt} >= ${monthStart})`,
-        followUpsDue: sql<number>`count(*) filter (where ${contacts.nextFollowUpAt} is not null and ${contacts.nextFollowUpAt} <= ${dueBy} and ${contacts.stage} = any(${OPEN_PIPELINE}))`,
+        followUpsDue: sql<number>`count(*) filter (where ${contacts.nextFollowUpAt} is not null and ${contacts.nextFollowUpAt} <= ${dueBy} and ${inArray(contacts.stage, OPEN_PIPELINE as ContactStage[])})`,
       })
       .from(contacts)
       .where(visibleTo(ctx.actor)),
