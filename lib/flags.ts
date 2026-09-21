@@ -67,6 +67,15 @@ export function transactionsDatabaseEnabled(env: EnvLike = process.env): boolean
 }
 
 /**
+ * Read/write brokerage contacts (leads, clients, past clients) in the database.
+ * Requires the profile database flag for the same reason transactions do.
+ * Off ⇒ the leads screen keeps the labelled sample set.
+ */
+export function contactsDatabaseEnabled(env: EnvLike = process.env): boolean {
+  return enabled("CONTACTS_DATABASE_ENABLED", env) && profileDatabaseEnabled(env);
+}
+
+/**
  * Hand dashboard authorization to the database.
  *
  * Hard-disabled in Release 1. The constant below is the guard: even if the

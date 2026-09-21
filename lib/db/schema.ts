@@ -9,6 +9,7 @@
  */
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   date,
@@ -271,6 +272,10 @@ export const RELEASE_1_AUDIT_EVENTS = [
   "transaction_created",
   "transaction_updated",
   "transaction_stage_changed",
+  // Release D — contacts.
+  "contact_created",
+  "contact_updated",
+  "contact_stage_changed",
 ] as const;
 
 export type AuditEventType = (typeof RELEASE_1_AUDIT_EVENTS)[number];
@@ -467,9 +472,14 @@ export const transactionParties = pgTable(
     /** The principal for this role when several share it (two buyers). */
     isPrimary: boolean("is_primary").notNull().default(false),
     notes: text("notes"),
+    /** Release D: the contact this party is, once linked. Additive, nullable. */
+    contactId: uuid("contact_id").references((): AnyPgColumn => contacts.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("transaction_parties_transaction_idx").on(t.transactionId)]
+  (t) => [
+    index("transaction_parties_transaction_idx").on(t.transactionId),
+    index("transaction_parties_contact_idx").on(t.contactId),
+  ]
 );
 
 // --- transaction_deadlines ----------------------------------------------------
@@ -523,6 +533,160 @@ export const transactionEvents = pgTable(
   },
   (t) => [index("transaction_events_transaction_created_idx").on(t.transactionId, t.createdAt)]
 );
+
+// ===========================================================================
+// Release D — Contacts (the people layer)
+//
+// One person, one row, whatever they are to the brokerage this month. A
+// contact has a lifecycle stage (the relationship) and any number of
+// opportunities (the needs): the same person can be a buyer in Fort
+// Lauderdale and a seller in Brickell at once, and a past client next year.
+// Activities are the history that "last contacted" and follow-ups are read
+// from, never a column someone remembers to update.
+//
+// Scoped like transactions: brokerage key and assigned agent on every row.
+// ===========================================================================
+
+export const contactStage = pgEnum("contact_stage", [
+  "lead",
+  "contacted",
+  "qualified",
+  "appointment",
+  "representation",
+  "active_client",
+  "under_contract",
+  "closed",
+  "past_client",
+  "lost",
+  "archived",
+]);
+
+export const contactSource = pgEnum("contact_source", [
+  "referral",
+  "sphere",
+  "sign_call",
+  "website",
+  "open_house",
+  "past_client",
+  "social",
+  "advertising",
+  "walk_in",
+  "other",
+]);
+
+export const opportunityKind = pgEnum("opportunity_kind", [
+  "buyer",
+  "seller",
+  "landlord",
+  "tenant",
+  "investor",
+  "commercial_buyer",
+  "commercial_seller",
+  "commercial_tenant",
+  "commercial_landlord",
+  "referral_source",
+]);
+
+export const opportunityStatus = pgEnum("opportunity_status", ["open", "won", "lost", "dormant"]);
+
+export const contactActivityKind = pgEnum("contact_activity_kind", [
+  "call",
+  "email",
+  "sms",
+  "meeting",
+  "showing",
+  "note",
+  "status_change",
+  "task",
+  "system",
+]);
+
+export const contacts = pgTable(
+  "contacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brokerageKey: text("brokerage_key").notNull().default(FORTMARK_BROKERAGE_KEY),
+    assignedAgentUserId: uuid("assigned_agent_user_id")
+      .notNull()
+      .references(() => dashboardUsers.id, { onDelete: "restrict" }),
+    createdByUserId: uuid("created_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+    updatedByUserId: uuid("updated_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    /** How they like to be addressed; shown over the legal name when set. */
+    preferredName: text("preferred_name"),
+    email: text("email"),
+    /** Normalised to E.164 on write. */
+    phoneE164: text("phone_e164"),
+    company: text("company"),
+    source: contactSource("source").notNull().default("other"),
+    stage: contactStage("stage").notNull().default("lead"),
+    /** Free-form labels, trimmed strings. */
+    tags: jsonb("tags").$type<string[]>().notNull().default([]),
+    notes: text("notes"),
+    /** Derived from activities on write; read here so lists need no join. */
+    lastContactAt: timestamp("last_contact_at", { withTimezone: true }),
+    nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("contacts_brokerage_stage_idx").on(t.brokerageKey, t.stage),
+    index("contacts_agent_idx").on(t.assignedAgentUserId),
+    index("contacts_last_contact_idx").on(t.lastContactAt),
+    index("contacts_email_idx").on(t.email),
+  ]
+);
+
+export const contactOpportunities = pgTable(
+  "contact_opportunities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: opportunityKind("kind").notNull(),
+    status: opportunityStatus("status").notNull().default("open"),
+    /** Where — a neighbourhood, city or building, as the person said it. */
+    area: text("area"),
+    budgetMinCents: bigint("budget_min_cents", { mode: "number" }),
+    budgetMaxCents: bigint("budget_max_cents", { mode: "number" }),
+    timeframe: text("timeframe"),
+    notes: text("notes"),
+    /** The deal this need became, once it did. */
+    transactionId: uuid("transaction_id").references(() => transactions.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("contact_opportunities_contact_idx").on(t.contactId),
+    index("contact_opportunities_transaction_idx").on(t.transactionId),
+  ]
+);
+
+export const contactActivities = pgTable(
+  "contact_activities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    opportunityId: uuid("opportunity_id").references(() => contactOpportunities.id, { onDelete: "set null" }),
+    actorUserId: uuid("actor_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+    kind: contactActivityKind("kind").notNull(),
+    /** One line a person wrote or the system stated. */
+    summary: text("summary").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Non-sensitive context only, scrubbed as audit metadata is. */
+    safeMetadata: jsonb("safe_metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("contact_activities_contact_occurred_idx").on(t.contactId, t.occurredAt)]
+);
+
+export type ContactRow = typeof contacts.$inferSelect;
+export type ContactOpportunityRow = typeof contactOpportunities.$inferSelect;
+export type ContactActivityRow = typeof contactActivities.$inferSelect;
 
 export type TransactionRow = typeof transactions.$inferSelect;
 export type TransactionInsert = typeof transactions.$inferInsert;

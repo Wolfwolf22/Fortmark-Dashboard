@@ -103,6 +103,10 @@ const RELEASE_C_TABLES = [
   "transaction_events",
 ];
 
+/** Release D contact tables (migration 0006). Additive: three tables plus a
+ *  nullable contact link on transaction_parties. */
+const RELEASE_D_TABLES = ["contacts", "contact_opportunities", "contact_activities"];
+
 const force = process.argv.includes("--force");
 
 /**
@@ -246,6 +250,13 @@ if (url && url !== "[SENSITIVE]") {
   console.log(
     `[migrate] flags PROFILE_IMAGE_UPLOAD_ENABLED=${strict("PROFILE_IMAGE_UPLOAD_ENABLED")}`
   );
+  {
+    const c = on("CONTACTS_DATABASE_ENABLED");
+    const profileDb = on("PROFILE_DATABASE_ENABLED");
+    console.log(
+      `[migrate] contacts CONTACTS_DATABASE_ENABLED=${c} PROFILE_DATABASE_ENABLED=${profileDb} -> ${c === "on" && profileDb === "on" ? "database" : "sample data"}`
+    );
+  }
   // Transactions require the profile database (deals are owned by
   // dashboard_users rows). Report the pair so "on but inert" is visible.
   {
@@ -373,6 +384,12 @@ try {
     bail(`MISSING Release C transaction tables: ${missingC.join(", ")}`);
   }
   console.log("[migrate] all four Release C transaction tables present");
+
+  const missingD = RELEASE_D_TABLES.filter((t) => !present.includes(t));
+  if (missingD.length > 0) {
+    bail(`MISSING Release D contact tables: ${missingD.join(", ")}`);
+  }
+  console.log("[migrate] all three Release D contact tables present");
 
   // Column-level verification. Names only — never a value.
   const colRows = await sql`

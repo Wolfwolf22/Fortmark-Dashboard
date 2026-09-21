@@ -43,6 +43,13 @@
       "when": 1789953026736,
       "tag": "0005_broad_sumo",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789954214580,
+      "tag": "0006_natural_energizer",
+      "breakpoints": true
     }
   ]
 }
