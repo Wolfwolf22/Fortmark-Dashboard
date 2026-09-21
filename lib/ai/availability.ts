@@ -18,8 +18,24 @@ import "server-only";
 import type { EnvLike } from "../flags.ts";
 import { resolveAiCredential } from "./provider.ts";
 
-export type AssistantAvailability = "available" | "not_configured";
+/**
+ * The two halves are reported separately, because they are two different jobs.
+ *
+ *   available      a model answers, over this caller's real records.
+ *   not_enabled    nobody has switched the assistant on in this environment.
+ *   no_credential  someone switched it on and the key never arrived. This is
+ *                  a misconfiguration, not a choice, and it is the one an
+ *                  operator can act on immediately.
+ *
+ * Neither label is a secret. No value, no variable content and no fragment of
+ * a key is disclosed — only which of two setup steps has not been done, which
+ * is exactly what a readiness probe exists to say. Collapsing both into one
+ * word cost an operator a build log to find out which.
+ */
+export type AssistantAvailability = "available" | "not_enabled" | "no_credential";
 
 export function assistantAvailability(env: EnvLike = process.env): AssistantAvailability {
-  return resolveAiCredential(env).ok ? "available" : "not_configured";
+  const credential = resolveAiCredential(env);
+  if (credential.ok) return "available";
+  return credential.reason === "disabled" ? "not_enabled" : "no_credential";
 }

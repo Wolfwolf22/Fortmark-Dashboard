@@ -16,6 +16,7 @@
  * Run: npm run test:ai
  */
 import { existsSync, readFileSync } from "node:fs";
+import { assistantAvailability } from "../lib/ai/availability.ts";
 import {
   AI_LIMITS,
   AI_MODEL,
@@ -400,6 +401,13 @@ await Promise.all(results);
   const health = readFileSync("app/api/health/route.ts", "utf8");
   check("the health probe reports the assistant's resolved mode",
     /assistant: assistantAvailability\(\)/.test(health));
+  // Which of the two setup steps is missing, without disclosing either value.
+  check("the probe distinguishes an unset flag from an absent key",
+    assistantAvailability({}) === "not_enabled" &&
+      assistantAvailability({ AI_CHAT_PROVIDER_ENABLED: "1" }) === "no_credential" &&
+      assistantAvailability({ AI_CHAT_PROVIDER_ENABLED: "1", ANTHROPIC_API_KEY: KEY }) === "available");
+  check("the probe never carries a fragment of the key",
+    !JSON.stringify(assistantAvailability({ AI_CHAT_PROVIDER_ENABLED: "1", ANTHROPIC_API_KEY: KEY })).includes(KEY.slice(0, 8)));
   check("the health probe names the running revision",
     /revision: process\.env\.VERCEL_GIT_COMMIT_SHA\?\.slice\(0, 7\)/.test(health));
   check("the health probe still discloses no value or secret",
