@@ -56,6 +56,17 @@ export function professionalProfileUiEnabled(env: EnvLike = process.env): boolea
 }
 
 /**
+ * Read/write brokerage transactions in the database.
+ *
+ * Requires the profile database flag: transactions are owned by
+ * `dashboard_users` rows, and without those there is nobody to own them.
+ * Off ⇒ the transactions screen keeps the labelled sample set.
+ */
+export function transactionsDatabaseEnabled(env: EnvLike = process.env): boolean {
+  return enabled("TRANSACTIONS_DATABASE_ENABLED", env) && profileDatabaseEnabled(env);
+}
+
+/**
  * Hand dashboard authorization to the database.
  *
  * Hard-disabled in Release 1. The constant below is the guard: even if the

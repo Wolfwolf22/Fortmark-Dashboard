@@ -91,6 +91,18 @@ const RELEASE_B_MLS_COLUMNS = [
 /** The subset that must stay nullable — every user-supplied MLS value. */
 const RELEASE_B_MLS_NULLABLE = ["mls_agent_id", "mls_organization", "mls_verified_at"];
 
+/**
+ * Release C transaction tables (migration 0005). Additive only: five enum
+ * types, four tables, foreign keys and indexes. Checked by name so a build
+ * whose migration did not land fails here rather than on the first deal read.
+ */
+const RELEASE_C_TABLES = [
+  "transactions",
+  "transaction_parties",
+  "transaction_deadlines",
+  "transaction_events",
+];
+
 const force = process.argv.includes("--force");
 
 /**
@@ -234,6 +246,20 @@ if (url && url !== "[SENSITIVE]") {
   console.log(
     `[migrate] flags PROFILE_IMAGE_UPLOAD_ENABLED=${strict("PROFILE_IMAGE_UPLOAD_ENABLED")}`
   );
+  // Transactions require the profile database (deals are owned by
+  // dashboard_users rows). Report the pair so "on but inert" is visible.
+  {
+    const tx = on("TRANSACTIONS_DATABASE_ENABLED");
+    const profileDb = on("PROFILE_DATABASE_ENABLED");
+    console.log(
+      `[migrate] transactions TRANSACTIONS_DATABASE_ENABLED=${tx} PROFILE_DATABASE_ENABLED=${profileDb} -> ${tx === "on" && profileDb === "on" ? "database" : "sample data"}`
+    );
+    if (tx === "on" && profileDb !== "on") {
+      console.log(
+        "[migrate] NOTE: TRANSACTIONS_DATABASE_ENABLED is on but PROFILE_DATABASE_ENABLED is not — transactions stay on sample data, since deals need dashboard_users rows to own them"
+      );
+    }
+  }
 
   // MLS listings. Flag on with a missing credential is the one combination
   // that breaks: every listings request answers 503, and nothing falls back.
@@ -341,6 +367,12 @@ try {
     bail(`MISSING Release 1 tables: ${missing.join(", ")}`);
   }
   console.log("[migrate] all four Release 1 tables present");
+
+  const missingC = RELEASE_C_TABLES.filter((t) => !present.includes(t));
+  if (missingC.length > 0) {
+    bail(`MISSING Release C transaction tables: ${missingC.join(", ")}`);
+  }
+  console.log("[migrate] all four Release C transaction tables present");
 
   // Column-level verification. Names only — never a value.
   const colRows = await sql`
