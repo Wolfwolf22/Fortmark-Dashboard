@@ -501,11 +501,14 @@ test("§32–§35 search: exact, prefix, email, phone, address, none, foreign, e
 
 test("§36 the palette opens by keyboard, uses POST, navigates, and restores focus", async () => {
   await page.goto("/dashboard/", { waitUntil: "domcontentloaded" });
+  // The brief only renders once the client has fetched: hydration is done,
+  // and a click on the trigger reaches a listener rather than static markup.
+  await expect(brief()).toBeVisible({ timeout: 30_000 });
   const trigger = page.getByRole("button", { name: "Search (Command K)" });
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Search FortMark" });
+  await expect(dialog).toBeVisible({ timeout: 15_000 });
   const emptyOptions = await dialog.getByRole("option").count();
   expect(emptyOptions, "quick actions exist with an empty query").toBeGreaterThan(0);
   expect((await dialog.innerText())).not.toContain("SYSVERIFY");
@@ -521,7 +524,8 @@ test("§36 the palette opens by keyboard, uses POST, navigates, and restores foc
   await expect(page).toHaveURL(new RegExp(`/leads\\?open=${state.A}`), { timeout: 30_000 });
 
   await page.keyboard.press("Escape");
-  const palette = () => page.getByRole("dialog").filter({ has: page.getByPlaceholder(/Search people/) });
+  const palette = () => page.getByRole("dialog", { name: "Search FortMark" });
+  await expect(page.getByRole("dialog", { name: A_NAME })).toBeHidden({ timeout: 15_000 });
   await page.keyboard.press("Control+k");
   await expect(palette()).toBeVisible({ timeout: 15_000 });
   await page.keyboard.press("Escape");
