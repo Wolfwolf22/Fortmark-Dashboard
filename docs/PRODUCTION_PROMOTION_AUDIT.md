@@ -580,3 +580,160 @@ Each line is a stop point: do not continue past a failed check.
 
 **GO FOR STAGED PRODUCTION PROMOTION**, executing §15 in order, only after
 this plan is reviewed and approved. This audit did not deploy anything.
+
+---
+
+## STAGE 1 EXECUTION — 2026-09-22 (append-only record)
+
+Authorised: "Execute staged Production promotion — certified core first — AI off."
+Everything above this heading is the original audit and is left as written;
+where execution found the audit wrong, the correction is recorded here.
+
+### Timeline (UTC)
+
+| Time | Step | Result |
+|---|---|---|
+| 18:1x | Certified source re-verified | `b4c04d0` (tree `27906d16…`); working tree clean; `05c29cb..b4c04d0` changes only `e2e/**`, `docs/**`; `b4c04d0..922d7f9` changes only this doc; Production branch tip `625dc90` is an ancestor |
+| 18:1x | Production state re-confirmed | Dashboard `dpl_5WFnRw8PyQuEm7XpcWBhBYdrNp9M` / `625dc90`; portal `dpl_BV3kHHVtZHAH5SjTvKGmaig14AYZ` / `b819667`; Neon `br-bitter-cake-av7pmzth`; migrations 5 (0000–0004); no deployment since the audit |
+| 18:19:55 | DB safety point created | Neon branch `br-shy-rice-av1mq9bf`, name `pre-fortmark-dashboard-promotion-20260922T1819Z-from-production-fortmark-professional-profiles`, parent `br-bitter-cake-av7pmzth` at LSN `0/1D72338` (parent timestamp 18:19:17Z), no compute, not modified since |
+| 18:20 | Env vars set (Production scope only, type encrypted) | `CONTACTS_DATABASE_ENABLED`, `TRANSACTIONS_DATABASE_ENABLED`, `AI_PROVIDER`; 3 created, 0 failed |
+| 18:2x | Migration preflight | 0005–0008 extracted from `b4c04d0`; sha256 equal to the certified Preview bookkeeping (`fce71405…`, `84916237…`, `2e43cf92…`, `efab9abe…`); no DROP/RENAME/ALTER COLUMN/SET NOT NULL/ADD VALUE/CONCURRENTLY/DML |
+| 18:2x | Migrations applied | one transaction, 64 statements, committed |
+| 18:2x | Post-migration schema | Neon schema diff Production vs certified Preview branch: **empty** |
+| 18:2x | Old app on new schema | `625dc90` answered normally (auth redirects; portal 200); no runtime errors |
+| 18:27 | Production branch fast-forwarded | `625dc90..b4c04d0` (not the docs tip `922d7f9`; no force) |
+| 18:28:47 | Deployment READY | `dpl_5LHqLuT3qAYUTcKAtxLE73pncN72`, fresh git build of `b4c04d0`, target production, aliased `fortmark-dashboard.vercel.app` (= portal `DASHBOARD_ORIGIN`) |
+| 18:4x | Health, unauthenticated smoke, logs, DB counts | see below |
+
+### Pre-state (counts only)
+
+`dashboard_users` 1 (role `member`, status `active`), `professional_profiles` 1,
+`profile_images` 1, `audit_events` 46 (latest 2026-09-21), new domain tables absent.
+
+### Migration mechanism — deviation from §6.2, and why
+
+§6.2 said drizzle's migrator "runs them in one transaction". **That was wrong.**
+`drizzle-orm@0.45.2/neon-http/migrator.js` sends every statement as a separate
+HTTP request and inserts the bookkeeping rows afterwards; a mid-run failure
+would leave partial schema with no bookkeeping, and a re-run would then fail on
+`CREATE TYPE`. It would also have required the Production connection string in
+an operator shell.
+
+The migrations were therefore applied as the **byte-identical statements** of
+`lib/db/migrations/0005…0008.sql` at `b4c04d0` (split on
+`--> statement-breakpoint`, exactly as the migrator does), followed by the
+**same bookkeeping rows the migrator writes** (`hash` = sha256 of each file,
+`created_at` = journal `when`), in **one Neon transaction**, preceded by a guard
+that aborts unless Production is exactly at 0004. No credential was read,
+printed or stored. Evidence of equivalence: bookkeeping hashes equal Preview's,
+and the Neon schema diff against the certified Preview branch is empty.
+
+| Migration | Result | Bookkeeping |
+|---|---|---|
+| 0005 `broad_sumo` | applied | row 6, `fce71405…`, 1789953026736 |
+| 0006 `natural_energizer` | applied | row 7, `84916237…`, 1789954214580 |
+| 0007 `purple_iceman` | applied | row 8, `2e43cf92…`, 1790026109734 |
+| 0008 `loud_warstar` | applied | row 9, `efab9abe…`, 1790092212914 |
+
+Post-migration: `pending_key` column present;
+`CREATE UNIQUE INDEX ai_prepared_actions_pending_key_idx … WHERE (status = 'prepared'::ai_action_status)`;
+all new tables empty; existing counts unchanged.
+
+### Environment after Stage 1 (presence only)
+
+Set: `CONTACTS_DATABASE_ENABLED=1`, `TRANSACTIONS_DATABASE_ENABLED=1`,
+`AI_PROVIDER=openai`. Verified **absent** in Production:
+`AI_CHAT_PROVIDER_ENABLED`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`AI_ACTIONS_ENABLED`, `AI_MODEL`, `MLS_LISTINGS_ENABLED`, `SAMPLE_DASHBOARD_ENABLED`,
+`SAMPLE_LISTINGS_ENABLED`, `BRIDGE_API_TOKEN`, `BLOB_READ_WRITE_TOKEN`.
+No other variable changed.
+
+### Health (actual)
+
+`GET https://fortmark-dashboard.vercel.app/dashboard/api/health` → 200, `no-store`:
+
+```json
+{"ok":true,"revision":"b4c04d0","sources":{"transactions":"db","contacts":"db","listings":"not_configured","homeMetrics":"real-only","assistant":{"provider":"openai","model":"gpt-5.5","status":"no_credential"},"actions":"disabled"}}
+```
+
+**Audit correction (§10/§13):** `https://app.fortmark.net/dashboard/api/health`
+is **not** public — the portal's own middleware protects `/dashboard(.*)`
+(`proxy.ts` at `b819667`) and answers 307 → `/sign-in` before rewriting.
+Unauthenticated health checks must use the dashboard alias above (the exact
+origin the portal rewrites to); a signed-in browser can use the portal path.
+
+### Unauthenticated smoke
+
+| Surface | Portal (`app.fortmark.net`) | Dashboard alias |
+|---|---|---|
+| `/dashboard`, `/leads`, `/transactions`, `/reports`, `/settings` | 307 → `/sign-in` | 307 → `app.fortmark.net/sign-in?redirect_url=…` |
+| `/api/contacts`, `/transactions`, `/metrics`, `/search`, `/profile`, `/subsystems`, `/ai/actions`, `/listings` | 307 → `/sign-in` | 401 `{"error":"Unauthorized"}` — no record data |
+| `/api/health` | 307 → `/sign-in` | 200, source states only |
+| `/sign-in` | 200, no redirect (no loop) | — |
+
+No 5xx. Two transient client-side `000` probe results were re-run 3/3 clean.
+No Security Checkpoint challenge was observed on these requests; system
+mitigations untouched and enabled.
+
+### Authenticated smoke — PENDING (operator)
+
+Not performed. The executor has no interactive Production sign-in, and the
+rules forbid a certification user, minted sessions, Preview accounts or
+impersonation. Sections 18–25 and 27 of the Stage 1 instruction (Home zero
+state, Contacts, Transactions, Search, Profile/image, unimplemented routes,
+console sweep, role affordances) must be run by the allowlisted human operator
+using §12 of this document.
+
+### Role change — NOT PERFORMED (decision blocked)
+
+The sole Production user is `member`/`active`, on the `fortmark.net` domain,
+onboarded, created 2026-08-04, no prior `role_changed` events. Nothing available
+to the executor conclusively ties that account to the owner/operator authorising
+this promotion (the allowlist cannot be read without decrypting it; Clerk
+Production was not queried). Per instruction, the role was not changed.
+Repository truth: privileged roles are `admin`, `broker`,
+`transaction_coordinator` (identical record authority today); `admin` is the
+role the bootstrap convention (`bootstrap_admin_assigned`) uses for the system
+owner. Until changed, the user sees real empty states and cannot create
+Contacts or Transactions.
+
+### Database after deploy
+
+At 18:48:56Z: migrations 9; users 1 (`member`); profiles 1; images 1;
+audit events 46; contacts 0; transactions 0; prepared actions 0; all other new
+tables 0. Nothing was written by deployment or probing.
+
+### Runtime
+
+Deployment `dpl_5LHqLuT3qAYUTcKAtxLE73pncN72`, first hour: status codes 200/307/401
+only (all from the probes above); 0 error/warning/fatal log lines.
+
+### Rollback status
+
+Not required. Instant-rollback target remains `dpl_5WFnRw8PyQuEm7XpcWBhBYdrNp9M`
+(`625dc90`; restores the legacy fixture pages — emergency only). Schema stays.
+DB safety point `br-shy-rice-av1mq9bf` — restore only with explicit approval.
+
+### Production change log (complete)
+
+1. Neon branch `br-shy-rice-av1mq9bf` created (backup, no compute).
+2. Vercel env (dashboard project, Production scope): `CONTACTS_DATABASE_ENABLED`, `TRANSACTIONS_DATABASE_ENABLED`, `AI_PROVIDER` created.
+3. Production DB `br-bitter-cake-av7pmzth`: migrations 0005–0008 + 4 bookkeeping rows.
+4. Git: `claude/fortmark-dashboard-build-v39u96` fast-forwarded `625dc90 → b4c04d0`.
+5. Vercel: Production deployment `dpl_5LHqLuT3qAYUTcKAtxLE73pncN72` built and aliased by that push.
+
+Nothing else: no role change, no portal change, no domain/DNS change, no
+mitigation change, no API key, no data written.
+
+### Issues found during execution
+
+| ID | Severity | Issue | Disposition |
+|---|---|---|---|
+| EX-1 | audit defect | Repo migrator (neon-http) is not transactional; audit claimed it was | Worked around atomically for this run; recommend a reviewed change to the migration mechanism before the next migration |
+| EX-2 | audit defect | Portal-path health requires sign-in | Monitoring uses the dashboard alias; documented above |
+| EX-3 | operational | Local `VERCEL_TOKEN` in the execution environment is invalid (403 `invalidToken`) | Vercel MCP used instead; no impact |
+| EX-4 | gate | Sole user still `member` | Owner decision required |
+| EX-5 | pending | Authenticated smoke not yet run | Operator to run §12 |
+
+**Stage 1 status: CORE PRODUCTION LIVE — authenticated operator smoke pending.**
+AI and AI actions remain off. Read-only AI requires separate authorisation.
