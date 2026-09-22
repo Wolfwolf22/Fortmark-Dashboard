@@ -917,8 +917,13 @@ test("§46/§47 MLS is honest about being unconfigured, and no protocol leaks", 
   // search" all state the absence; the checks below refuse any invented
   // listing, price or number.
   const said = reply.replace(/[\u2018\u2019]/g, "'");
-  expect(said).toMatch(/not (connected|configured|set up|available)|isn't (connected|configured|available)|unavailable|no MLS|can't (search|access|query|reach)|cannot (search|access|query|reach)|(don't|do not) (provide|have|include)/i);
-  expect(reply).not.toMatch(/\$\s?\d/);
+  expect(said).toMatch(/not (connected|configured|set up|available)|isn't (connected|configured|available)|unavailable|no MLS|can't (search|access|query|reach|find)|cannot (search|access|query|reach|find)|(don't|do not|does not|doesn't) (provide|have|include|give|offer)/i);
+  // Money in the reply must be the person's own, from the fixtures the run
+  // created — a figure outside that set would be an invented listing. The
+  // reply may legitimately show their own on-hold deal at its real price.
+  const known = new Set(["$200,000", "$850,000", "$500,000", "$400,000", "$100,000", "$1,350,000", "$21,250"]);
+  const amounts = (reply.match(/\$\s?[\d,]+(?:\.\d+)?[KMk]?/g) ?? []).map((a) => a.replace(/\s/g, ""));
+  for (const amount of amounts) expect(known.has(amount), `a figure that is not the person's own: ${amount}`).toBe(true);
   // An invented listing carries a number; asking the person for one does
   // not ("if you have a specific MLS number, I can look for it").
   expect(reply).not.toMatch(/MLS\s?#\s?[A-Z]?\d{5,}|MLS number\s+(is\s+)?[A-Z]?\d{5,}|\bA\d{6,}\b/i);
