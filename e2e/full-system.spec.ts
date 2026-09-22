@@ -1027,7 +1027,10 @@ test("§88 a hostile name renders as text, never as markup", async () => {
     expect(res.status, json(res.body).slice(0, 200)).toBe(201);
     state.X = contactOf(res.body).id as string;
   }
-  await openAndWait(`/dashboard/leads?open=${state.X}`, () => page.getByRole("main").filter({ hasText: "Xavier" }), "§88 hostile name");
+  // Not `getByRole("main")`: the deep-linked drawer is a modal, and Radix
+  // marks everything behind it aria-hidden, which removes `main` from the
+  // accessibility tree the role query reads. The element is still there.
+  await openAndWait(`/dashboard/leads?open=${state.X}`, () => page.locator("main").filter({ hasText: "Xavier" }), "§88 hostile name");
   const drawer = page.getByRole("dialog");
   await expect(drawer).toContainText("Xavier", { timeout: 30_000 });
   const title = await drawer.innerText();
