@@ -132,14 +132,21 @@ export default function Page() {
   }
 
   /**
-   * A settled proposal leaves the pending list.
+   * A settled proposal stays on screen showing what happened.
    *
-   * The card renders its own outcome until the thread moves on, so the row is
-   * dropped here rather than re-fetched: the server has already recorded the
-   * decision, and asking again would only risk showing a stale card.
+   * It is deliberately NOT removed here. Dropping the row unmounts the card
+   * the instant Confirm is pressed, so the person who just authorised a change
+   * watches it vanish with no confirmation that it took — the card's own
+   * "Confirmed and saved" state never gets to render. Keeping it mounted is
+   * the whole feedback.
+   *
+   * It leaves on its own: the next turn re-fetches, and the server only
+   * returns proposals that are still pending.
    */
-  function settleAction(actionId: string) {
-    setPending((current) => current.filter((action) => action.actionId !== actionId));
+  function settleAction(actionId: string, outcome: "confirmed" | "declined") {
+    // Recorded for the log trail a turn leaves behind; the card owns the
+    // on-screen state from here.
+    console.debug(`[ai] action ${outcome}`, actionId);
   }
 
   function submit() {
