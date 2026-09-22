@@ -32,6 +32,15 @@ const consoleErrors: string[] = [];
 const pageErrors: string[] = [];
 const serverErrors: string[] = [];
 const notFounds: string[] = [];
+// Every response the browser saw that was not a success, newest last. A
+// 401 on the metrics request would explain a brief that never resolves and
+// is invisible to the two lists above; a stalled page is classified from
+// this, not guessed at.
+const failedResponses: string[] = [];
+const FAILED_KEEP = 40;
+// How many times Home needed a second load before its brief resolved. Zero
+// is the claim; anything else is reported, never hidden.
+let homeReloads = 0;
 
 const state: Record<string, string> = {};
 const CARD = '[aria-label="Suggested change awaiting your confirmation"]';
@@ -39,6 +48,58 @@ const composer = () => page.locator('textarea[aria-label="Message"]');
 // Two sections carry this label in turn — a loading stand-in and the real
 // one. Filtering on a figure label waits for the real one.
 const brief = () => page.locator('section[aria-label="Daily brief"]').filter({ hasText: "Active transactions" });
+
+/**
+ * What the page is actually showing, for the log.
+ *
+ * Written when a wait fails so the failure classifies itself: a blank
+ * document, an error page, a redirect to sign-in, or a brief that is still a
+ * skeleton because its own request failed. Playwright's snapshot is wiped by
+ * the next run; this is not.
+ */
+async function describePage(label: string): Promise<void> {
+  const url = page.url();
+  const title = await page.title().catch(() => "(no title)");
+  const html = await page.content().catch(() => "");
+  const body = (await page.locator("body").innerText({ timeout: 3_000 }).catch(() => "(unreadable)")).replace(/\s+/g, " ");
+  const briefSections = await page.locator('section[aria-label="Daily brief"]').count().catch(() => -1);
+  const skeletons = await page.locator('section[aria-label="Daily brief"] .animate-pulse').count().catch(() => -1);
+  const h1s = await page.locator("h1").count().catch(() => -1);
+  console.log(
+    `[page] ${label}: url=${url} title=${json(title)} htmlLength=${html.length} h1=${h1s} briefSections=${briefSections} skeletons=${skeletons} resolved=${await brief().count().catch(() => -1)}`
+  );
+  console.log(`[page] ${label} body=${json(body.slice(0, 300))}`);
+  for (const e of pageErrors.slice(-3)) console.log(`[page] ${label} pageerror ${e}`);
+  for (const e of failedResponses.slice(-12)) console.log(`[page] ${label} response ${e}`);
+}
+
+/**
+ * Open Home and wait for the brief to resolve.
+ *
+ * The brief only renders once the client has fetched: hydration is done, and
+ * a click reaches a listener rather than static markup. If it has not
+ * resolved in 30s the page is described, loaded once more, and the reload is
+ * counted — the count is printed in the final sweep and goes in the report.
+ * A second failure is a failure.
+ */
+async function openHome(label: string): Promise<void> {
+  await page.goto("/dashboard/", { waitUntil: "domcontentloaded", timeout: 60_000 });
+  try {
+    await expect(brief()).toBeVisible({ timeout: 30_000 });
+    return;
+  } catch {
+    await describePage(`${label} brief unresolved after 30s`);
+  }
+  homeReloads += 1;
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
+  try {
+    await expect(brief()).toBeVisible({ timeout: 30_000 });
+    console.log(`[page] ${label}: the brief resolved on a second load (homeReloads=${homeReloads})`);
+  } catch (error) {
+    await describePage(`${label} brief unresolved after reload`);
+    throw error;
+  }
+}
 
 const A_NAME = "SYSVERIFY Jane Alpha";
 const B_NAME = "SYSVERIFY Jane Beta";
@@ -129,7 +190,12 @@ test.beforeAll(async ({ browser }) => {
   page.on("response", (r) => {
     if (r.status() >= 500) serverErrors.push(`${r.status()} ${r.url().slice(0, 160)}`);
     if (r.status() === 404 && r.url().includes("/dashboard/")) notFounds.push(r.url().slice(0, 160));
+    if (r.status() >= 400) {
+      failedResponses.push(`${new Date().toISOString().slice(11, 19)} ${r.status()} ${r.request().method()} ${r.url().slice(0, 140)}`);
+      if (failedResponses.length > FAILED_KEEP) failedResponses.shift();
+    }
   });
+  page.on("crash", () => pageErrors.push(`${page.url()} :: PAGE CRASHED`));
   await signInCertificationUser(page);
   await refresh();
 });
@@ -185,8 +251,7 @@ test("§29 Home is an honest zero state before any fixture exists", async () => 
   expect(body.contacts.data?.activeClients).toBe(0);
   expect(body.listings.availability).toBe("not_configured");
 
-  await page.goto("/dashboard/", { waitUntil: "domcontentloaded" });
-  await expect(brief()).toBeVisible({ timeout: 30_000 });
+  await openHome("§15 empty brief");
   const text = (await brief().innerText()).replace(/\s+/g, " ");
   console.log(`[sys] zero-state brief: ${json(text.slice(0, 400))}`);
   expect(text).toContain("Active transactions");
@@ -467,8 +532,7 @@ test("§27/§28 money is integer-exact and Home shows it", async () => {
   expect(t.closedThisMonthVolumeCents).toBe(40_000_000);
   expect(t.closedThisMonthCount).toBe(1);
 
-  await page.goto("/dashboard/", { waitUntil: "domcontentloaded" });
-  await expect(brief()).toBeVisible({ timeout: 30_000 });
+  await openHome("§29 populated brief");
   const text = (await brief().innerText()).replace(/\s+/g, " ");
   console.log(`[sys] populated brief: ${json(text.slice(0, 500))}`);
   // The brief rounds for display ($21.3K); the exact figure is the API's.
@@ -518,10 +582,7 @@ test("§32–§35 search: exact, prefix, email, phone, address, none, foreign, e
 });
 
 test("§36 the palette opens by keyboard, uses POST, navigates, and restores focus", async () => {
-  await page.goto("/dashboard/", { waitUntil: "domcontentloaded" });
-  // The brief only renders once the client has fetched: hydration is done,
-  // and a click on the trigger reaches a listener rather than static markup.
-  await expect(brief()).toBeVisible({ timeout: 30_000 });
+  await openHome("§36 palette");
   const trigger = page.getByRole("button", { name: "Search (Command K)" });
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
@@ -793,7 +854,7 @@ test("§31/§95/§96 no horizontal overflow on the primary routes at four widths
 });
 
 test("§97 keyboard reaches something, and the home has exactly one h1", async () => {
-  await page.goto("/dashboard/", { waitUntil: "domcontentloaded" });
+  await openHome("§97 keyboard");
   expect(await page.locator("h1").count()).toBe(1);
   await page.keyboard.press("Tab");
   const tag = await page.evaluate(() => document.activeElement?.tagName ?? "none");
@@ -824,7 +885,8 @@ test("§88 a hostile name renders as text, never as markup", async () => {
 });
 
 test("§78 no uncaught exceptions or server errors during the whole run", async () => {
-  console.log(`[sweep] pageErrors=${pageErrors.length} consoleErrors=${consoleErrors.length} serverErrors=${serverErrors.length} notFounds=${notFounds.length}`);
+  console.log(`[sweep] pageErrors=${pageErrors.length} consoleErrors=${consoleErrors.length} serverErrors=${serverErrors.length} notFounds=${notFounds.length} homeReloads=${homeReloads}`);
+  for (const e of failedResponses) console.log(`[sweep] non-2xx ${e}`);
   for (const e of pageErrors) console.log(`[sweep] pageerror ${e}`);
   for (const e of consoleErrors.slice(0, 20)) console.log(`[sweep] console ${e}`);
   for (const e of serverErrors) console.log(`[sweep] 5xx ${e}`);
