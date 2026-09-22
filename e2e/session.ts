@@ -97,10 +97,12 @@ async function loadWithClerk(page: Page, path: string): Promise<void> {
   }
   // Whether the application rendered at all is the line between "the harness
   // could not get Clerk up" and "the product is down". Say which.
+  // Bounded like everything else here: under Playwright Test an action has
+  // no timeout of its own, and this read once consumed the rest of a hook.
   const rendered = await page
     .locator("h1")
     .first()
-    .innerText()
+    .innerText({ timeout: 5_000 })
     .catch(() => "(nothing)");
   throw new Error(
     `Clerk did not initialise at ${path} in ${ATTEMPTS} attempts. ` +
