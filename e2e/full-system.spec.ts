@@ -368,9 +368,13 @@ test("§20 transactions are created with money, dates and deadlines, owned by th
   expect(a.contractPrice).toBe(850_000);
   expect(a.projectedCommission).toBe(21_250);
   expect(a.stage).toBe("opportunity");
-  // If the supplied agent/brokerage had been honoured, this read would be 404.
+  expect(a.closeDate).toBe(isoDay(40));
+  expect((a.milestones as unknown[]).length).toBe(5);
+  // The supplied owner and tenant were not honoured: the row is ours, and a
+  // read that would have been 404 had they been is 200.
+  expect(u.agentId).toBe(state.me);
   expect((await api(`/dashboard/api/transactions/${state.txU}`)).status).toBe(200);
-  console.log(`[sys] txA=${state.txA} price=${a.contractPrice} projected=${a.projectedCommission} closing=${a.closingDate}`);
+  console.log(`[sys] txA=${state.txA} price=${a.contractPrice} projected=${a.projectedCommission} closeDate=${a.closeDate} unpriced.contractPrice=${u.contractPrice}`);
 });
 
 test("§21 transaction authorization: list and direct id, with positive controls", async () => {
@@ -395,8 +399,10 @@ test("§22–§26 stage moves: dates stamp as designed, deadlines untouched, ter
   const move = (id: string, stage: string) =>
     api(`/dashboard/api/transactions/${id}/stage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: json({ stage }) });
   const get = async (id: string) => txnOf((await api(`/dashboard/api/transactions/${id}`)).body);
+  // Deadlines surface as milestones: id, due date and state. A stage move must
+  // leave all three exactly as they were.
   const deadlines = (t: Record<string, unknown>) =>
-    ((t.deadlines as { id: string; dueDate: string; completedAt?: string | null }[]) ?? []).map((d) => `${d.id}|${d.dueDate}|${d.completedAt ?? ""}`).sort();
+    ((t.milestones as { id: string; date: string; state: string }[]) ?? []).map((d) => `${d.id}|${d.date}|${d.state}`).sort();
 
   expect((await move(state.txA, "under_contract")).status).toBe(200);
   const beforeA = await get(state.txA);
@@ -404,8 +410,9 @@ test("§22–§26 stage moves: dates stamp as designed, deadlines untouched, ter
   const afterA = await get(state.txA);
   expect(deadlines(afterA)).toEqual(deadlines(beforeA));
   expect(deadlines(afterA).length).toBe(5);
-  expect(afterA.closedDate ?? null).toBeNull();
-  expect(afterA.cancelledDate ?? null).toBeNull();
+  // Ordinary active-stage movement stamps nothing: closeDate is still the
+  // scheduled closing, not today.
+  expect(afterA.closeDate).toBe(isoDay(40));
   expect((await move(state.txA, "opportunity")).status, "back three stages is refused").toBeGreaterThanOrEqual(400);
 
   expect((await move(state.txB, "on_hold")).status).toBe(200);
@@ -413,17 +420,18 @@ test("§22–§26 stage moves: dates stamp as designed, deadlines untouched, ter
   expect((await move(state.txE, "closing_prep")).status).toBe(200);
   expect((await move(state.txE, "closed")).status).toBe(200);
   const e = await get(state.txE);
-  expect(e.closedDate).toBe(isoDay(0));
-  expect(e.cancelledDate ?? null).toBeNull();
+  // No closing was scheduled on E, so closeDate can only be the stamped one.
+  expect(e.closeDate).toBe(isoDay(0));
   expect((await move(state.txE, "opportunity")).status, "closed is irreversible").toBeGreaterThanOrEqual(400);
 
   expect((await move(state.txF, "cancelled")).status).toBe(200);
   const f = await get(state.txF);
-  expect(f.cancelledDate).toBe(isoDay(0));
-  expect(f.closedDate ?? null).toBeNull();
+  // cancelled_date is not part of the DTO; it is verified in the database
+  // after the run. Here: cancelling did not stamp a close.
+  expect(f.closeDate ?? null).toBeNull();
   expect((await move(state.txF, "offer")).status, "cancelled is irreversible").toBeGreaterThanOrEqual(400);
   expect((await move(state.txF, "cancelled")).status, "same stage refused").toBeGreaterThanOrEqual(400);
-  console.log(`[sys] stages: A=${afterA.stage} B=on_hold E=closed(${e.closedDate}) F=cancelled(${f.cancelledDate}); A deadlines unchanged (${deadlines(afterA).length})`);
+  console.log(`[sys] stages: A=${afterA.stage} B=on_hold E=closed(closeDate ${e.closeDate}) F=${f.stage}; A milestones unchanged (${deadlines(afterA).length})`);
 });
 
 test("§27/§28 money is integer-exact and Home shows it", async () => {
@@ -691,6 +699,12 @@ test("§77/§78 every route loads, with one h1, and what it shows is recorded", 
     findings.push(`${route} status=${res?.status()} h1=${h1s} disclosure=${disclosure} :: ${text.slice(0, 220)}`);
     if (res?.status() !== 200) issues.push(`${route} status ${res?.status()}`);
     if (h1s !== 1) issues.push(`${route} has ${h1s} h1 elements`);
+    if (route === "/dashboard/transactions") {
+      // How an unpriced deal is presented is a §27 question: the DTO carries
+      // contractPrice 0 for it, so record exactly what the row says.
+      const i = text.indexOf("700 Unpriced Way");
+      findings.push(`unpriced row: ${i >= 0 ? text.slice(i, i + 140) : "(row not in first paint)"}`);
+    }
   }
   const bell = await page.getByRole("button", { name: /Notifications/ }).getAttribute("aria-label").catch(() => null);
   findings.push(`notifications control on a zero-data account: ${bell}`);
