@@ -20,6 +20,29 @@ export const CERT_EMAIL = "fortmark.ai.certification+clerk_test@example.com";
 export const CERT_USER_ID = "user_3JeOWKOgBRVFdt0KubrrjVfRFyl";
 export const DASHBOARD = process.env.CERT_DASHBOARD_URL ?? "https://fortmark-dashboard-preview.vercel.app";
 
+/**
+ * Navigate somewhere and wait for Clerk to actually initialise there.
+ *
+ * Clerk's script intermittently fails to finish loading against a cold
+ * Preview deployment, and `clerk.loaded()` then waits until it is killed.
+ * Reloading is the whole fix; the retry is bounded so a genuine failure still
+ * surfaces as one rather than as an unexplained timeout.
+ */
+async function loadWithClerk(page: Page, path: string): Promise<void> {
+  const ATTEMPTS = 5;
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    try {
+      await page.goto(path, { waitUntil: "domcontentloaded" });
+      await clerk.loaded({ page, timeout: 20_000 } as Parameters<typeof clerk.loaded>[0]);
+      return;
+    } catch (error) {
+      console.log(`[session] Clerk did not initialise at ${path} (attempt ${attempt}); reloading`);
+      if (attempt === ATTEMPTS) throw error;
+      await page.waitForTimeout(2_000);
+    }
+  }
+}
+
 export async function signInCertificationUser(page: Page): Promise<string> {
   await setupClerkTestingToken({ page });
 
@@ -27,26 +50,14 @@ export async function signInCertificationUser(page: Page): Promise<string> {
   // and `clerk.loaded()` then waits forever. Reloading is the whole fix; the
   // retry is bounded so a genuine failure still surfaces as one rather than as
   // a test timeout with no explanation.
-  let loaded = false;
-  const ATTEMPTS = 5;
-  for (let attempt = 1; attempt <= ATTEMPTS && !loaded; attempt += 1) {
-    try {
-      await page.goto("/sign-in", { waitUntil: "domcontentloaded" });
-      await clerk.loaded({ page, timeout: 20_000 } as Parameters<typeof clerk.loaded>[0]);
-      loaded = true;
-    } catch (error) {
-      console.log(`[session] Clerk did not initialise on attempt ${attempt}; reloading`);
-      if (attempt === ATTEMPTS) throw error;
-      // A cold deployment is the usual reason; give it a moment rather than
-      // hammering the same instant.
-      await page.waitForTimeout(2_000);
-    }
-  }
+  await loadWithClerk(page, "/sign-in");
 
   await clerk.signIn({ page, signInParams: { strategy: "email_code", identifier: CERT_EMAIL } });
 
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await clerk.loaded({ page, timeout: 30_000 } as Parameters<typeof clerk.loaded>[0]);
+  // The same retry applies here. Clerk failing to initialise after sign-in is
+  // the identical cold-deployment flake, and leaving this call bare is what
+  // let one run burn its whole hook budget on a single unlucky load.
+  await loadWithClerk(page, "/");
   // Clerk restores the session asynchronously after a navigation; getToken()
   // returns null until it has.
   await page.waitForFunction(
