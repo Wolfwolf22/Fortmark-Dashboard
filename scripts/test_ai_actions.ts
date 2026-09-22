@@ -572,6 +572,25 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
     /expired \?/.test(card) && /This suggestion expired/.test(card));
   check("a declined card states that nothing changed",
     /Declined\. Nothing was changed/.test(card));
+
+  // §2/§3 — the executed state is a record, not a generic acknowledgement.
+  check("every action type has a past-tense completion heading", (() => {
+    const block = card.slice(card.indexOf("const EXECUTED_HEADING"), card.indexOf("export interface ActionCardProps"));
+    return ["contact_followup_schedule", "contact_stage_change", "transaction_stage_change", "contact_activity_log"]
+      .every((type) => block.includes(type));
+  })());
+  check("the executed card names what happened, not that something did",
+    /EXECUTED_HEADING\[action\.type\]/.test(card) && !/Success!/.test(card));
+  check("the executed card keeps the entity and the resulting value",
+    /settled === "confirmed"[\s\S]{0,900}action\.entity\.displayName[\s\S]{0,400}change\.from \? `\$\{change\.from\} → \$\{change\.to\}` : change\.to/.test(card));
+  check("the executed card drops the proposal scaffolding",
+    !/Nothing changes until you confirm it[\s\S]{0,200}EXECUTED_HEADING/.test(card));
+  check("the executed card is announced politely",
+    /role="status"[\s\S]{0,120}aria-label="Change confirmed"/.test(card));
+  check("the proposal card marks itself busy while executing",
+    /aria-busy=\{busy !== null\}/.test(card));
+  check("confirming is disabled while a confirmation is in flight",
+    (card.match(/disabled=\{busy !== null\}/g) ?? []).length === 2);
   check("a refused confirmation is shown, not swallowed",
     /role="alert"/.test(card) && /setError\(/.test(card));
   check("the card never reports success on a failed confirmation", (() => {

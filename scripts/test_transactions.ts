@@ -335,7 +335,16 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
   check("the brokerage is always the server's", service.includes("brokerageKey: ctx.actor.brokerageKey") && !/brokerageKey: input/.test(service));
   check("a named agent is honoured only for a privileged actor", /input\.agentUserId && isPrivileged\(ctx\.actor\)/.test(service));
   check("a stage change checks the lifecycle before writing", service.indexOf("canTransition(from, to)") < service.indexOf(".update(transactions)"));
-  check("every write records history", (service.match(/recordEvent\(/g) ?? []).length >= 3);
+  // The other writers still record through the shared helper; the stage path
+  // builds its own writes so they can commit atomically with the update.
+  check("create and update still record history", (service.match(/recordEvent\(/g) ?? []).length >= 2);
+  check("a stage change records both a domain event and an audit event", (() => {
+    const plan = service.slice(
+      service.indexOf("export async function planStageChange"),
+      service.indexOf("export async function commitStageChange")
+    );
+    return /insert\(transactionEvents\)/.test(plan) && /insert\(auditEvents\)/.test(plan);
+  })());
   check("history metadata is scrubbed", /FORBIDDEN_META/.test(service));
   check("closing stamps the closed date", /closedDate: to === "closed" \? today/.test(service));
   check("out of scope is answered like not found", /reason: "not_found"/.test(service) && stage.includes('status: 404'));
@@ -373,6 +382,77 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
     listRoute.includes("parseTransactionFilters") && searchRoute.includes("parseTransactionFilters"));
   check("the date window still travels in the URL, being non-identifying",
     /read\("from"\)/.test(readFileSync("lib/transactions/filters.ts", "utf8")));
+}
+
+// --- The shared atomic stage writer ---------------------------------------------
+//
+// The defect this replaced: the stage update ran alone, and both history
+// writes sat inside one `try` that swallowed. A failed event insert took the
+// audit insert down with it and still reported success, leaving a deal whose
+// stage had moved with nothing recording that it had.
+{
+  const svc = readFileSync("lib/transactions/service.ts", "utf8");
+  const code = svc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const plan = code.slice(
+    code.indexOf("export async function planStageChange"),
+    code.indexOf("export async function commitStageChange")
+  );
+  const manual = code.slice(code.indexOf("export async function changeStage"));
+
+  check("one function owns authorization, validation and the writes",
+    /visibleTo\(ctx\.actor\)/.test(plan) && /canSee\(ctx\.actor, row\)/.test(plan) &&
+      /canWrite\(ctx\.actor, row\)/.test(plan) && /canTransition\(from, to\)/.test(plan));
+  check("the plan carries all three required writes",
+    /update\(transactions\)/.test(plan) && /insert\(transactionEvents\)/.test(plan) &&
+      /insert\(auditEvents\)/.test(plan));
+  check("the plan performs no write of its own",
+    !/await ctx\.db\.update/.test(plan) && !/await ctx\.db\.insert/.test(plan));
+  check("the manual path commits them atomically, not one by one",
+    /commitStageChange\(ctx\.db, planned\.value\.writes\)/.test(manual) &&
+      !/await ctx\.db\.update\(transactions\)/.test(manual));
+  check("commit goes through db.batch",
+    /db\.batch\(/.test(code.slice(code.indexOf("export async function commitStageChange"))));
+
+  check("the stage path swallows no history failure",
+    !/History must never break the write it describes/.test(
+      svc.slice(svc.indexOf("export async function planStageChange"))));
+  check("a failed stage change reports failure rather than partial success",
+    /catch \{[\s\S]{0,120}reason: "unavailable"/.test(manual));
+  check("recordEvent's swallow remains only on the create/update paths",
+    svc.indexOf("History must never break the write it describes") <
+      svc.indexOf("export async function planStageChange"));
+
+  check("closing still stamps the closed date",
+    /closedDate: to === "closed" \? today : row\.closedDate/.test(plan));
+  check("another terminal stage still stamps the cancelled date",
+    /cancelledDate: isTerminalStage\(to\) && to !== "closed" \? today : row\.cancelledDate/.test(plan));
+  check("a stage change touches no money, party or deadline",
+    !/contractPriceCents|commission|transactionParties|transactionDeadlines/.test(plan));
+  check("exactly one domain event and one audit event are planned",
+    (plan.match(/eventType: "transaction_stage_changed"/g) ?? []).length === 2);
+
+  check("a manual change records no mechanism",
+    /mechanism === "manual" \? \{\} :/.test(plan));
+  check("the human remains the actor",
+    (plan.match(/actorUserId: ctx\.actor\.userId/g) ?? []).length === 2 &&
+      /updatedByUserId: ctx\.actor\.userId/.test(plan));
+  check("the caller cannot supply the actor or the current stage",
+    !/options\.actor/.test(plan) && !/options\.from/.test(plan) &&
+      /const from = row\.stage as TransactionStage/.test(plan));
+
+  check("no parallel AI writer exists", !/changeStageForAI|aiChangeStage|ForAI/.test(svc));
+  const route = readFileSync("app/api/transactions/[id]/stage/route.ts", "utf8");
+  check("the manual route still calls the shared writer",
+    /changeStage\(/.test(route) && !/planStageChange|commitStageChange/.test(route));
+}
+
+// --- No transaction-stage AI capability was added ------------------------------
+{
+  const registry = readFileSync("lib/ai/tools/registry.ts", "utf8");
+  check("no transaction-stage proposal tool exists",
+    !/transaction_stage/.test(registry) && !/prepare_transaction/.test(registry));
+  check("the action service prepares no transaction stage change",
+    !/transaction_stage_change/.test(readFileSync("lib/ai/actions/service.ts", "utf8")));
 }
 
 // --- Summary -------------------------------------------------------------------------

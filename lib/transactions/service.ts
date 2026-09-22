@@ -280,12 +280,56 @@ export async function createTransaction(
   return created ? { ok: true, value: created } : { ok: false, reason: "unavailable" };
 }
 
-export async function changeStage(
+/**
+ * How a stage change came to be made. The human is the actor either way.
+ *
+ * Only `manual` exists today — no AI capability proposes transaction stage
+ * changes, and none is authorized. The parameter is here because the plan is
+ * built to be reused: when one is eventually authorized, it appends its own
+ * statement to these writes rather than growing a second writer.
+ */
+export type StageChangeMechanism = "manual" | "ai_assisted";
+
+/** One statement in a batch. Drizzle's builders are thenable, not promises. */
+type BatchWrite = Parameters<Db["batch"]>[0][number];
+
+/**
+ * A validated, authorized stage change that has NOT been written yet.
+ *
+ * `writes` is every statement the transition requires, ready for `db.batch`.
+ * Returning them rather than performing them is what keeps one definition of
+ * what a stage change means: a second caller adds a statement to this list
+ * instead of reimplementing the authorization, the lifecycle rule and the
+ * date handling around its own copy.
+ */
+export interface StageChangePlan {
+  row: TransactionRow;
+  from: TransactionStage;
+  to: TransactionStage;
+  writes: BatchWrite[];
+}
+
+/**
+ * Authorize and validate a transaction stage change, and build its writes.
+ *
+ * Everything that decides whether the change may happen is here and only
+ * here: visibility, write permission, and the lifecycle graph — which refuses
+ * a same-stage move, so a no-op cannot write history claiming a change.
+ *
+ * The date handling is the existing behaviour, unchanged and deliberately so:
+ * closing stamps `closed_date`, any other terminal stage stamps
+ * `cancelled_date`, and neither is ever cleared — a date already recorded
+ * survives a later move.
+ */
+export async function planStageChange(
   ctx: { actor: Actor; db: Db },
   id: string,
   to: TransactionStage,
-  now: Date = new Date()
-): Promise<ServiceResult<Transaction>> {
+  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date } = {}
+): Promise<ServiceResult<StageChangePlan>> {
+  const now = options.now ?? new Date();
+  const mechanism = options.mechanism ?? "manual";
+
   const rows = await ctx.db
     .select()
     .from(transactions)
@@ -298,17 +342,82 @@ export async function changeStage(
   if (!canTransition(from, to)) return { ok: false, reason: "invalid_transition" };
 
   const today = toDateOnly(now);
-  await ctx.db
-    .update(transactions)
-    .set({
-      stage: to,
-      updatedByUserId: ctx.actor.userId,
-      updatedAt: now,
-      closedDate: to === "closed" ? today : row.closedDate,
-      cancelledDate: isTerminalStage(to) && to !== "closed" ? today : row.cancelledDate,
-    })
-    .where(eq(transactions.id, row.id));
-  await recordEvent(ctx.db, row.id, ctx.actor.userId, "transaction_stage_changed", { from, to });
-  const updated = await getTransaction(ctx, row.id, now);
+  // A manual change records exactly what it always recorded, so existing
+  // history stays comparable.
+  const extra = mechanism === "manual" ? {} : { mechanism, ...(options.metadata ?? {}) };
+  const safe = scrub({ from, to, ...extra });
+
+  return {
+    ok: true,
+    value: {
+      row,
+      from,
+      to,
+      writes: [
+        ctx.db
+          .update(transactions)
+          .set({
+            stage: to,
+            updatedByUserId: ctx.actor.userId,
+            updatedAt: now,
+            closedDate: to === "closed" ? today : row.closedDate,
+            cancelledDate: isTerminalStage(to) && to !== "closed" ? today : row.cancelledDate,
+          })
+          .where(eq(transactions.id, row.id)),
+        ctx.db.insert(transactionEvents).values({
+          transactionId: row.id,
+          actorUserId: ctx.actor.userId,
+          eventType: "transaction_stage_changed",
+          safeMetadata: safe,
+        }),
+        ctx.db.insert(auditEvents).values({
+          eventType: "transaction_stage_changed",
+          actorUserId: ctx.actor.userId,
+          targetUserId: null,
+          safeMetadata: safe ? { transactionId: row.id, ...safe } : { transactionId: row.id },
+        }),
+      ],
+    },
+  };
+}
+
+/**
+ * Commit a stage change's writes as one transaction.
+ *
+ * `db.batch` maps onto the Neon HTTP client's `transaction(...)`, a real
+ * server-side PostgreSQL transaction: every statement commits or none does.
+ * Never issue these individually.
+ */
+export async function commitStageChange(db: Db, writes: BatchWrite[]): Promise<void> {
+  await db.batch(writes as unknown as Parameters<Db["batch"]>[0]);
+}
+
+/**
+ * Move a deal to another stage. The manual path, used by the pipeline UI.
+ *
+ * The three writes commit together. Previously the update ran alone and both
+ * history writes sat inside one `try` that swallowed — so a failed event
+ * insert took the audit insert down with it and reported success anyway,
+ * leaving a deal whose stage had moved with nothing recording that it had.
+ * On a record carrying money and deadlines, that is the write least able to
+ * afford a silent gap. If the history cannot be recorded, the move does not
+ * happen.
+ */
+export async function changeStage(
+  ctx: { actor: Actor; db: Db },
+  id: string,
+  to: TransactionStage,
+  now: Date = new Date()
+): Promise<ServiceResult<Transaction>> {
+  const planned = await planStageChange(ctx, id, to, { mechanism: "manual", now });
+  if (!planned.ok) return planned;
+
+  try {
+    await commitStageChange(ctx.db, planned.value.writes);
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+
+  const updated = await getTransaction(ctx, planned.value.row.id, now);
   return updated ? { ok: true, value: updated } : { ok: false, reason: "unavailable" };
 }

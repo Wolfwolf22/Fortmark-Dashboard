@@ -144,7 +144,14 @@ test("§14 clicking the real Confirm button executes", async () => {
   const card = await cardFor("2026");
   await card.getByRole("button", { name: "Confirm" }).click();
 
-  await expect(card).toContainText("Confirmed and saved", { timeout: 60_000 });
+  // §2/§3 — the executed state stays visible and says what happened.
+  await expect(card).toContainText("Follow-up scheduled", { timeout: 60_000 });
+  const done = (await card.innerText()).replace(/\s+/g, " ");
+  console.log(`[ui] executed card: ${JSON.stringify(done)}`);
+  expect(done).toContain(B_NAME);
+  expect(done).toMatch(/[A-Z][a-z]+day, [A-Z][a-z]+ \d{1,2}, \d{4}/);
+  // The proposal scaffolding is gone; the decision has been made.
+  expect(done).not.toContain("Nothing changes until you confirm it");
 
   await refresh();
   const after = await api(`/dashboard/api/contacts/${state.bId}`);
@@ -209,7 +216,11 @@ test("§16-§18 the F2-C card renders, yes is inert, and Confirm executes", asyn
   // §18 — the real click.
   const live = await cardFor("Active client");
   await live.getByRole("button", { name: "Confirm" }).click();
-  await expect(live).toContainText("Confirmed and saved", { timeout: 60_000 });
+  await expect(live).toContainText("Stage changed", { timeout: 60_000 });
+  const doneC = (await live.innerText()).replace(/\s+/g, " ");
+  console.log(`[ui] executed F2-C card: ${JSON.stringify(doneC)}`);
+  expect(doneC).toContain(C_NAME);
+  expect(doneC).toContain("Qualified → Active client");
 
   await refresh();
   after = await api(`/dashboard/api/contacts/${state.cId}`);
@@ -271,7 +282,7 @@ test("§21 the card is reachable and operable by keyboard", async () => {
   const beforeCount = await activityCount();
 
   await confirm.click({ clickCount: 2, delay: 40 });
-  await expect(card).toContainText("Confirmed and saved", { timeout: 60_000 });
+  await expect(card).toContainText("Stage changed", { timeout: 60_000 });
 
   await refresh();
   const stage = await api(`/dashboard/api/contacts/${state.cId}`);

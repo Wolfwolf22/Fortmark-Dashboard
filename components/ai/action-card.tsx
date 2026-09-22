@@ -18,7 +18,22 @@ import * as React from "react";
 import { AlertTriangle, ArrowRight, Check, Clock, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ActionError, confirmAction, declineAction } from "@/lib/ai/actions/client";
-import type { PreparedAction } from "@/lib/ai/actions/contract";
+import type { ActionType, PreparedAction } from "@/lib/ai/actions/contract";
+
+/**
+ * What the card says once the change has actually been made.
+ *
+ * Past tense, and specific: "Follow-up scheduled" tells someone what happened;
+ * "Success" tells them only that something did. A record keyed by action type
+ * means a new action cannot be added without deciding how its completion
+ * reads.
+ */
+const EXECUTED_HEADING: Record<ActionType, string> = {
+  contact_followup_schedule: "Follow-up scheduled",
+  contact_stage_change: "Stage changed",
+  transaction_stage_change: "Transaction stage changed",
+  contact_activity_log: "Activity logged",
+};
 
 type Settled = "confirmed" | "declined";
 
@@ -75,6 +90,42 @@ export function ActionCard({ action, onSettled }: ActionCardProps) {
 
   const done = settled !== null;
 
+  /**
+   * What happened, once it has.
+   *
+   * The proposal scaffolding is gone — the diff arrows, the "nothing changes
+   * until you confirm" line and the buttons all described a decision that has
+   * now been made. What stays is the record: what was done, to whom, and the
+   * value it ended at, so someone scrolling back a week later can still read
+   * it. Announced politely because it is the outcome of something the person
+   * deliberately pressed, not incidental rendering.
+   */
+  if (settled === "confirmed") {
+    return (
+      <div
+        className="rounded-panel border border-border bg-card px-4 py-3 text-[13px] shadow-card dark:shadow-none"
+        role="status"
+        aria-label="Change confirmed"
+      >
+        <p className="flex items-center gap-1.5 font-semibold">
+          <Check aria-hidden className="size-4 flex-none" />
+          {EXECUTED_HEADING[action.type]}
+        </p>
+        <p className="mt-0.5 text-muted-foreground">{action.entity.displayName}</p>
+        <dl className="mt-1.5 space-y-0.5">
+          {action.changes.map((change) => (
+            <div key={change.field} className="flex flex-wrap items-baseline gap-x-2">
+              <dt className="sr-only">{change.label}</dt>
+              <dd className="font-semibold">
+                {change.from ? `${change.from} → ${change.to}` : change.to}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    );
+  }
+
   return (
     <div
       className="rounded-panel border border-border bg-card px-4 py-3 text-[13px] shadow-card dark:shadow-none"
@@ -82,6 +133,7 @@ export function ActionCard({ action, onSettled }: ActionCardProps) {
       // reply is exactly the kind of thing a screen reader should mention.
       role="group"
       aria-label="Suggested change awaiting your confirmation"
+      aria-busy={busy !== null}
     >
       <div className="flex items-start gap-2">
         <Sparkles aria-hidden className="mt-0.5 size-4 flex-none text-muted-foreground" />
@@ -127,19 +179,12 @@ export function ActionCard({ action, onSettled }: ActionCardProps) {
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
+        {/* A confirmed action returned above, so the only settled state that
+            reaches here is a declined one. */}
         {done ? (
           <p className="flex items-center gap-1.5 font-semibold" role="status">
-            {settled === "confirmed" ? (
-              <>
-                <Check aria-hidden className="size-4" />
-                Confirmed and saved.
-              </>
-            ) : (
-              <>
-                <X aria-hidden className="size-4" />
-                Declined. Nothing was changed.
-              </>
-            )}
+            <X aria-hidden className="size-4" />
+            Declined. Nothing was changed.
           </p>
         ) : expired ? (
           // Stating it rather than hiding the card: a proposal that quietly

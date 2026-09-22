@@ -750,3 +750,28 @@ The audit's findings that matter here:
 
 Risk: **moderate**, tiered by transition. A stage change is re-settable but not
 reversible — every change leaves a permanent activity and audit row.
+
+---
+
+## 28. Transaction stage — domain infrastructure only
+
+**Transaction stage domain writer: ATOMIC / READY AS DOMAIN INFRASTRUCTURE.**
+**Transaction-stage AI proposal: NOT IMPLEMENTED / NOT AUTHORIZED.**
+
+`changeStage` was three independent writes whose event and audit inserts
+shared one swallowing `catch` — a deal's stage could move with nothing
+recording it. It is now `planStageChange` / `commitStageChange`, one
+authorization, one lifecycle check, three writes in one `db.batch`, proven by
+a real forced-rollback against Preview. Detail and the full stage graph:
+`docs/TRANSACTION_STAGE_DOMAIN.md`.
+
+The registry is unchanged: **9 read, 2 propose, 0 execute.** No transaction
+stage tool exists.
+
+Remaining questions before an F2-D could be reviewed, all recorded in that
+document: closing is reachable only from `closing_prep` and is **irreversible**
+— as are all three cancellation stages, since the domain lets nothing leave a
+terminal stage; closing stamps `closed_date` and immediately rewrites closed
+production; and a deal may close with **no contract price**, contributing zero
+to closed volume without saying so. The recommendation, if a capability is ever
+authorized, is to begin with active-stage moves and `on_hold` only.
