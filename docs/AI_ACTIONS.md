@@ -712,3 +712,39 @@ third member — so an execution tool cannot be expressed without editing
 for. F1's tripwires against this phase were replaced by F2-B's own guards
 rather than deleted; `scripts/test_ai_actions.ts` fails if an execution-capable
 tool ever enters the registry.
+
+---
+
+## 27. F2-C — contact stage change (architecture review, not implemented)
+
+Reviewed in **`docs/AI_CONTACT_STAGE_ACTION.md`**, kept separate to keep this
+document manageable. Nothing is implemented; the registry still holds nine read
+tools, one proposing tool and zero execution tools.
+
+**Recommendation: PROCEED** — `contacts.stage` is the correct mutation target,
+with two blocking prerequisites.
+
+The audit's findings that matter here:
+
+- **`changeStage` is not atomic** — three sequential awaits, and the activity
+  insert swallows its own failure. F2-C cannot fork it (§31 of the brief
+  forbids a parallel semantic path) and cannot use it as-is (F2-B's contract
+  requires atomicity), so the fix is to extract **one atomic operation shared
+  by the UI and AI-confirmed execution**. This is the §19 debt item coming due,
+  and it improves the human path at the same time.
+- **Stage is one field carrying several concepts.** `contact_opportunities`
+  already has the right shape for per-need progression (`kind`, `status`,
+  `transactionId`) but is inert: status is written once at creation, never
+  updated, and drives nothing. Opportunity-level progression is the correct
+  long-term target; redirecting F2-C there today would mean building that
+  domain first. Recorded as roadmap, not as a blocker.
+- **Leaving the open pipeline silently suppresses a stored follow-up.** The
+  date is retained and reappears if the contact returns. This is the one
+  behaviour the confirmation card must disclose, and it ties F2-C back to
+  F2-B's warnings.
+- **No transaction coupling exists.** `transaction_parties.contact_id` and
+  `contact_opportunities.transaction_id` are both present and both unwritten,
+  so there is no invariant to honour and none to invent.
+
+Risk: **moderate**, tiered by transition. A stage change is re-settable but not
+reversible — every change leaves a permanent activity and audit row.
