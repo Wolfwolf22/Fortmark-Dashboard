@@ -369,7 +369,9 @@ test("§20 transactions are created with money, dates and deadlines, owned by th
   expect(a.projectedCommission).toBe(21_250);
   expect(a.stage).toBe("opportunity");
   expect(String(a.closeDate).slice(0, 10)).toBe(isoDay(40));
-  expect((a.milestones as unknown[]).length).toBe(5);
+  // Five entered, plus the Closing deadline the service adds for a scheduled
+  // closing date — that is designed, and it is what "coming up" relies on.
+  expect((a.milestones as unknown[]).length).toBe(6);
   // The supplied owner and tenant were not honoured: the row is ours, and a
   // read that would have been 404 had they been is 200.
   expect(u.agentId).toBe(state.me);
@@ -410,7 +412,7 @@ test("§22–§26 stage moves: dates stamp as designed, deadlines untouched, ter
   expect((await move(state.txA, "due_diligence")).status).toBe(200);
   const afterA = await get(state.txA);
   expect(deadlines(afterA)).toEqual(deadlines(beforeA));
-  expect(deadlines(afterA).length).toBe(5);
+  expect(deadlines(afterA).length).toBe(6);
   // Ordinary active-stage movement stamps nothing: closeDate is still the
   // scheduled closing, not today.
   expect(String(afterA.closeDate).slice(0, 10)).toBe(isoDay(40));
