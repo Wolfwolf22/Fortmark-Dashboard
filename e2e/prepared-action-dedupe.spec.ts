@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { apiFor, chat, signInCertificationUser } from "./session";
+import { expect, test, type Page } from "@playwright/test";
+import { chatAs, refreshingApiFor, signInCertificationUser } from "./session";
 
 /**
  * ISS-14 — one pending proposal per identical request.
@@ -22,8 +22,8 @@ import { apiFor, chat, signInCertificationUser } from "./session";
  */
 test.describe.configure({ mode: "serial" });
 
-let jwt: string;
-let api: ReturnType<typeof apiFor>;
+let page: Page;
+let api: ReturnType<typeof refreshingApiFor>;
 const state: { contactId?: string; firstActionId?: string } = {};
 
 const FIXTURE = { firstName: "SYSVERIFY", lastName: "Dedupe Dana" };
@@ -40,7 +40,7 @@ async function pending(): Promise<Record<string, unknown>[]> {
 
 /** Ask for a follow-up in words the tool can act on, and wait for the turn. */
 async function askForFollowUp(day: string): Promise<string> {
-  return await chat(jwt, [
+  return await chatAs(page, [
     {
       role: "user",
       content: `Schedule a follow-up with ${FIXTURE.firstName} ${FIXTURE.lastName} for next ${day}.`,
@@ -50,10 +50,11 @@ async function askForFollowUp(day: string): Promise<string> {
 
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(600_000);
-  const page = await browser.newPage();
-  jwt = await signInCertificationUser(page);
-  api = apiFor(jwt);
-  await page.close();
+  // The page stays open for the life of the spec: it is what keeps the
+  // Clerk session alive and hands out current tokens.
+  page = await browser.newPage();
+  await signInCertificationUser(page);
+  api = refreshingApiFor(page);
 
   const created = await api("/dashboard/api/contacts", {
     method: "POST",

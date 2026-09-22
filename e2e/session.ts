@@ -269,6 +269,31 @@ export function apiFor(jwt: string) {
   };
 }
 
+/**
+ * An authenticated request whose token is never more than thirty seconds old.
+ *
+ * Clerk session tokens are deliberately short-lived, and a long serial spec
+ * outlives one: a suite that captured a token once and spent two minutes
+ * talking to a language model then read the next 401 as a product refusal.
+ * The page stays open, Clerk refreshes the session in the background, and a
+ * current token is a question to that page.
+ */
+export function refreshingApiFor(page: Page) {
+  const MAX_AGE_MS = 30_000;
+  let cached: { jwt: string; at: number } | null = null;
+  return async function api(path: string, init: RequestInit = {}) {
+    if (!cached || Date.now() - cached.at > MAX_AGE_MS) {
+      cached = { jwt: await freshToken(page), at: Date.now() };
+    }
+    return apiFor(cached.jwt)(path, init);
+  };
+}
+
+/** A chat turn on a token that is current at the moment it is sent. */
+export async function chatAs(page: Page, messages: { role: string; content: string }[]): Promise<string> {
+  return await chat(await freshToken(page), messages);
+}
+
 /** Send one chat turn through the real deployed assistant and read the stream. */
 export async function chat(jwt: string, messages: { role: string; content: string }[]): Promise<string> {
   const res = await fetch(`${DASHBOARD}/dashboard/api/chat`, {
