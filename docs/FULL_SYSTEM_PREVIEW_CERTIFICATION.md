@@ -307,3 +307,305 @@ Read from the Preview branch after the fixtures existed:
 - O1 remains frozen; no transaction-stage AI action exists.
 - The AI registry is unchanged: **9 read / 2 propose / 0 execute**.
 - ISS-07 was not fixed: it is four pages and a design decision, outside a phase that adds no features and fixes only what is small and clearly defined.
+
+---
+
+# Remediation pass — 2026-09-22
+
+**READY FOR PRODUCTION PROMOTION AUDIT**
+
+| | |
+|---|---|
+| Revision | `05c29cb` on `claude/dashboard-status-yir55p` (+ harness commits after it) |
+| Scope | the four certification blockers only — no features, no O1, no Production |
+| Preview database | migration `0008` applied to `br-crimson-smoke-avlj2rmp`; Production branch has neither the column nor the index |
+| Registry | **9 read / 2 propose / 0 execute**, unchanged (`execute` is not expressible in `ToolEffect`) |
+
+## ISS-07 — undisclosed mock data — **RESOLVED**
+
+**Previously.** Nine domains had no backing service and answered from
+`lib/data/mock/db.ts` in every environment. On an account with no records at
+all: Reports showed "PROJECTED GCI $309.6K", "LIST-TO-SALE 97.2%", "MEDIAN
+DAYS ON MARKET 37"; Messages two unread threads from Sarah Kaplan and Mike
+Torres; Calendar a week of showings and inspections; Documents "146
+documents · 109 executed"; Settings a roster of colleagues, a brokerage
+record and an integration list; the notification bell "Notifications (3
+unread)". None of it was labelled.
+
+**Root cause.** The generator was imported directly by adapters with no
+source decision at all — the same defect the listings domain had already been
+fixed for, repeated in nine places. Three settings sections also read only
+`loading`, so even a refused read left them pulsing rather than speaking.
+
+**Fix.** One server-authoritative gate, reusing the fixture flag that already
+exists rather than nine new variables:
+
+- `lib/subsystems/config.ts` (server-only) maps every unbacked domain to
+  `sample` or `not_configured` from `SAMPLE_DASHBOARD_ENABLED=1`, exactly.
+- `GET /api/subsystems` (authenticated, `private, no-store`) publishes it.
+- `lib/data/adapters/subsystems.ts` asks once per page load and refuses the
+  read otherwise — including when the question itself cannot be answered, so
+  fiction is never the default.
+- Every read in the eight generator-backed adapters asks **before** it
+  touches anything.
+- `components/common/subsystem-state.tsx` holds one copy table, so the answer
+  reads the same everywhere and no sentence states a count.
+
+**Real-mode behaviour by route**
+
+| Route | Before | Now |
+|---|---|---|
+| Reports | invented GCI, ratio, DOM, per-agent production | "Reports are not available." — no subset is computable from the real domains without building an analytics domain, so it states that rather than estimating |
+| Messages | two unread threads from named people | "Messaging is not connected." |
+| Calendar | a week of generated appointments | "Calendar is not connected." |
+| Documents | 146 files, 109 "executed" | "Document storage is not configured." |
+| Settings → Team | a generated roster | "Team directory is not configured." |
+| Settings → Brokerage | a generated office record | "Brokerage details are not configured." |
+| Settings → Integrations | a generated connection list | "Integrations are not configured." |
+| Settings → Profile / account | real | unchanged — this is the Clerk identity |
+| Notification bell | "Notifications (3 unread)" | label is "Notifications"; the panel says it is not connected |
+| Market / compliance widgets | generated | unavailable through the same gate |
+| Home | already real | unchanged — the only route showing a figure, and it is the database's |
+
+**Fixture behaviour.** With `SAMPLE_DASHBOARD_ENABLED=1` every one of these
+serves the sample set and carries a visible `SampleDataNotice` naming what is
+generated. Production leaves the flag unset and therefore gets nothing.
+
+**Regression.** `scripts/test_mock_leak.ts` — 61 checks, asserted by source
+selection rather than vocabulary: who may reach the generator (only the eight
+guarded adapters and the four source-gated sample sets), that every read asks
+first and asks before it touches anything, that the browser never decides for
+itself, that an unanswered question refuses, that each screen renders the
+refusal, that fixture mode is labelled, and that no sentence states a count.
+Eight negative controls confirm it fails when the invariant is broken. One
+structural repair fell out: the hour-anchored clock lived in the generator, so
+a module wanting the time had to import the fabricated brokerage; it now lives
+in `lib/dates.ts`, which lets the invariant forbid that import outright.
+
+**Zero-data closure (§16, §38).** `e2e/zero-data-sweep.spec.ts`, 8/8 on an
+account with 0 contacts and 0 transactions: every subsystem reports
+`not_configured`; no route shows money or a generated person, file or event;
+each unbacked route states its absence; the settings sections state theirs
+while the real account card stays; the bell carries no count. Home is the one
+route showing a figure and the sweep proves the claim behind it — the metrics
+API reports `source: "database"`, both domains report `available`, and
+`activeVolumeCents` really is `0`. A queried zero is not a manufactured one.
+
+## ISS-09 — Vercel Security Checkpoint — **OPEN, BOUNDED, NOT A PRODUCT DEFECT**
+
+**What it is.** Vercel's platform-level system mitigation answers some
+requests from this runner with `403` and `x-vercel-mitigated: challenge`,
+serving the "Vercel Security Checkpoint" HTML page in place of the asset. When
+the asset is a JavaScript chunk the browser refuses to execute HTML, the
+client runtime never boots, and the page is dead or lands on Next's
+"Application error" boundary.
+
+**Measured, 2026-09-22.** Browser session, real deployment:
+
+| Asset class | Route | Result |
+|---|---|---|
+| Documents (API + HTML) | Preview dashboard, Preview portal, Production dashboard, Production website | 0 challenged in 40 each |
+| Static chunk `webpack-…js` | through the portal rewrite | 16/40 challenged |
+| Static chunk `webpack-…js` | dashboard origin directly | 8/40 challenged |
+| Static chunk `4bd1b696-…js` | both origins | 40/40 challenged |
+
+Two things follow. It **escalates with request volume** from one client
+address — the second chunk was challenged every time after the first probe —
+and it is **not the portal rewrite's doing**: the dashboard origin is
+challenged directly at a similar rate. The rewrite only relays it, sometimes
+converting the upstream challenge into a `502 upstream request failed`.
+
+**Why no bypass was applied.** Deployment Protection is *disabled* on both
+projects (`passwordProtection`, `ssoProtection`, `trustedIps` all off), and no
+`VERCEL_AUTOMATION_BYPASS_SECRET` exists. `x-vercel-protection-bypass` is the
+documented bypass for Deployment Protection, which is not what is challenging
+us. Neither project has a firewall configuration at all ("Seawall Config not
+found"), so this is not Attack Challenge Mode and not a project rule — it is
+Vercel's automatic DDoS protection and system-level traffic filtering.
+
+The only supported lever is `vercel firewall system-mitigations pause`, which
+is **project-scoped and therefore covers Production as well**, and it is a
+security control rather than a testing switch. Per the phase's own rule, it
+was not applied and the decision is not this pass's to make.
+
+**Production implication.** The same platform mitigation applies to Production
+— it is Vercel's, not the project's. It was never observed on document
+requests from any origin in 200 attempts, and Production's own health
+endpoint answered 40/40. The risk to a person is bounded to the case
+certification actually saw: a client whose address the platform is
+throttling, requesting many sub-resources. It should be understood before
+Production traffic is judged, and it does **not** block promotion.
+
+**Effect on this certification.** Instrumented rather than hidden. The harness
+retries a challenged API request three times with backoff and counts every
+occurrence (`platformChallenges`); the browser specs reload a page whose
+runtime never booted, up to three times, and report each reload. The final
+full-system run needed **zero** reloads and saw **zero** challenges.
+
+## ISS-14 — duplicate PreparedActions — **RESOLVED**
+
+**Invariant.** An identical, unexpired, pending proposal is reused rather than
+duplicated. Identity is everything that decides what would happen: tenant,
+actor, action type, target, payload, and the fingerprint of the record state
+the proposal was computed against.
+
+**Mechanism.** `pending_key` (sha256 over that identity) plus a partial unique
+index `WHERE status = 'prepared'`. A second prepare inserts nothing and is
+handed the row that already exists, described by its own id, clock and
+preview. Expired rows are retired to `status = 'expired'` before the insert,
+because expiry is a timestamp and an expired row would otherwise hold the
+slot. Staleness needs no special case: a record that moved hashes differently.
+
+**Sequential (live, through the real assistant and the real model).** Ask,
+then ask the identical thing again → **1 pending**, same `actionId`, same
+`expiresAt`. A different date → 2 distinct proposals, so deduplication is not
+suppression. Execute one, then ask again → a new proposal, never the executed
+one.
+
+**Concurrent (on the real table, Preview branch).** Two identical pending
+inserts attempted back to back inside one transaction: the first accepted, the
+second rejected by the unique index, a settled row with the same key accepted
+because settled rows are outside the partial index. Proof rows deleted
+afterwards.
+
+**Rendered (§30).** `rendered-actions.spec.ts` 14/14, including the step that
+previously failed with "Received: 2" live proposal cards.
+
+**Offline.** 19 checks in `scripts/test_ai_actions.ts` with six negative
+controls. The model was told nothing new: a prompt rule would hold only until
+it forgot, and would do nothing about a double-tapped button.
+
+## ISS-03 — command palette focus — **RESOLVED**
+
+Previously `document.activeElement` was `<body>` after opening with the
+keyboard and pressing Escape, so a keyboard user's next Tab started again from
+the top of the document. The palette now remembers what opened it and restores
+focus there when it is still on the page and visible, otherwise to the search
+control in the top bar, which is part of the shell and outlives every route.
+Selecting a result deliberately forgets the opener, which the navigation is
+about to unmount.
+
+`e2e/palette-focus.spec.ts`, 8/8: Ctrl+K, Cmd+K, the toggle, the search
+button, a click outside, selecting a result, and phone width. Every path lands
+on the search control; none lands on `<body>`; none is trapped in the closed
+dialog. Opening from the button returns focus to that exact button. Six
+structural checks in the search suite with two negative controls.
+
+## ISS-05 — profile UI flag — **ACCEPTED (intentional configuration)**
+
+`PROFESSIONAL_PROFILE_UI_ENABLED` exists on the project for `production`, and
+for `preview` **scoped to two git branches** — `claude/professional-profile-onboarding`
+and `claude/neon-production-profile-infra-jksvj0` — where that feature was
+built and certified. There is no unscoped preview entry, which is why the
+certification branch sees a 404 from `/api/profile` while
+`PROFILE_DATABASE_ENABLED` (which *is* unscoped) keeps contacts and
+transactions live.
+
+This is deliberate branch-scoped configuration, not an omission. Nothing was
+changed: the API's correctness is covered offline (1,193 checks) and enabling
+a UI on a branch it was not scoped to would be a rollout decision, not a fix.
+
+## ISS-06 — model variance — **ACCEPTED (known model behaviour)**
+
+Measured rather than argued, on 2026-09-22, each trial independent (pending
+proposals cancelled first, fixture name unique per run) and scored on the
+server's state rather than the model's prose:
+
+| Request | Correct tool selected |
+|---|---|
+| "Schedule a follow-up with X for next Friday" | **6 / 6** |
+| "Mark X as qualified" | **5 / 6** |
+| "Archive X" (out of scope) | refused, prepared nothing — the correct answer |
+
+The one miss was a name-resolution failure ("I couldn't find a contact
+matching 'Mark SYSVERIFY Variance YP5K'") — the verb was searched along with
+the name — not a refusal of capability. It prepared nothing.
+
+The original ISS-06 signature ("I can't change a contact's stage from chat")
+recurred once today, in the F2-C suite, on the third turn of a conversation
+whose two previous turns had both been correctly refused for archiving; two
+consecutive re-runs then passed 10/10. Across every measurement today the
+tool was selected 21 times in 24.
+
+No prompt was changed. The behaviour is rare, prepares nothing when it
+happens, and names the manual path; redesigning a prompt around natural
+variance would trade a known small cost for an unknown one.
+
+## P3 issues — unchanged
+
+ISS-11 (`contractPrice` reports `0` for an unpriced deal while the cents field
+is absent), ISS-12 (one `/dashboard.rsc` 500 on an earlier deployment, not
+reproduced), ISS-13 (the assistant counts an on-hold deal among "active" while
+the brief excludes it and says so). None became a blocker; none was fixed.
+
+## Mock inventory after remediation
+
+| Subsystem | Real-mode state | Fixture mode | Backing source |
+|---|---|---|---|
+| Authentication & session | REAL | — | Clerk + `requireCaller` |
+| Authorization | REAL | — | `dashboard_users`, `visibleTo(actor)` |
+| Contacts / leads | REAL | labelled sample | Neon |
+| Transactions & deadlines | REAL | labelled sample | Neon |
+| Home metrics | REAL | labelled sample | `/api/metrics` over both domains |
+| Search | REAL | — | `POST /api/search` |
+| Assistant + prepared actions | REAL | — | OpenAI `gpt-5.5`, `ai_prepared_actions` |
+| Professional profile API | REAL | — | `professional_profiles` |
+| Professional profile UI | NOT CONFIGURED | — | branch-scoped flag (ISS-05) |
+| Listings / MLS | NOT CONFIGURED | labelled sample | Bridge credential absent |
+| Calendar | NOT CONFIGURED | labelled sample | none |
+| Documents | NOT CONFIGURED | labelled sample | none |
+| Messages | NOT CONFIGURED | labelled sample | none |
+| Notifications | NOT CONFIGURED | labelled sample | none |
+| Market / compliance | NOT CONFIGURED | labelled sample | none |
+| Team directory | NOT CONFIGURED | labelled sample | none |
+| Brokerage record | NOT CONFIGURED | labelled sample | none |
+| Integrations | NOT CONFIGURED | labelled sample | none |
+| Reports | NOT CONFIGURED | labelled sample | none |
+| Transaction-stage AI action | NOT IMPLEMENTED (O1 frozen) | — | — |
+
+Nothing remains MOCK-presented-as-REAL.
+
+## Recertification evidence
+
+| Suite | Result |
+|---|---|
+| `full-system.spec.ts` (29 tests, whole file) | **29 / 29 in one run** — the first complete end-to-end pass. Sweep: 0 page errors, 0 product 5xx, 0 chunk 5xx, 0 reloads. Includes the whole authorization matrix (§16, §21, §59/§60, §86), the AI section, the route sweep, the 4×5 overflow matrix and the hostile-name check |
+| `zero-data-sweep.spec.ts` (ISS-07 closure) | 8 / 8 |
+| `palette-focus.spec.ts` (ISS-03) | 8 / 8 |
+| `prepared-action-dedupe.spec.ts` (ISS-14) | 4 / 4 |
+| `model-variance.spec.ts` (ISS-06) | 4 / 4, sample above |
+| `rendered-actions.spec.ts` | 14 / 14 |
+| `f2b-certification.spec.ts` | 9 / 9 |
+| `f2c-certification.spec.ts` | 10 / 10 (×2 after one ISS-06 refusal) |
+| `expired-action.spec.ts` | 1 / 1 |
+| `portal-topology.spec.ts` | 2 / 2 |
+| `npm test` (typecheck + 12 suites) | **2,551 / 2,551** |
+| `npm run build` | compiled |
+
+## Cleanup
+
+| Table | Before cleanup | After |
+|---|---|---|
+| `ai_prepared_actions` | 2 | 0 |
+| `audit_events` | 125 | 0 |
+| `contact_activities` | 12 | 0 |
+| `contact_opportunities` | 0 | 0 |
+| `contacts` | 8 | 0 |
+| `dashboard_users` | 3 | 0 |
+| `professional_profiles` | 0 | 0 |
+| `profile_images` | 0 | 0 |
+| `transaction_deadlines` | 6 | 0 |
+| `transaction_events` | 8 | 0 |
+| `transaction_parties` | 0 | 0 |
+| `transactions` | 8 | 0 |
+
+Duplicate pending proposals at cleanup: **0**. The synthetic Clerk identity
+remains, as permitted; its database row does not.
+
+## Production
+
+Untouched. No deploy, no merge, no promotion, no environment variable, no
+migration, no AI configuration, no fixture mode, no automation bypass. The
+newest Production deployment is still `dpl_5WFnRw8PyQuEm7XpcWBhBYdrNp9M`
+(commit `625dc90`, 03:27 UTC), which predates this work, and the Production
+Neon branch has neither `pending_key` nor its index.
