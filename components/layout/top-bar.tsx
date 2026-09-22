@@ -27,6 +27,7 @@ export function TopBar({ profile }: { profile: ShellProfile }) {
         onClick={() => setCommandOpen(true)}
         className="hidden h-9 w-56 items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm text-muted-foreground transition-colors hover:border-muted-foreground md:flex lg:w-64"
         aria-label="Search (Command K)"
+        data-command-trigger=""
       >
         <Search className="h-4 w-4" aria-hidden />
         <span className="flex-1 text-left">Search</span>
@@ -37,6 +38,7 @@ export function TopBar({ profile }: { profile: ShellProfile }) {
         onClick={() => setCommandOpen(true)}
         className="flex h-9 w-9 items-center justify-center rounded-lg border border-input bg-card text-muted-foreground transition-colors hover:text-foreground md:hidden"
         aria-label="Search"
+        data-command-trigger=""
       >
         <Search className="h-4 w-4" aria-hidden />
       </button>

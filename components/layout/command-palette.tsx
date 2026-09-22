@@ -47,6 +47,21 @@ const ACTIONS = [
 /** Debounce: long enough to skip intermediate keystrokes, short enough to feel live. */
 const DEBOUNCE_MS = 140;
 
+/** Still on the page, still able to take focus. */
+function focusable(node: Element | null): node is HTMLElement {
+  if (!(node instanceof HTMLElement)) return false;
+  if (!node.isConnected || node === document.body) return false;
+  if (node.hasAttribute("disabled") || node.getAttribute("aria-hidden") === "true") return false;
+  // A hidden element accepts focus() and then silently drops it back to body.
+  return node.offsetParent !== null || node.getClientRects().length > 0;
+}
+
+/** The visible search control in the top bar — desktop or mobile, whichever is up. */
+function searchTrigger(): HTMLElement | null {
+  const triggers = Array.from(document.querySelectorAll<HTMLElement>("[data-command-trigger]"));
+  return triggers.find(focusable) ?? null;
+}
+
 /**
  * ⌘K — FortMark's retrieval surface.
  *
@@ -70,6 +85,37 @@ export function CommandPalette() {
   const [response, setResponse] = React.useState<SearchResponse | null>(null);
   const [searching, setSearching] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
+
+  /**
+   * Where focus came from, so it has somewhere to go back to.
+   *
+   * Radix restores focus to whatever was focused when the dialog opened, and
+   * for ⌘K that is usually nothing at all: certification measured
+   * `document.activeElement` as `<body>` after opening the palette by
+   * keyboard and pressing Escape, which leaves someone working by keyboard
+   * with no place on the page — the next Tab starts again from the top of
+   * the document.
+   *
+   * So the opener is remembered here, and `restoreFocus` below decides:
+   * whatever opened the palette if it is still on the page, otherwise the
+   * search control in the top bar, which is where the palette conceptually
+   * lives. Only if neither exists is Radix's own behaviour left alone.
+   */
+  const opener = React.useRef<HTMLElement | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const active = document.activeElement;
+    opener.current = focusable(active) ? active : null;
+  }, [open]);
+
+  const restoreFocus = React.useCallback((event: Event) => {
+    // Navigation unmounts the opener; the trigger outlives every route.
+    const destination = focusable(opener.current) ? opener.current : searchTrigger();
+    if (!destination) return;
+    event.preventDefault();
+    destination.focus();
+  }, []);
 
   React.useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -128,6 +174,12 @@ export function CommandPalette() {
   }, [query, open]);
 
   const go = (href: string) => {
+    // Selecting a result navigates, which unmounts whatever opened the
+    // palette — a row in a table, a link in a list. Forgetting the opener
+    // here sends focus to the search control instead, which is part of the
+    // shell and survives the route change; restoring to a element that is
+    // about to disappear would drop focus on `<body>` a tick later.
+    opener.current = null;
     setOpen(false);
     router.push(href);
   };
@@ -149,7 +201,12 @@ export function CommandPalette() {
     : ACTIONS;
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen} title="Search FortMark">
+    <CommandDialog
+      open={open}
+      onOpenChange={setOpen}
+      title="Search FortMark"
+      onCloseAutoFocus={restoreFocus}
+    >
       <CommandInput
         placeholder="Search people, deals, addresses…"
         value={query}

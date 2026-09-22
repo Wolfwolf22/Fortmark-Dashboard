@@ -22,10 +22,24 @@ const Command = React.forwardRef<
 ));
 Command.displayName = CommandPrimitive.displayName;
 
-const CommandDialog = ({ children, title = "Search", ...props }: DialogProps & { title?: string }) => {
+/**
+ * `onCloseAutoFocus` belongs to the dialog's content, not the root, so it is
+ * named here rather than swept up by `...props`. A palette that is opened by
+ * a keystroke has no trigger to hand focus back to, and without this the
+ * caller cannot say where focus should land instead.
+ */
+const CommandDialog = ({
+  children,
+  title = "Search",
+  onCloseAutoFocus,
+  ...props
+}: DialogProps & {
+  title?: string;
+  onCloseAutoFocus?: (event: Event) => void;
+}) => {
   return (
     <Dialog {...props}>
-      <DialogContent className="overflow-hidden p-0" hideClose>
+      <DialogContent className="overflow-hidden p-0" hideClose onCloseAutoFocus={onCloseAutoFocus}>
         <DialogTitle className="sr-only">{title}</DialogTitle>
         <Command
           shouldFilter={false}

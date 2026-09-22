@@ -313,6 +313,48 @@ check("a stale answer cannot overwrite a newer one", (() => {
   );
 })());
 
+// --- Focus goes back somewhere ------------------------------------------------------------
+// Certification measured `document.activeElement` as BODY after opening the
+// palette with the keyboard and pressing Escape. A keyboard user who loses
+// their place restarts from the top of the document on the next Tab, so the
+// palette must hand focus back deliberately rather than leave it to Radix,
+// which has nothing to restore when the palette was opened by a keystroke.
+check("the palette decides where focus lands when it closes", (() => {
+  const palette = code("components/layout/command-palette.tsx");
+  return (
+    palette.includes("onCloseAutoFocus={restoreFocus}") &&
+    /const restoreFocus = React\.useCallback/.test(palette)
+  );
+})());
+check("focus never goes to the document body", (() => {
+  const palette = code("components/layout/command-palette.tsx");
+  return /node === document\.body/.test(palette) && /return false/.test(palette);
+})());
+check("a hidden or detached opener is not focused", (() => {
+  const palette = code("components/layout/command-palette.tsx");
+  return (
+    /!node\.isConnected/.test(palette) &&
+    /offsetParent !== null \|\| node\.getClientRects\(\)\.length > 0/.test(palette)
+  );
+})());
+check("the search control is the fallback, and it exists to be found", (() => {
+  const palette = code("components/layout/command-palette.tsx");
+  const topBar = code("components/layout/top-bar.tsx");
+  return (
+    palette.includes('querySelectorAll<HTMLElement>("[data-command-trigger]")') &&
+    (topBar.match(/data-command-trigger/g) ?? []).length === 2
+  );
+})());
+check("selecting a result does not restore focus to a row that is navigating away", (() => {
+  const palette = code("components/layout/command-palette.tsx");
+  const at = palette.indexOf("const go = (href: string) => {");
+  return at !== -1 && palette.slice(at, at + 200).includes("opener.current = null;");
+})());
+check("the dialog primitive forwards the close handler to its content", (() => {
+  const command = code("components/ui/command.tsx");
+  return /<DialogContent[^>]*onCloseAutoFocus=\{onCloseAutoFocus\}/.test(command);
+})());
+
 // --- Report ---------------------------------------------------------------------------------
 console.log(`\n${passed}/${passed + failures.length} search checks passed`);
 if (failures.length > 0) {
