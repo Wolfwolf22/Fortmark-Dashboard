@@ -1,24 +1,38 @@
 /**
- * Agents adapter. Mock-backed today; swap the bodies for the identity /
- * production service and the UI is untouched.
+ * Agents adapter.
+ *
+ * There is no agent directory and no production service. The roster and the
+ * ranked leaderboard below are generated, so both are refused outside the
+ * labelled fixture mode: a named colleague with a dollar figure beside them
+ * is a statement about a real person's year.
+ *
+ * `getAgent` is the exception, and deliberately so. It is a lookup into the
+ * sample roster, asked only about rows that came from that roster, and its
+ * callers already treat "not found" as "show what the record itself says".
+ * Outside fixture mode it finds nobody — which invents nothing, states
+ * nothing, and lets a real record's own agent name stand.
  */
 import { Agent, AgentProduction, DateRange } from "../types";
 import { agents, transactions } from "../mock/db";
 import { inRange } from "@/lib/dates";
 import { delay } from "./latency";
+import { isSampleSubsystem, requireSubsystem } from "./subsystems";
 
 export async function getAgents(): Promise<Agent[]> {
+  await requireSubsystem("team");
   await delay(100);
   return [...agents];
 }
 
 export async function getAgent(id: string): Promise<Agent | undefined> {
+  if (!(await isSampleSubsystem("team"))) return undefined;
   await delay(80);
   return agents.find((a) => a.id === id);
 }
 
 /** Ranked production within a period, for the leaderboard and Reports. */
 export async function getLeaderboard(range: DateRange): Promise<AgentProduction[]> {
+  await requireSubsystem("reports");
   await delay();
   const rows = agents
     .filter((a) => a.role !== "coordinator")

@@ -44,6 +44,8 @@ import {
 } from "@/components/ui/table";
 import { getTeam } from "@/lib/data/adapters/settings";
 import { useQuery } from "@/lib/data/hooks";
+import { SubsystemNotConnected, unavailableSubsystem } from "@/components/common/subsystem-state";
+import { SampleDataNotice } from "@/components/listings/sample-data-notice";
 import { TeamMember } from "@/lib/data/types";
 import { initials } from "@/lib/utils";
 import { SectionSkeleton } from "./section-skeleton";
@@ -56,8 +58,12 @@ const TEAM_ROLES: TeamMember["role"][] = [
 ];
 
 export function TeamSection() {
-  const { data, loading } = useQuery(() => getTeam(), []);
+  const { data, loading, error } = useQuery(() => getTeam(), []);
 
+  // A failed read is not a slow one: without this the section pulsed
+  // forever when the subsystem refused, saying nothing at all.
+  const missing = unavailableSubsystem(error);
+  if (missing) return <SubsystemNotConnected subsystem={missing} />;
   if (loading || !data) return <SectionSkeleton rows={5} />;
   return <TeamManager initial={data} />;
 }
@@ -99,6 +105,9 @@ function TeamManager({ initial }: { initial: TeamMember[] }) {
 
   return (
     <Card>
+      <div className="px-6 pt-6">
+        <SampleDataNotice subject="These colleagues are generated for development. Nobody listed here has access to this workspace." />
+      </div>
       <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
         <div className="space-y-1">
           <CardTitle>Team</CardTitle>

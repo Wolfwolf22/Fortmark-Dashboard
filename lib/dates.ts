@@ -11,7 +11,24 @@ import {
   startOfYear,
 } from "date-fns";
 import type { DateRange, DateRangePreset } from "./data/types.ts";
-import { now } from "./data/mock/db.ts";
+
+/**
+ * "Now", anchored to the top of the current hour.
+ *
+ * Every derived date in a render must agree between the server pass and the
+ * client's hydration, and a clock read twice a millisecond apart does not.
+ * This lived in the sample generator, which meant a module wanting nothing
+ * more than the time had to import the fabricated brokerage to get it — and
+ * that import is exactly what the mock-leak invariant needs to be able to
+ * forbid outright. The clock is not sample data; it belongs here.
+ */
+const HOUR_ANCHOR = (() => {
+  const d = new Date();
+  d.setMinutes(0, 0, 0);
+  return d;
+})();
+
+export const now = () => new Date(HOUR_ANCHOR);
 
 export const PRESET_LABELS: Record<DateRangePreset, string> = {
   today: "Today",

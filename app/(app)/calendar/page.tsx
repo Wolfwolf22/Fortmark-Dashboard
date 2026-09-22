@@ -24,6 +24,9 @@ import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
 import { getEvents } from "@/lib/data/adapters/calendar";
 import { useQuery } from "@/lib/data/hooks";
+import { SubsystemNotConnected, unavailableSubsystem } from "@/components/common/subsystem-state";
+import { SampleDataNotice } from "@/components/listings/sample-data-notice";
+import { Card } from "@/components/ui/card";
 import {
   CalendarEvent,
   EVENT_TYPE_LABELS,
@@ -69,7 +72,7 @@ export default function Page() {
   }, [view, cursorTime]);
 
   const typesKey = [...types].sort().join(",");
-  const { data: events, loading } = useQuery(
+  const { data: events, loading, error } = useQuery(
     () =>
       types.length === 0
         ? Promise.resolve<CalendarEvent[]>([])
@@ -105,8 +108,23 @@ export default function Page() {
     setDetailOpen(true);
   }
 
+  // There is no calendar provider. An empty month would read as "you have
+  // nothing on", which is a claim about the reader's week.
+  const missing = unavailableSubsystem(error);
+  if (missing) {
+    return (
+      <Card className="flex min-h-[24rem] items-center justify-center">
+        <SubsystemNotConnected subsystem={missing} />
+      </Card>
+    );
+  }
+
   return (
     <div className="space-y-4">
+      {/* Events only reach this page in the labelled fixture mode. */}
+      {events && events.length > 0 && (
+        <SampleDataNotice subject="These appointments are generated for development. Nothing here is on anyone's calendar." />
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1">
           <Button

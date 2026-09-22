@@ -1,10 +1,17 @@
 /**
- * Settings adapter. Mock-backed today; swap the bodies for the account
- * service and the UI is untouched.
+ * Settings adapter.
+ *
+ * Two different things used to live here under one word, "settings": the
+ * signed-in person's real account, and a generated brokerage — a roster of
+ * colleagues, a licence number, an address, a list of integrations. The
+ * first is real and is not served from this file at all (see below). The
+ * second described no brokerage, and is now refused outside the labelled
+ * fixture mode rather than presented as this brokerage's configuration.
  */
 import { BrokerageProfile, IntegrationStatus, TeamMember } from "../types";
 import { agents, brokerage } from "../mock/db";
 import { delay } from "./latency";
+import { requireSubsystem } from "./subsystems";
 
 /**
  * There is deliberately no `getCurrentUser()` here.
@@ -17,6 +24,7 @@ import { delay } from "./latency";
  * `getTeam()` below is brokerage roster data, not identity.
  */
 export async function getTeam(): Promise<TeamMember[]> {
+  await requireSubsystem("team");
   await delay();
   return agents.map((a) => ({
     id: a.id,
@@ -33,11 +41,13 @@ export async function getTeam(): Promise<TeamMember[]> {
 }
 
 export async function getBrokerage(): Promise<BrokerageProfile> {
+  await requireSubsystem("brokerage");
   await delay(100);
   return { ...brokerage };
 }
 
 export async function getIntegrations(): Promise<IntegrationStatus[]> {
+  await requireSubsystem("integrations");
   await delay(100);
   return [
     {

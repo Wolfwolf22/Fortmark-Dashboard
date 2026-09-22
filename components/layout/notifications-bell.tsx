@@ -10,11 +10,17 @@ import {
   getNotifications,
   markAllNotificationsRead,
 } from "@/lib/data/adapters/notifications";
+import { SUBSYSTEM_COPY, unavailableSubsystem } from "@/components/common/subsystem-state";
 import { formatRelative } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
 export function NotificationsBell({ expanded }: { expanded: boolean }) {
-  const { data: notifications } = useQuery(() => getNotifications(), []);
+  const { data: notifications, error } = useQuery(() => getNotifications(), []);
+  // There is no notification service. The bell stays — it is part of the
+  // shell — but it never carries a count it cannot justify, and the panel
+  // says why it is empty instead of "nothing needs your attention", which
+  // on a zero-data account was a claim nobody had checked.
+  const notConnected = unavailableSubsystem(error) !== null;
   const unread = notifications?.filter((n) => !n.read).length ?? 0;
 
   const trigger = (
@@ -97,7 +103,12 @@ export function NotificationsBell({ expanded }: { expanded: boolean }) {
               </Link>
             </li>
           ))}
-          {notifications && notifications.length === 0 && (
+          {notConnected && (
+            <li className="px-4 py-8 text-center text-[13px] text-muted-foreground">
+              {SUBSYSTEM_COPY.notifications.title}
+            </li>
+          )}
+          {!notConnected && notifications && notifications.length === 0 && (
             <li className="px-4 py-8 text-center text-sm text-muted-foreground">
               Nothing needs your attention.
             </li>

@@ -29,11 +29,11 @@ import type {
 import { TRANSACTION_STAGES } from "../types.ts";
 import { chance, float, int, listingPrice, mulberry32, pick, shuffle } from "./random.ts";
 
-// Anchor "now" to the top of the current hour so server render and client
-// hydration agree on every derived date within the hour.
-const NOW = new Date();
-NOW.setMinutes(0, 0, 0);
-export const now = () => new Date(NOW);
+// The stable hour-anchored clock lives in `lib/dates.ts` — it is the time,
+// not sample data, and nothing should have to import this file to read it.
+import { now } from "../../dates.ts";
+export { now };
+const NOW = now();
 
 const DAY = 86400000;
 const iso = (d: Date) => d.toISOString();

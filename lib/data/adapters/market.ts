@@ -1,14 +1,20 @@
 /**
- * Market pulse + compliance adapter. Mock-backed today; swap the bodies for
- * the market data feed and the UI is untouched.
+ * Market pulse + compliance adapter.
+ *
+ * There is no market feed and no compliance system. Price cuts, new
+ * listings and missing-document warnings below are generated, so each read
+ * asks first whether this deployment is in the labelled fixture mode.
  */
 import { ComplianceItem, MarketActivityItem } from "../types";
-import { complianceItems, marketActivity, now } from "../mock/db";
+import { complianceItems, marketActivity } from "../mock/db";
+import { now } from "@/lib/dates";
 import { delay } from "./latency";
+import { requireSubsystem } from "./subsystems";
 
 export async function getMarketActivity(
   tab: "today" | "history"
 ): Promise<MarketActivityItem[]> {
+  await requireSubsystem("market");
   await delay();
   const startOfToday = new Date(now());
   startOfToday.setHours(0, 0, 0, 0);
@@ -21,6 +27,7 @@ export async function getMarketActivity(
 }
 
 export async function getComplianceItems(): Promise<ComplianceItem[]> {
+  await requireSubsystem("market");
   await delay();
   return [...complianceItems];
 }

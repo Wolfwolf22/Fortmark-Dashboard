@@ -25,11 +25,13 @@ import {
 } from "@/components/ui/dialog";
 import { getIntegrations } from "@/lib/data/adapters/settings";
 import { useQuery } from "@/lib/data/hooks";
+import { SubsystemNotConnected, unavailableSubsystem } from "@/components/common/subsystem-state";
+import { SampleDataNotice } from "@/components/listings/sample-data-notice";
 import { IntegrationStatus } from "@/lib/data/types";
 import { SectionSkeleton } from "./section-skeleton";
 
 export function IntegrationsSection() {
-  const { data, loading } = useQuery(() => getIntegrations(), []);
+  const { data, loading, error } = useQuery(() => getIntegrations(), []);
   // Keep the last-opened integration through the close animation.
   const [dialogIntegration, setDialogIntegration] =
     useState<IntegrationStatus | null>(null);
@@ -40,10 +42,17 @@ export function IntegrationsSection() {
     setDialogOpen(true);
   }
 
+  // A failed read is not a slow one: without this the section pulsed
+  // forever when the subsystem refused, saying nothing at all.
+  const missing = unavailableSubsystem(error);
+  if (missing) return <SubsystemNotConnected subsystem={missing} />;
   if (loading || !data) return <SectionSkeleton rows={3} />;
 
   return (
     <Card>
+      <div className="px-6 pt-6">
+        <SampleDataNotice subject="This connection list is generated for development and reports no real integration state." />
+      </div>
       <CardHeader>
         <CardTitle>Integrations</CardTitle>
         <CardDescription>

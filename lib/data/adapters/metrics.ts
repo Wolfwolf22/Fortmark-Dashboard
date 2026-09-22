@@ -33,7 +33,9 @@ import {
   LeadSource,
   PeriodPoint,
 } from "../types";
-import { leads, listings, now, transactions } from "../mock/db";
+import { leads, listings, transactions } from "../mock/db";
+import { now } from "@/lib/dates";
+import { requireSubsystem } from "./subsystems";
 import { inRange, previousRange } from "@/lib/dates";
 import { delay } from "./latency";
 
@@ -136,6 +138,7 @@ export async function getDashboardMetrics(
   range: DateRange,
   preset: DateRangePreset
 ): Promise<DashboardMetrics & { commissionByPeriod: CommissionPoint[] }> {
+  await requireSubsystem("reports");
   await delay(220);
 
   const enteredContract = transactions.filter((t) => inRange(t.contractDate, range));
@@ -220,6 +223,7 @@ export interface ReportSeries {
 
 /** Closed volume over time (bucketed like the commission chart). */
 export async function getClosedVolumeSeries(preset: DateRangePreset): Promise<ReportSeries> {
+  await requireSubsystem("reports");
   await delay();
   const points = bucketsFor(preset).map((b) => ({
     label: b.label,
@@ -235,6 +239,7 @@ export async function getClosedVolumeSeries(preset: DateRangePreset): Promise<Re
 }
 
 export async function getListToSaleRatio(range: DateRange): Promise<number> {
+  await requireSubsystem("reports");
   await delay();
   const closed = listings.filter(
     (l) => l.status === "closed" && l.closedPrice && l.closedDate && inRange(l.closedDate, range)
@@ -245,6 +250,7 @@ export async function getListToSaleRatio(range: DateRange): Promise<number> {
 }
 
 export async function getMedianDaysOnMarket(range: DateRange): Promise<number> {
+  await requireSubsystem("reports");
   await delay();
   const closed = listings
     .filter((l) => l.status === "closed" && l.closedDate && inRange(l.closedDate, range))
@@ -280,6 +286,7 @@ const SOURCE_SPEND: Record<LeadSource, number> = {
 };
 
 export async function getLeadSourceRoi(range: DateRange): Promise<LeadSourceRoi[]> {
+  await requireSubsystem("reports");
   await delay();
   const sources = Object.keys(SOURCE_SPEND) as LeadSource[];
   const avgGci =

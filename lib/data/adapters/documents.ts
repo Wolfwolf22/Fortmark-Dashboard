@@ -1,11 +1,17 @@
 /**
- * Documents adapter. Mock-backed today; swap the bodies for document storage
- * and e-signature providers and the UI is untouched.
+ * Documents adapter.
+ *
+ * There is no document store and no e-signature provider. The filenames,
+ * counts and signature states below are generated, so each read asks first
+ * whether this deployment is in the labelled fixture mode; in ordinary mode
+ * it is refused. "109 executed" is a claim about contracts that exist.
  */
 import { DocumentStatus, TransactionDocument } from "../types";
-import { documents, now } from "../mock/db";
+import { documents } from "../mock/db";
+import { now } from "@/lib/dates";
 import { bumpDataVersion } from "../store";
 import { delay } from "./latency";
+import { requireSubsystem } from "./subsystems";
 
 export interface DocumentFilters {
   status?: DocumentStatus[];
@@ -16,6 +22,7 @@ export interface DocumentFilters {
 export async function getDocuments(
   filters?: DocumentFilters
 ): Promise<TransactionDocument[]> {
+  await requireSubsystem("documents");
   await delay();
   let result = [...documents];
   if (filters?.status?.length)
@@ -35,6 +42,7 @@ export async function updateDocumentStatus(
   id: string,
   status: DocumentStatus
 ): Promise<TransactionDocument | undefined> {
+  await requireSubsystem("documents");
   await delay(150);
   const doc = documents.find((d) => d.id === id);
   if (!doc) return undefined;
@@ -48,6 +56,7 @@ export async function updateDocumentStatus(
 export async function addDocument(
   input: Pick<TransactionDocument, "transactionId" | "address" | "name" | "kind">
 ): Promise<TransactionDocument> {
+  await requireSubsystem("documents");
   await delay(300);
   const created: TransactionDocument = {
     id: `doc-upload-${documents.length + 1}`,

@@ -28,8 +28,9 @@ import { createEvent } from "@/lib/data/adapters/calendar";
 import { addDocument } from "@/lib/data/adapters/documents";
 import { getTransactions } from "@/lib/data/adapters/transactions";
 import { useQuery } from "@/lib/data/hooks";
+import { SUBSYSTEM_COPY, unavailableSubsystem } from "@/components/common/subsystem-state";
 import { EventType, PropertyType } from "@/lib/data/types";
-import { now } from "@/lib/data/mock/db";
+import { now } from "@/lib/dates";
 
 const TITLES: Record<QuickCreateKind, { title: string; description: string; cta: string; goto: string }> = {
   listing: {
@@ -139,8 +140,15 @@ export function QuickCreateDialog() {
       }
       close();
       router.push(meta!.goto);
-    } catch {
-      setError("Could not save. Check the fields and try again.");
+    } catch (e) {
+      // "Check the fields" is wrong when there is nothing wrong with the
+      // fields: an event or a document has nowhere to be saved to here.
+      const missing = unavailableSubsystem(e);
+      setError(
+        missing
+          ? SUBSYSTEM_COPY[missing].title
+          : "Could not save. Check the fields and try again."
+      );
     } finally {
       setBusy(false);
     }

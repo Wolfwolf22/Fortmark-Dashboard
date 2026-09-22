@@ -22,6 +22,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getDocuments } from "@/lib/data/adapters/documents";
 import { getTransactions } from "@/lib/data/adapters/transactions";
 import { useQuery } from "@/lib/data/hooks";
+import { SubsystemNotConnected, unavailableSubsystem } from "@/components/common/subsystem-state";
+import { SampleDataNotice } from "@/components/listings/sample-data-notice";
+import { Card } from "@/components/ui/card";
 import { DOCUMENT_STATUS_LABELS, DocumentStatus } from "@/lib/data/types";
 import { cn } from "@/lib/utils";
 
@@ -73,7 +76,7 @@ function DocumentsPageInner() {
 
   // One query without the status filter: the chips slice client-side so the
   // counts always reflect the current search and transaction scope.
-  const { data: documents, loading } = useQuery(
+  const { data: documents, loading, error } = useQuery(
     () =>
       getDocuments({
         query: debouncedSearch || undefined,
@@ -129,8 +132,23 @@ function DocumentsPageInner() {
     }
   }
 
+  // There is no document store. The dropzone is hidden with the rest: an
+  // upload control implies somewhere for the file to go.
+  const missing = unavailableSubsystem(error);
+  if (missing) {
+    return (
+      <Card className="flex min-h-[20rem] items-center justify-center">
+        <SubsystemNotConnected subsystem={missing} />
+      </Card>
+    );
+  }
+
   return (
     <div className="space-y-5">
+      {/* Documents only reach this page in the labelled fixture mode. */}
+      {documents && (
+        <SampleDataNotice subject="These files are generated for development. No document here exists or has been signed." />
+      )}
       <UploadDropzone
         transactions={transactions}
         defaultTransactionId={transactionId === "all" ? undefined : transactionId}

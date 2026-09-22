@@ -29,6 +29,8 @@ import {
   sendThreadMessage,
 } from "@/lib/data/adapters/messages";
 import { useQuery } from "@/lib/data/hooks";
+import { SubsystemNotConnected, unavailableSubsystem } from "@/components/common/subsystem-state";
+import { SampleDataNotice } from "@/components/listings/sample-data-notice";
 import { MessageThread } from "@/lib/data/types";
 
 type RoleFilter = "all" | MessageThread["participantRole"];
@@ -50,7 +52,7 @@ export default function Page() {
     return () => window.clearTimeout(id);
   }, [search]);
 
-  const { data: threads, loading } = useQuery(() => getThreads(), []);
+  const { data: threads, loading, error } = useQuery(() => getThreads(), []);
 
   const visible = React.useMemo(() => {
     if (!threads) return undefined;
@@ -94,8 +96,24 @@ export default function Page() {
 
   const unreadCount = threads?.filter((t) => t.unread).length ?? 0;
 
+  // There is no messaging backend. Rather than an empty inbox — which would
+  // say "nobody has written to you" — the page says what is actually true.
+  const missing = unavailableSubsystem(error);
+  if (missing) {
+    return (
+      <Card className="flex min-h-0 flex-1 items-center justify-center">
+        <SubsystemNotConnected subsystem={missing} />
+      </Card>
+    );
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
+      {/* Threads only ever arrive in the labelled fixture mode; ordinary mode
+          took the branch above. So their presence is the label's condition. */}
+      {threads && (
+        <SampleDataNotice subject="These conversations are generated for development. No message here was sent or received." />
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative w-full sm:w-72">
           <Search

@@ -17,13 +17,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getBrokerage } from "@/lib/data/adapters/settings";
 import { useQuery } from "@/lib/data/hooks";
+import { SubsystemNotConnected, unavailableSubsystem } from "@/components/common/subsystem-state";
+import { SampleDataNotice } from "@/components/listings/sample-data-notice";
 import { BrokerageProfile } from "@/lib/data/types";
 import { SavedNote, useSavedNote } from "./saved-note";
 import { SectionSkeleton } from "./section-skeleton";
 
 export function BrokerageSection() {
-  const { data, loading } = useQuery(() => getBrokerage(), []);
+  const { data, loading, error } = useQuery(() => getBrokerage(), []);
 
+  // A failed read is not a slow one: without this the section pulsed
+  // forever when the subsystem refused, saying nothing at all.
+  const missing = unavailableSubsystem(error);
+  if (missing) return <SubsystemNotConnected subsystem={missing} />;
   if (loading || !data) return <SectionSkeleton rows={4} />;
   return <BrokerageForm brokerage={data} />;
 }
@@ -45,6 +51,9 @@ function BrokerageForm({ brokerage }: { brokerage: BrokerageProfile }) {
 
   return (
     <Card>
+      <div className="px-6 pt-6">
+        <SampleDataNotice subject="These office details are generated for development and describe no brokerage." />
+      </div>
       <CardHeader>
         <CardTitle>Brokerage</CardTitle>
         <CardDescription>
