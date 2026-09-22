@@ -59,6 +59,14 @@ test.beforeAll(async ({ browser }) => {
   test.setTimeout(600_000);
   page = await browser.newPage();
   await signInCertificationUser(page);
+  // A real sign-in lands on Home, and Home is where the dashboard creates the
+  // user's own row from their Clerk identity. Do the same before asking any
+  // API about "my" records, so a freshly reset Preview database starts from
+  // the state a person would actually be in.
+  for (let load = 0; load < 3; load += 1) {
+    await page.goto("/dashboard", { waitUntil: "domcontentloaded", timeout: 60_000 });
+    if ((await page.locator("main").first().innerText().catch(() => "")).trim().length > 40) break;
+  }
   api = apiFor(await freshToken(page));
 });
 

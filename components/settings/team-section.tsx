@@ -47,7 +47,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { getTeamRoster } from "@/lib/data/adapters/team";
+import { getTeamRoster, TeamError } from "@/lib/data/adapters/team";
 import type { RosterEntry } from "@/lib/team/roster";
 import { useQuery } from "@/lib/data/hooks";
 import { SubsystemNotConnected, unavailableSubsystem } from "@/components/common/subsystem-state";
@@ -70,19 +70,21 @@ export function TeamSection() {
   // forever when the subsystem refused, saying nothing at all.
   const missing = unavailableSubsystem(error);
   if (missing) return <SubsystemNotConnected subsystem={missing} />;
-  if (error) return <TeamUnavailable />;
+  if (error) return <TeamUnavailable notYetSynced={error instanceof TeamError && error.status === 403} />;
   if (loading || !data) return <SectionSkeleton rows={5} />;
   if (data.source === "sample") return <TeamManager initial={data.items} />;
   return <TeamRosterCard items={data.items} viewerPrivileged={data.viewerPrivileged} />;
 }
 
-function TeamUnavailable() {
+function TeamUnavailable({ notYetSynced }: { notYetSynced: boolean }) {
   return (
     <Card>
       <CardHeader>
         <CardTitle>Team</CardTitle>
         <CardDescription>
-          The team roster could not be loaded right now. Nothing is shown rather than a guess.
+          {notYetSynced
+            ? "Your dashboard account is still being set up. Open Home once, then return here to see the team."
+            : "The team roster could not be loaded right now. Nothing is shown rather than a guess."}
         </CardDescription>
       </CardHeader>
     </Card>
