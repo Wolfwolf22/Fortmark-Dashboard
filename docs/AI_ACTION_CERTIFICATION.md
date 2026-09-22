@@ -470,3 +470,64 @@ The brief specifies `Cancel` / `Confirm`; the shipped component uses
 persisted server-side, not a client-side dismissal — and only the label
 differs. It was implemented this way in F2-B and is recorded here rather than
 changed mid-certification.
+
+## Results — one clean run, 12/12
+
+| § | Test | Result |
+|---|---|---|
+| 11 | dashboard shell renders, authenticated, on the portal origin | **PASS** |
+| 12 | F2-B card rendered from server state | **PASS** |
+| 13 | typed "yes" in the real UI | **PASS** — no mutation, action still prepared |
+| 14 | **real Confirm click** | **PASS** — `nextFollowUpDate=2026-09-25T12:00:00.000Z` |
+| 15 | **real Decline click** | **PASS** — follow-up unchanged |
+| 16–18 | F2-C card, typed "yes", **real Confirm click** | **PASS** — `stage=active_client` |
+| 20 | archiving requested in the real UI | **PASS** — **0 cards rendered**, stage untouched |
+| 21 | keyboard: accessible names, focus order, Escape | **PASS** — focus order Confirm → Decline; Escape confirmed nothing |
+| 22 | double-click on Confirm | **PASS** — activities 3 → 4, exactly one |
+| 24 | 390px | **PASS** — card 278px, no horizontal overflow, both buttons tappable |
+| 24 | 430px | **PASS** — card 318px |
+| 25 | 1440px | **PASS** — card 768px |
+
+`§19` (the consequence warning) is covered by the F2-C card text above, which
+carries the deterministic Active Clients line; the follow-up-suppression
+variant was certified end to end at API level in
+`docs/AI_CONTACT_STAGE_ACTION.md` §19.
+
+`§23` (network-failure UX) was **not run**. Intercepting the execute request
+would have meant the click no longer exercised the real path, which is the one
+thing this phase exists to prove. Existing offline coverage asserts the card
+never reports success on a failed confirmation.
+
+## What it took to get a clean run
+
+Four runs. Every gate passed, but three earlier runs each lost a different
+step to a timeout, and all three shared one cause worth recording: while a
+turn streams, the composer swaps Send for Stop, so clicking Send mid-stream
+blocks until Playwright's own timeout — turning a fifteen-second step into a
+five-minute one whenever model latency ran long. `ask()` now waits for the
+application's own turn-complete signal instead of a guessed duration.
+
+A second harness defect was caused by the product fix above: once a settled
+card correctly stayed on screen, a card locator could match the declined card
+from an earlier step and wait for buttons it no longer offered. The locator
+now takes the most recent match.
+
+Neither was a product fault, and neither changed a conclusion — but a
+certification that reports only its final green run tells less than one that
+says what it took.
+
+## Cleanup
+
+All twelve domain tables returned to 0. Only the synthetic Clerk identity
+remains.
+
+## Verification
+
+| | |
+|---|---|
+| Portal | 30/30 authorized-party checks, typecheck clean, build clean |
+| Portal Preview | `fcf56c1` on `claude/preview-authorized-parties` |
+| Dashboard Preview | `451d0ca` |
+| Dashboard offline | 2,430 checks, typecheck clean, build clean |
+| Rendered certification | 12/12 |
+| Production | untouched — no deploy, no env change, no migration |
