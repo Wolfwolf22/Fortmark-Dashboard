@@ -160,7 +160,8 @@ test("settings shows the real account and refuses the generated brokerage", asyn
     }
   }
   for (const [tab, sentence] of [
-    ["team", /Team directory is not configured/i],
+    // Team is real now: the roster of actual dashboard users, never generated.
+    ["team", /Licence details are self-reported by each member/i],
     ["brokerage", /Brokerage details are not configured/i],
     ["integrations", /Integrations are not configured/i],
   ] as const) {

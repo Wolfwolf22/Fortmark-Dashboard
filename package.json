@@ -19,6 +19,7 @@
     "test:contacts": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_contacts.ts",
     "test:metrics": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_metrics.ts",
     "test:mock-leak": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_mock_leak.ts",
+    "test:migrate": "node scripts/test_migrate.mjs",
     "test:team": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_team.ts",
     "test:search": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_search.ts",
     "test:ai:tools": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_ai_tools.ts",

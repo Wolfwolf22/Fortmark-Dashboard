@@ -22,11 +22,14 @@
  * stripping being available or on a particular flag spelling.
  *
  * Prefers the unpooled URL for DDL. Never prints any part of either value.
+ *
+ * The migration itself is `runMigrations` (./migrate-core.mjs): one session,
+ * one transaction, an advisory lock. The read-only verification below still
+ * uses the HTTP driver — reads need no transaction.
  */
 import { createHash } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
-import { migrate } from "drizzle-orm/neon-http/migrator";
+import { runMigrations } from "./migrate-core.mjs";
 
 const RELEASE_1_TABLES = [
   "audit_events",
@@ -385,9 +388,11 @@ if (!url) {
 console.log(`[migrate] using ${unpooled ? "DATABASE_URL_UNPOOLED" : "DATABASE_URL"}`);
 
 try {
+  const { before, after } = await runMigrations(url, { migrationsFolder: "./lib/db/migrations" });
+  console.log(
+    `[migrate] migrations applied atomically (bookkeeping rows ${before} -> ${after}, ${after - before} new)`
+  );
   const sql = neon(url);
-  await migrate(drizzle(sql), { migrationsFolder: "./lib/db/migrations" });
-  console.log("[migrate] migrations applied");
 
   // Report the schema by name only. No row counts, no identifiers, no values.
   const rows = await sql`
