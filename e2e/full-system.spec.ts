@@ -847,9 +847,11 @@ test("§43/§44 conversation context resolves, and missing data is not invented"
   await ask("When does it close?");
   const closes = await lastReply();
   console.log(`[ai] closes: ${json(closes.slice(0, 300))}`);
+  // The date is right whether it is spoken ("November 1") or written as
+  // stored ("2026-11-01"); the assertion is about the fact, not the format.
   const closing = new Date(isoDay(40));
   const month = closing.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
-  expect(closes).toContain(month);
+  expect(closes).toMatch(new RegExp(`${month}|${closing.toISOString().slice(0, 10)}`));
   await ask("What is the DSCR on this deal?");
   const dscr = await lastReply();
   console.log(`[ai] missing: ${json(dscr.slice(0, 300))}`);
