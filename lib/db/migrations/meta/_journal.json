@@ -57,6 +57,13 @@
       "when": 1790026109734,
       "tag": "0007_purple_iceman",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790092212914,
+      "tag": "0008_loud_warstar",
+      "breakpoints": true
     }
   ]
 }

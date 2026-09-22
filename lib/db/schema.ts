@@ -744,6 +744,15 @@ export const aiPreparedActions = pgTable(
      * date nobody else touched.
      */
     expectedFingerprint: text("expected_fingerprint").notNull(),
+    /**
+     * sha256 over everything that decides what this proposal would do:
+     * tenant, actor, type, target, payload and the expected fingerprint.
+     * The partial unique index below makes it the identity of a *pending*
+     * proposal, so a model that proposes the same change twice gets the row
+     * it already has instead of a second confirmation card. Settled rows are
+     * outside the index and never collide.
+     */
+    pendingKey: text("pending_key"),
     status: aiActionStatus("status").notNull().default("prepared"),
     preparedAt: timestamp("prepared_at", { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -755,6 +764,11 @@ export const aiPreparedActions = pgTable(
     index("ai_prepared_actions_actor_status_idx").on(t.actorUserId, t.status),
     index("ai_prepared_actions_target_idx").on(t.targetType, t.targetId),
     index("ai_prepared_actions_expires_idx").on(t.expiresAt),
+    // The invariant itself, enforced by the database rather than by a
+    // read-then-write that two concurrent prepares could both win.
+    uniqueIndex("ai_prepared_actions_pending_key_idx")
+      .on(t.pendingKey)
+      .where(sql`${t.status} = 'prepared'`),
   ]
 );
 

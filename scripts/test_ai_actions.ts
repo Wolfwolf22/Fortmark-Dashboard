@@ -28,6 +28,7 @@
  * Run: npm run test:ai:actions
  */
 import { existsSync, readFileSync } from "node:fs";
+import { pendingActionKey } from "../lib/ai/actions/dedupe.ts";
 import { executeTool, type ToolRequest } from "../lib/ai/tools/execute.ts";
 import { findTool, toolsFor, TOOL_NAMES } from "../lib/ai/tools/registry.ts";
 import type { ToolContext } from "../lib/ai/tools/types.ts";
@@ -243,15 +244,19 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
     service.indexOf("export async function prepareFollowup"),
     service.indexOf("export async function getPreparedAction")
   );
+  // The single write now goes through `insertOrReusePending`, which is what
+  // makes one pending proposal per identical request enforceable. The
+  // property under test is unchanged: preparing touches nothing but the
+  // proposal table, and it does so only after every refusal has been decided.
   check("preparing writes only the proposal row",
-    /insert\(aiPreparedActions\)/.test(prepareBlock) &&
-      !/update\(contacts\)/.test(prepareBlock) &&
+    /insertOrReusePending\(/.test(prepareBlock) &&
       !/insert\(contactActivities\)/.test(prepareBlock) &&
+      !/update\(contacts\)/.test(prepareBlock) &&
       !/\.batch\(/.test(prepareBlock));
   check("preparing writes nothing when the date is refused",
-    prepareBlock.indexOf("checkFollowUpDay") < prepareBlock.indexOf("insert(aiPreparedActions)"));
+    prepareBlock.indexOf("checkFollowUpDay") < prepareBlock.indexOf("insertOrReusePending("));
   check("preparing writes nothing when the contact is not visible",
-    prepareBlock.indexOf("visibleTo(actor)") < prepareBlock.indexOf("insert(aiPreparedActions)"));
+    prepareBlock.indexOf("visibleTo(actor)") < prepareBlock.indexOf("insertOrReusePending("));
 }
 
 // =============================================================================
@@ -782,9 +787,9 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
   check("preparation asks the domain whether the move is legal",
     /planStageChange\(/.test(prepareBlock));
   check("preparation derives the current stage from the row, never from input",
-    !/fromStage:\s*input\./.test(prepareBlock) && /expectedFingerprint: stageFingerprint\(row\)/.test(prepareBlock));
+    !/fromStage:\s*input\./.test(prepareBlock) && /expectedFingerprint = stageFingerprint\(row\)/.test(prepareBlock));
   check("preparation writes only the proposal row",
-    /insert\(aiPreparedActions\)/.test(prepareBlock) &&
+    /insertOrReusePending\(/.test(prepareBlock) &&
       !/update\(contacts\)/.test(prepareBlock) &&
       !/commitStageChange/.test(prepareBlock));
 
@@ -877,6 +882,138 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
     /changeStage\(/.test(route) && !/planStageChange|commitStageChange/.test(route));
   check("the AI path reuses the domain plan rather than forking it",
     !/changeStageForAI|aiChangeStage/.test(code("lib/ai/actions/service.ts")));
+}
+
+// =============================================================================
+// One pending proposal per identical request (ISS-14)
+//
+// Certification watched the model, told "yes" after a follow-up card, prepare
+// the same action again: two identical cards, two Confirm buttons, one
+// change. Nothing unsafe happened — the invariant that typing "yes" changes
+// nothing held, and confirming either card applies the change once — but a
+// confirmation surface may not ask which of two identical proposals to press.
+//
+// The rule belongs on the server. A prompt saying "don't prepare duplicates"
+// holds until the model forgets, and it does nothing about a double-tapped
+// button or a second browser tab.
+// =============================================================================
+{
+  const service = code("lib/ai/actions/service.ts");
+  const identity = {
+    brokerageKey: "fortmark",
+    actorUserId: "11111111-1111-4111-8111-111111111111",
+    actionType: "contact_followup_schedule",
+    targetType: "contact",
+    targetId: "22222222-2222-4222-8222-222222222222",
+    payload: { day: "2026-09-25", followUpAt: "2026-09-25T12:00:00.000Z" },
+    expectedFingerprint: "abc123",
+  };
+
+  check("the same request twice is the same key",
+    pendingActionKey(identity) === pendingActionKey({ ...identity }));
+
+  check("the key does not depend on the order the payload was written in", (() => {
+    const reordered = { followUpAt: "2026-09-25T12:00:00.000Z", day: "2026-09-25" };
+    return pendingActionKey(identity) === pendingActionKey({ ...identity, payload: reordered });
+  })());
+
+  // Each of these changes what would happen, so each must be a different
+  // proposal rather than a silent reuse of the last one.
+  const DIFFERENT: [string, Record<string, unknown>][] = [
+    ["another actor", { actorUserId: "33333333-3333-4333-8333-333333333333" }],
+    ["another brokerage", { brokerageKey: "other" }],
+    ["another contact", { targetId: "44444444-4444-4444-8444-444444444444" }],
+    ["another action type", { actionType: "contact_stage_change" }],
+    ["another target type", { targetType: "transaction" }],
+    ["another date", { payload: { day: "2026-09-26", followUpAt: "2026-09-26T12:00:00.000Z" } }],
+    ["a record that has since moved", { expectedFingerprint: "def456" }],
+  ];
+  for (const [what, patch] of DIFFERENT) {
+    check(`${what} is a different proposal`,
+      pendingActionKey({ ...identity, ...patch }) !== pendingActionKey(identity));
+  }
+
+  check("no field value is readable from the key", (() => {
+    const key = pendingActionKey(identity);
+    return (
+      /^[0-9a-f]{64}$/.test(key) &&
+      !key.includes(identity.targetId.replace(/-/g, "")) &&
+      !key.includes("2026")
+    );
+  })());
+
+  check("the separator makes two different splits of the same characters differ", (() => {
+    // "ab" + "c" and "a" + "bc" must not collide.
+    const a = pendingActionKey({ ...identity, actionType: "ab", targetType: "c" });
+    const b = pendingActionKey({ ...identity, actionType: "a", targetType: "bc" });
+    return a !== b;
+  })());
+
+  const helper = service.slice(
+    service.indexOf("async function insertOrReusePending"),
+    service.indexOf("export async function prepareFollowup")
+  );
+
+  check("the database enforces the invariant, not a read-then-write", (() => {
+    // Two prepares can arrive at the same instant. A SELECT that finds
+    // nothing followed by an INSERT lets both through; a conflicting insert
+    // that does nothing cannot.
+    const schema = code("lib/db/schema.ts");
+    return (
+      /uniqueIndex\("ai_prepared_actions_pending_key_idx"\)[\s\S]{0,160}status\} = 'prepared'/.test(schema) &&
+      /onConflictDoNothing\(\{[\s\S]{0,200}target: aiPreparedActions\.pendingKey/.test(helper) &&
+      /where: sql`\$\{aiPreparedActions\.status\} = 'prepared'`/.test(helper)
+    );
+  })());
+
+  check("the migration adds the index the invariant needs", (() => {
+    const sqlText = code("lib/db/migrations/0008_loud_warstar.sql");
+    return (
+      /ADD COLUMN "pending_key" text/.test(sqlText) &&
+      /CREATE UNIQUE INDEX "ai_prepared_actions_pending_key_idx"[\s\S]*WHERE[\s\S]*'prepared'/.test(sqlText)
+    );
+  })());
+
+  check("an expired proposal releases the slot it is holding", (() => {
+    // Expiry is a timestamp, not a status: an expired row keeps
+    // `status = 'prepared'` until something looks at it, and would otherwise
+    // block the new proposal a person is entitled to.
+    const at = helper.indexOf('set({ status: "expired" })');
+    return (
+      at !== -1 &&
+      at < helper.indexOf(".insert(aiPreparedActions)") &&
+      /expiresAt\} <= \$\{now\}/.test(helper)
+    );
+  })());
+
+  check("a live conflicting proposal is read back and returned", (() =>
+    /reused: true/.test(helper) && /expiresAt\} > \$\{now\}/.test(helper))());
+
+  check("a proposal that expires mid-race is retried rather than lost", (() =>
+    /for \(let attempt = 0; attempt < 3; attempt \+= 1\)/.test(helper))());
+
+  check("the helper touches no table but the proposals", (() =>
+    !/contacts|contactActivities|auditEvents/.test(helper))());
+
+  check("a reused proposal is described by its own row", (() => {
+    // Not by what this call meant to write: the id, the clock and the
+    // preview a person sees must be the ones already stored.
+    const block = service.slice(
+      service.indexOf("export async function prepareFollowup"),
+      service.indexOf("// --- Read")
+    );
+    return (
+      (block.match(/toPreparedAction\(claimed\.row\)/g) ?? []).length === 2 &&
+      !/actionId: id,/.test(block)
+    );
+  })());
+
+  check("the model is told nothing new about duplicates", (() => {
+    // The server owns the invariant. A prompt rule would hold only until the
+    // model forgot it, and would not help a double-tapped button.
+    const prompts = code("lib/ai/provider.ts");
+    return !/duplicate|already prepared|prepare it again/i.test(prompts);
+  })());
 }
 
 // --- Report ------------------------------------------------------------------

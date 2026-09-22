@@ -1,0 +1,2 @@
+ALTER TABLE "ai_prepared_actions" ADD COLUMN "pending_key" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "ai_prepared_actions_pending_key_idx" ON "ai_prepared_actions" USING btree ("pending_key") WHERE "ai_prepared_actions"."status" = 'prepared';

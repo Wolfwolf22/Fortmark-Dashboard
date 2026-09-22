@@ -40,6 +40,7 @@ import {
 import { scrubMetadata } from "../../audit/metadata.ts";
 import { visibleTo } from "../../contacts/service.ts";
 import { ACTION_TTL_MS, type PreparedAction } from "./contract.ts";
+import { pendingActionKey, type PendingIdentity } from "./dedupe.ts";
 import {
   checkFollowUpDay,
   contactDisplayName,
@@ -127,6 +128,84 @@ function toPreparedAction(row: typeof aiPreparedActions.$inferSelect): PreparedA
   };
 }
 
+/**
+ * Write the proposal, or hand back the one that is already pending.
+ *
+ * The identity of a pending proposal is everything that decides what it would
+ * do — tenant, actor, type, target, payload, and the fingerprint of the
+ * record state it was computed against (`lib/ai/actions/dedupe.ts`). A second
+ * request with the same identity is the same proposal, and a person must not
+ * be shown two cards for one change.
+ *
+ * Why the database and not a read-then-write: two prepares can arrive at the
+ * same instant — a model that retries, a double-tapped button, two tabs — and
+ * a `SELECT` that finds nothing followed by an `INSERT` lets both through.
+ * The partial unique index on `pending_key WHERE status = 'prepared'` makes
+ * the second insert a no-op instead, and the row it collided with is then
+ * read back and returned.
+ *
+ * Expiry is handled before the insert rather than inside the key. A proposal
+ * that has run out of time keeps `status = 'prepared'` until something looks
+ * at it, so it would otherwise hold the unique slot and block the new
+ * proposal a person is entitled to. Retiring it first is also the honest
+ * bookkeeping: the row really is expired.
+ */
+async function insertOrReusePending(
+  db: Db,
+  identity: PendingIdentity,
+  values: Omit<typeof aiPreparedActions.$inferInsert, "pendingKey">,
+  now: Date
+): Promise<
+  | { ok: true; row: typeof aiPreparedActions.$inferSelect; reused: boolean }
+  | { ok: false }
+> {
+  const pendingKey = pendingActionKey(identity);
+
+  // Three attempts, because the two losing races are both transient: the row
+  // we collided with can expire between the insert and the read, and the row
+  // we retired can be replaced before we insert.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await db
+        .update(aiPreparedActions)
+        .set({ status: "expired" })
+        .where(
+          and(
+            eq(aiPreparedActions.pendingKey, pendingKey),
+            eq(aiPreparedActions.status, "prepared"),
+            sql`${aiPreparedActions.expiresAt} <= ${now}`
+          )
+        );
+
+      const inserted = await db
+        .insert(aiPreparedActions)
+        .values({ ...values, pendingKey })
+        .onConflictDoNothing({
+          target: aiPreparedActions.pendingKey,
+          where: sql`${aiPreparedActions.status} = 'prepared'`,
+        })
+        .returning();
+      if (inserted[0]) return { ok: true, row: inserted[0], reused: false };
+
+      const existing = await db
+        .select()
+        .from(aiPreparedActions)
+        .where(
+          and(
+            eq(aiPreparedActions.pendingKey, pendingKey),
+            eq(aiPreparedActions.status, "prepared"),
+            sql`${aiPreparedActions.expiresAt} > ${now}`
+          )
+        )
+        .limit(1);
+      if (existing[0]) return { ok: true, row: existing[0], reused: true };
+    } catch {
+      return { ok: false };
+    }
+  }
+  return { ok: false };
+}
+
 // --- Prepare -----------------------------------------------------------------
 
 /**
@@ -183,43 +262,40 @@ export async function prepareFollowup(
     warnings: followUpWarnings(row),
   };
 
-  const id = randomUUID();
-  const expiresAt = new Date(ctx.now.getTime() + ACTION_TTL_MS);
-  try {
-    await db.insert(aiPreparedActions).values({
-      id,
+  const payload = { followUpAt: followUpInstant(day.day), day: day.day };
+  const expectedFingerprint = followUpFingerprint(row);
+  const claimed = await insertOrReusePending(
+    db,
+    {
       brokerageKey: actor.brokerageKey,
       actorUserId: actor.userId,
       actionType: FOLLOWUP_ACTION_TYPE,
       targetType: "contact",
       targetId: row.id,
-      payload: { followUpAt: followUpInstant(day.day), day: day.day },
+      payload,
+      expectedFingerprint,
+    },
+    {
+      id: randomUUID(),
+      brokerageKey: actor.brokerageKey,
+      actorUserId: actor.userId,
+      actionType: FOLLOWUP_ACTION_TYPE,
+      targetType: "contact",
+      targetId: row.id,
+      payload,
       preview,
-      expectedFingerprint: followUpFingerprint(row),
+      expectedFingerprint,
       status: "prepared",
       preparedAt: ctx.now,
-      expiresAt,
-    });
-  } catch {
-    return { ok: false, reason: "unavailable" };
-  }
-
-  return {
-    ok: true,
-    action: {
-      actionId: id,
-      type: FOLLOWUP_ACTION_TYPE,
-      risk: "low",
-      entity,
-      summary: preview.summary,
-      changes: preview.changes,
-      warnings: preview.warnings,
-      status: "prepared",
-      preparedAt: ctx.now.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-      confirmationRequired: true,
+      expiresAt: new Date(ctx.now.getTime() + ACTION_TTL_MS),
     },
-  };
+    ctx.now
+  );
+  if (!claimed.ok) return { ok: false, reason: "unavailable" };
+
+  // Built from the row rather than from what we meant to write, so a reused
+  // proposal is described by its own id, its own clock and its own preview.
+  return { ok: true, action: toPreparedAction(claimed.row) };
 }
 
 /**
@@ -295,43 +371,38 @@ export async function prepareStageChange(
     warnings: stageWarnings(row, input.toStage),
   };
 
-  const id = randomUUID();
-  const expiresAt = new Date(ctx.now.getTime() + ACTION_TTL_MS);
-  try {
-    await db.insert(aiPreparedActions).values({
-      id,
+  const payload = { toStage: input.toStage, fromStage: row.stage };
+  const expectedFingerprint = stageFingerprint(row);
+  const claimed = await insertOrReusePending(
+    db,
+    {
       brokerageKey: actor.brokerageKey,
       actorUserId: actor.userId,
       actionType: STAGE_ACTION_TYPE,
       targetType: "contact",
       targetId: row.id,
-      payload: { toStage: input.toStage, fromStage: row.stage },
+      payload,
+      expectedFingerprint,
+    },
+    {
+      id: randomUUID(),
+      brokerageKey: actor.brokerageKey,
+      actorUserId: actor.userId,
+      actionType: STAGE_ACTION_TYPE,
+      targetType: "contact",
+      targetId: row.id,
+      payload,
       preview,
-      expectedFingerprint: stageFingerprint(row),
+      expectedFingerprint,
       status: "prepared",
       preparedAt: ctx.now,
-      expiresAt,
-    });
-  } catch {
-    return { ok: false, reason: "unavailable" };
-  }
-
-  return {
-    ok: true,
-    action: {
-      actionId: id,
-      type: STAGE_ACTION_TYPE,
-      risk: "moderate",
-      entity,
-      summary: preview.summary,
-      changes: preview.changes,
-      warnings: preview.warnings,
-      status: "prepared",
-      preparedAt: ctx.now.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-      confirmationRequired: true,
+      expiresAt: new Date(ctx.now.getTime() + ACTION_TTL_MS),
     },
-  };
+    ctx.now
+  );
+  if (!claimed.ok) return { ok: false, reason: "unavailable" };
+
+  return { ok: true, action: toPreparedAction(claimed.row) };
 }
 
 // --- Read --------------------------------------------------------------------
