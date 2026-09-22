@@ -621,6 +621,9 @@ test("§86 malformed and privilege-escalating input is refused", async () => {
 
 test("§88 a hostile name renders as text, never as markup", async () => {
   await page.goto(`/dashboard/leads?open=${state.X}`, { waitUntil: "domcontentloaded" });
+  // The list rendering the row is the hydration signal; the deep-linked
+  // drawer opens from the same load.
+  await expect(page.getByRole("main")).toContainText("Xavier", { timeout: 30_000 });
   const drawer = page.getByRole("dialog");
   await expect(drawer).toContainText("Xavier", { timeout: 30_000 });
   const title = await drawer.innerText();
