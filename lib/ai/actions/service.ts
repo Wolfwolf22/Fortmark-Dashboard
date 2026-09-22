@@ -25,6 +25,17 @@ import { resolveActor, type Actor } from "../../auth/actor.ts";
 import type { Db } from "../../db/client.ts";
 import { aiPreparedActions, auditEvents, contactActivities, contacts } from "../../db/schema.ts";
 import { aiActionsEnabled, contactsDatabaseEnabled, type EnvLike } from "../../flags.ts";
+import { commitStageChange, planStageChange } from "../../contacts/service.ts";
+import type { LeadStage } from "../../data/types.ts";
+import {
+  isAiProposableStage,
+  stageChange,
+  stageFingerprint,
+  stageIsAiManageable,
+  stageSummary,
+  stageWarnings,
+  STAGE_ACTION_TYPE,
+} from "./stage.ts";
 import { scrubMetadata } from "../../audit/metadata.ts";
 import { visibleTo } from "../../contacts/service.ts";
 import { ACTION_TTL_MS, type PreparedAction } from "./contract.ts";
@@ -54,6 +65,13 @@ export type PrepareFailureReason =
   | "invalid_date"
   | "date_in_past"
   | "date_too_far"
+  // Stage-specific. `invalid_transition` means the DOMAIN refuses the move;
+  // `archived_not_supported` means the domain would allow it but this phase
+  // does not expose it to a model. Collapsing the two would tell a user their
+  // lifecycle forbids something the Leads screen does every day.
+  | "invalid_transition"
+  | "already_in_stage"
+  | "archived_not_supported"
   | "unavailable";
 
 export type PrepareResult =
@@ -94,8 +112,9 @@ function toPreparedAction(row: typeof aiPreparedActions.$inferSelect): PreparedA
   };
   return {
     actionId: row.id,
-    type: FOLLOWUP_ACTION_TYPE,
-    risk: "low",
+    type: row.actionType as PreparedAction["type"],
+    // A follow-up moves one date. A stage change moves a headline metric.
+    risk: row.actionType === STAGE_ACTION_TYPE ? "moderate" : "low",
     entity: preview.entity,
     summary: preview.summary,
     changes: preview.changes,
@@ -190,6 +209,118 @@ export async function prepareFollowup(
       actionId: id,
       type: FOLLOWUP_ACTION_TYPE,
       risk: "low",
+      entity,
+      summary: preview.summary,
+      changes: preview.changes,
+      warnings: preview.warnings,
+      status: "prepared",
+      preparedAt: ctx.now.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      confirmationRequired: true,
+    },
+  };
+}
+
+/**
+ * Propose moving a contact to another lifecycle stage.
+ *
+ * The model supplies a contact and a destination. Everything else — who is
+ * acting, what stage the contact is in now, whether the move is permitted —
+ * is read from the database here. `fromStage` is never an input, so a model
+ * cannot propose a transition premised on a stage the contact left.
+ *
+ * Validity is `planStageChange`'s answer, not this module's: it applies the
+ * same visibility, write permission and lifecycle graph the Leads screen
+ * applies. Nothing is written by preparing.
+ */
+export async function prepareStageChange(
+  ctx: ActionContext,
+  input: { contactId: string; toStage: string }
+): Promise<PrepareResult> {
+  const resolved = await contactsCtx(ctx);
+  if (!resolved.ok) return { ok: false, reason: resolved.reason };
+  const { actor, db } = resolved.ctx;
+
+  // Phase scope, checked before the record is touched: an unsupported
+  // destination must not reveal whether the contact exists.
+  if (!isAiProposableStage(input.toStage)) {
+    return { ok: false, reason: "archived_not_supported" };
+  }
+
+  let row;
+  try {
+    const rows = await db
+      .select()
+      .from(contacts)
+      .where(and(eq(contacts.id, input.contactId), visibleTo(actor)))
+      .limit(1);
+    row = rows[0];
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+  if (!row) return { ok: false, reason: "not_found" };
+
+  // Defence in depth: the same scope rule applied to where the contact IS.
+  // A model that guesses a live id still cannot move an archived contact.
+  if (!stageIsAiManageable(row.stage)) {
+    return { ok: false, reason: "archived_not_supported" };
+  }
+  // A no-op is not a change, and a confirmation card for one would be noise.
+  if (row.stage === input.toStage) return { ok: false, reason: "already_in_stage" };
+
+  // The domain decides. This is the same call the Leads screen makes, and its
+  // writes are discarded here — preparing must not mutate anything.
+  const planned = await planStageChange(
+    { actor, db },
+    row.id,
+    input.toStage as LeadStage,
+    { mechanism: "ai_assisted", now: ctx.now }
+  );
+  if (!planned.ok) {
+    if (planned.reason === "not_found" || planned.reason === "forbidden") {
+      return { ok: false, reason: "not_found" };
+    }
+    if (planned.reason === "invalid_transition") {
+      return { ok: false, reason: "invalid_transition" };
+    }
+    return { ok: false, reason: "unavailable" };
+  }
+
+  const entity = { type: "contact" as const, id: row.id, displayName: contactDisplayName(row) };
+  const preview = {
+    entity,
+    summary: stageSummary(entity.displayName, row.stage, input.toStage),
+    changes: [stageChange(row.stage, input.toStage)],
+    warnings: stageWarnings(row, input.toStage),
+  };
+
+  const id = randomUUID();
+  const expiresAt = new Date(ctx.now.getTime() + ACTION_TTL_MS);
+  try {
+    await db.insert(aiPreparedActions).values({
+      id,
+      brokerageKey: actor.brokerageKey,
+      actorUserId: actor.userId,
+      actionType: STAGE_ACTION_TYPE,
+      targetType: "contact",
+      targetId: row.id,
+      payload: { toStage: input.toStage, fromStage: row.stage },
+      preview,
+      expectedFingerprint: stageFingerprint(row),
+      status: "prepared",
+      preparedAt: ctx.now,
+      expiresAt,
+    });
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+
+  return {
+    ok: true,
+    action: {
+      actionId: id,
+      type: STAGE_ACTION_TYPE,
+      risk: "moderate",
       entity,
       summary: preview.summary,
       changes: preview.changes,
@@ -367,9 +498,20 @@ export async function executePreparedAction(
     return { ok: false, reason: "not_found" };
   }
 
-  if (followUpFingerprint(contact) !== claimed.expectedFingerprint) {
+  // Each action type depends on different fields, so each recomputes its own
+  // fingerprint. A follow-up is invalidated by the follow-up moving; a stage
+  // change by the stage moving.
+  const fingerprint =
+    claimed.actionType === STAGE_ACTION_TYPE
+      ? stageFingerprint(contact)
+      : followUpFingerprint(contact);
+  if (fingerprint !== claimed.expectedFingerprint) {
     await release(db, actionId, "stale", "stale");
     return { ok: false, reason: "stale" };
+  }
+
+  if (claimed.actionType === STAGE_ACTION_TYPE) {
+    return await executeStageChange(ctx, { actor, db }, claimed, contact);
   }
 
   const payload = claimed.payload as { followUpAt: string; day: string };
@@ -427,6 +569,70 @@ export async function executePreparedAction(
   // Reported from the row we already hold, not from a fresh read: the commit
   // has happened, and a read that failed here would otherwise report failure
   // for a mutation that is durably in the database.
+  return {
+    ok: true,
+    action: toPreparedAction({ ...claimed, status: "executed", executedAt: ctx.now }),
+    alreadyExecuted: false,
+  };
+}
+
+/**
+ * Commit a confirmed stage change.
+ *
+ * The transition is re-planned from scratch rather than replayed from the
+ * prepared row: `planStageChange` re-checks visibility, write permission and
+ * the lifecycle graph against the record as it stands now, and returns the
+ * writes. This module adds one statement — the action's own transition — and
+ * commits all four together.
+ *
+ * That is what keeps the two paths identical. The stage update, the CRM
+ * activity and the audit event are built by the domain service, so an
+ * AI-confirmed change and a Leads-screen change cannot drift apart; only the
+ * metadata differs, and only to record how the change was reached.
+ */
+async function executeStageChange(
+  ctx: ActionContext,
+  { actor, db }: Ctx,
+  claimed: typeof aiPreparedActions.$inferSelect,
+  contact: typeof contacts.$inferSelect
+): Promise<ExecuteResult> {
+  const payload = claimed.payload as { toStage: string; fromStage: string };
+
+  // The phase scope is re-checked at execution too: an action prepared before
+  // the scope existed, or a contact archived in the meantime, must not commit.
+  if (!isAiProposableStage(payload.toStage) || !stageIsAiManageable(contact.stage)) {
+    await release(db, claimed.id, "failed", "archived_not_supported");
+    return { ok: false, reason: "not_permitted" };
+  }
+
+  const planned = await planStageChange({ actor, db }, contact.id, payload.toStage as LeadStage, {
+    mechanism: "ai_assisted",
+    metadata: { preparedActionId: claimed.id },
+    now: ctx.now,
+  });
+  if (!planned.ok) {
+    // The domain refuses it now even though it allowed it at preparation —
+    // the record moved underneath, which is staleness by another name.
+    const stale = planned.reason === "invalid_transition";
+    await release(db, claimed.id, stale ? "stale" : "failed", planned.reason);
+    return { ok: false, reason: stale ? "stale" : "not_found" };
+  }
+
+  try {
+    await commitStageChange(db, [
+      ...planned.value.writes,
+      db
+        .update(aiPreparedActions)
+        .set({ status: "executed", executedAt: ctx.now })
+        .where(eq(aiPreparedActions.id, claimed.id)),
+    ]);
+  } catch {
+    // Rolled back: the stage is unchanged, no activity, no audit, and the
+    // action must not read as done.
+    await release(db, claimed.id, "failed", "unavailable");
+    return { ok: false, reason: "unavailable" };
+  }
+
   return {
     ok: true,
     action: toPreparedAction({ ...claimed, status: "executed", executedAt: ctx.now }),

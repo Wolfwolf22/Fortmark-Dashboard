@@ -282,6 +282,10 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
     "confirm_contact_followup",
     "execute_prepared_action",
     "prepare_contact_followup_execute",
+    "change_contact_stage",
+    "set_contact_stage",
+    "execute_contact_stage_change",
+    "archive_contact",
   ];
   const outcomes = await Promise.all(
     GUESSES.map(async (name) => [name, await executeTool(attempt(name), ctx)] as const)
@@ -311,11 +315,13 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
     /export type ToolEffect = "read" \| "propose";/.test(types));
   check("no tool declares anything else",
     toolsFor({ AI_ACTIONS_ENABLED: "1" }).every((tool) => tool.effect === "read" || tool.effect === "propose"));
-  check("exactly one tool proposes",
-    toolsFor({ AI_ACTIONS_ENABLED: "1" }).filter((tool) => tool.effect === "propose").length === 1);
-  check("the one proposing tool is the follow-up one",
-    toolsFor({ AI_ACTIONS_ENABLED: "1" }).find((tool) => tool.effect === "propose")!.name ===
-      "prepare_contact_followup");
+  check("exactly two tools propose, and they are the authorized pair",
+    JSON.stringify(
+      toolsFor({ AI_ACTIONS_ENABLED: "1" })
+        .filter((tool) => tool.effect === "propose")
+        .map((tool) => tool.name)
+        .sort()
+    ) === JSON.stringify(["prepare_contact_followup", "prepare_contact_stage_change"]));
 
   // Flag off: the tool is not offered, and not dispatchable either. Both
   // matter — advertising and dispatch are separate doors.
@@ -326,6 +332,8 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
     findTool("prepare_contact_followup", {}) === undefined);
   check("actions off: a read tool is still dispatched",
     findTool("get_contact", {}) !== undefined);
+  check("actions off: neither proposing tool can be dispatched",
+    findTool("prepare_contact_stage_change", {}) === undefined);
   check("the flag is strict: only \"1\" enables actions",
     toolsFor({ AI_ACTIONS_ENABLED: "true" }).length === 9 &&
       toolsFor({ AI_ACTIONS_ENABLED: "0" }).length === 9 &&
@@ -381,7 +389,8 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
   check("execution re-reads the contact under the visibility predicate",
     /from\(contacts\)[\s\S]{0,200}visibleTo\(actor\)/.test(block));
   check("execution recomputes the fingerprint and refuses a stale action",
-    /followUpFingerprint\(contact\) !== claimed\.expectedFingerprint/.test(block) &&
+    /fingerprint !== claimed\.expectedFingerprint/.test(block) &&
+      /followUpFingerprint\(contact\)/.test(block) &&
       /reason: "stale"/.test(block));
   check("execution takes its instruction from the row, not from a request",
     /claimed\.payload as \{ followUpAt: string; day: string \}/.test(block));
@@ -614,6 +623,241 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
     /pass the calendar date/.test(withActions) && /rather than moving it to the next one/.test(withActions));
   check("the prompt says a prepared proposal cannot be edited",
     /prepare a new one; you cannot edit a proposal you already made/.test(withActions));
+}
+
+// =============================================================================
+// F2-C — contact stage change
+// =============================================================================
+{
+  const {
+    AI_EXCLUDED_STAGES,
+    AI_PROPOSABLE_STAGES,
+    isAiProposableStage,
+    stageChange,
+    stageFingerprint,
+    stageIsAiManageable,
+    stageLabel,
+    stageSummary,
+    stageWarnings,
+    STAGE_ACTION_TYPE,
+  } = await import("../lib/ai/actions/stage.ts");
+  const { ALL_CONTACT_STAGES, canTransition } = await import("../lib/contacts/stages.ts");
+
+  // --- Scope: archived is out, both directions (§8, §37) -------------------
+  check("archived is the only excluded stage",
+    JSON.stringify(AI_EXCLUDED_STAGES) === JSON.stringify(["archived"]));
+  check("the model cannot name archived as a destination",
+    !isAiProposableStage("archived") && !AI_PROPOSABLE_STAGES.includes("archived"));
+  check("every other stage remains proposable",
+    AI_PROPOSABLE_STAGES.length === ALL_CONTACT_STAGES.length - 1 &&
+      ALL_CONTACT_STAGES.every((s) => s === "archived" || AI_PROPOSABLE_STAGES.includes(s)));
+  check("a contact already archived is out of AI scope",
+    stageIsAiManageable("archived") === false && stageIsAiManageable("lead") === true);
+
+  // The scope restriction must not have touched the domain graph (§9, §37).
+  check("the domain still permits archiving by hand",
+    canTransition("qualified", "archived") === true);
+  check("the domain still permits restoring an archived contact",
+    canTransition("archived", "lead") === true);
+  check("the domain still refuses archived to anything else",
+    canTransition("archived", "qualified") === false);
+  check("the AI scope lives in the action layer, not in the lifecycle",
+    !code("lib/contacts/stages.ts").includes("AI_EXCLUDED") &&
+      !/\bai\b/i.test(code("lib/contacts/stages.ts")));
+
+  // --- Fingerprint: exactly id + stage (§14, §41) ---------------------------
+  const base = contact({ stage: "qualified" });
+  check("the fingerprint is stable for an unchanged contact",
+    stageFingerprint(base) === stageFingerprint(contact({ stage: "qualified" })));
+  check("moving the stage invalidates the action",
+    stageFingerprint(base) !== stageFingerprint(contact({ stage: "active_client" })));
+  check("a different contact never shares a fingerprint",
+    stageFingerprint(base) !==
+      stageFingerprint(contact({ stage: "qualified", id: "99999999-9999-4999-8999-999999999999" })));
+  // The precision requirement: unrelated edits must NOT invalidate it.
+  for (const [label, over] of [
+    ["an email edit", { email: "new@example.com" }],
+    ["a name edit", { firstName: "Janet" }],
+    ["a follow-up being scheduled", { nextFollowUpAt: new Date("2026-11-01T12:00:00.000Z") }],
+  ] as const) {
+    check(`${label} does not invalidate a prepared stage change`,
+      stageFingerprint(contact({ stage: "qualified", ...over })) === stageFingerprint(base));
+  }
+  check("the fingerprint discloses nothing about the contact",
+    /^[0-9a-f]{64}$/.test(stageFingerprint(base)));
+
+  // --- Preview: labels, not enums (§16) ------------------------------------
+  const change = stageChange("qualified", "active_client");
+  check("the change is labelled for a person, not as an enum",
+    change.field === "stage" && change.from === "Qualified" && change.to === "Active client");
+  check("a stage change always shows both sides", change.from !== null);
+  check("the summary names the contact and both stages",
+    stageSummary("Jane Smith", "qualified", "active_client") ===
+      "Change Jane Smith from Qualified to Active client");
+  check("every stage has a human label",
+    ALL_CONTACT_STAGES.every((s) => stageLabel(s) !== s));
+
+  // --- Deterministic consequences (§17, §18, §19) --------------------------
+  check("entering the active-client set says so",
+    stageWarnings(contact({ stage: "qualified" }), "active_client")
+      .includes("This contact will be counted in Active Clients."));
+  check("leaving the active-client set says so",
+    stageWarnings(contact({ stage: "active_client" }), "lost")
+      .some((w) => w === "This contact will no longer be counted in Active Clients."));
+  check("a routine early-pipeline move warns about nothing",
+    stageWarnings(contact({ stage: "lead" }), "contacted").length === 0);
+
+  // The audit's headline finding: a stored follow-up is suppressed, not
+  // cleared, and the card must say both halves.
+  const withFollowUp = contact({ stage: "qualified", nextFollowUpAt: new Date("2026-09-25T12:00:00.000Z") });
+  const lostNotes = stageWarnings(withFollowUp, "lost");
+  check("leaving the open pipeline discloses the suppressed follow-up",
+    lostNotes.some((w) => /follow-up on Friday, September 25, 2026/.test(w)));
+  check("the disclosure says the date is kept, never deleted",
+    lostNotes.some((w) => /will be kept on the contact/.test(w) && /no longer appear/.test(w)) &&
+      !lostNotes.some((w) => /delete|remove|clear/i.test(w)));
+  check("no follow-up stored means no follow-up disclosure",
+    !stageWarnings(contact({ stage: "qualified" }), "lost").some((w) => /follow-up/.test(w)));
+  check("staying inside the open pipeline makes no follow-up claim",
+    !stageWarnings(withFollowUp, "appointment").some((w) => /follow-up/.test(w)));
+  // Not a risk lecture (§18).
+  check("consequences are factual, never alarming",
+    !lostNotes.some((w) => /risk|danger|warning|careful|revenue|probab/i.test(w)));
+
+  // --- The tool (§7) --------------------------------------------------------
+  const tool = findTool("prepare_contact_stage_change", { AI_ACTIONS_ENABLED: "1" })!;
+  check("the stage tool exists when actions are enabled", tool !== undefined);
+  check("the stage tool proposes rather than reads", tool.effect === "propose");
+  check("the stage tool takes only a contact and a destination", (() => {
+    const props = Object.keys((tool.inputSchema.properties ?? {}) as Record<string, unknown>);
+    return props.length === 2 && props.includes("contact_id") && props.includes("to_stage");
+  })());
+  check("the stage tool refuses a supplied current stage",
+    tool.parse({ contact_id: "c-1", to_stage: "qualified", from_stage: "lead" }).ok === false);
+  check("the stage tool refuses a smuggled scope",
+    tool.parse({ contact_id: "c-1", to_stage: "qualified", brokerage_id: "other" }).ok === false);
+  check("the stage tool refuses archived at the schema",
+    tool.parse({ contact_id: "c-1", to_stage: "archived" }).ok === false);
+  check("the stage tool accepts a legitimate destination",
+    tool.parse({ contact_id: "c-1", to_stage: "active_client" }).ok === true);
+  check("the stage tool tells the model it changed nothing",
+    /does not modify the contact/.test(tool.description) &&
+      /never say the stage is changed or updated/.test(tool.description));
+  check("the stage tool says archiving is not available",
+    /Archiving is not available here/.test(tool.description));
+  check("the stage tool says the current stage is read, not supplied",
+    /current stage is read from the record, never supplied/.test(tool.description));
+
+  // --- The service (§11, §12, §13, §26) ------------------------------------
+  const service = code("lib/ai/actions/service.ts");
+  const prepareBlock = service.slice(
+    service.indexOf("export async function prepareStageChange"),
+    service.indexOf("export async function getPreparedAction")
+  );
+  check("preparation refuses an out-of-scope destination before reading the record",
+    prepareBlock.indexOf("isAiProposableStage(input.toStage)") < prepareBlock.indexOf("from(contacts)"));
+  check("preparation refuses a contact that is itself archived",
+    /stageIsAiManageable\(row\.stage\)/.test(prepareBlock));
+  check("preparation refuses a no-op rather than carding it",
+    /row\.stage === input\.toStage[\s\S]{0,80}already_in_stage/.test(prepareBlock));
+  check("preparation asks the domain whether the move is legal",
+    /planStageChange\(/.test(prepareBlock));
+  check("preparation derives the current stage from the row, never from input",
+    !/fromStage:\s*input\./.test(prepareBlock) && /expectedFingerprint: stageFingerprint\(row\)/.test(prepareBlock));
+  check("preparation writes only the proposal row",
+    /insert\(aiPreparedActions\)/.test(prepareBlock) &&
+      !/update\(contacts\)/.test(prepareBlock) &&
+      !/commitStageChange/.test(prepareBlock));
+
+  const execBlock = service.slice(service.indexOf("async function executeStageChange"));
+  // Anchored to the whole condition: a short-circuited or negated variant
+  // must not satisfy it, which a looser substring match happily would.
+  check("execution re-checks the phase scope",
+    /if \(!isAiProposableStage\(payload\.toStage\) \|\| !stageIsAiManageable\(contact\.stage\)\) \{/.test(execBlock));
+  check("execution re-plans through the domain rather than replaying the row",
+    /planStageChange\(\{ actor, db \}/.test(execBlock));
+  check("execution commits the domain's writes plus the action transition",
+    /commitStageChange\(db, \[\s*\.\.\.planned\.value\.writes,/.test(execBlock) &&
+      /status: "executed"/.test(execBlock));
+  check("execution does not duplicate the transition logic",
+    !/canTransition/.test(execBlock) && !/insert\(contactActivities\)/.test(execBlock));
+  check("a rolled-back stage change marks the action failed, never executed",
+    /catch \{[\s\S]{0,300}release\(db, claimed\.id, "failed"/.test(execBlock));
+  check("each action type recomputes its own fingerprint",
+    /claimed\.actionType === STAGE_ACTION_TYPE[\s\S]{0,120}stageFingerprint\(contact\)[\s\S]{0,80}followUpFingerprint\(contact\)/.test(service));
+
+  check("the action type is the semantic one", STAGE_ACTION_TYPE === "contact_stage_change");
+  check("a stage change is classified moderate, not low",
+    /actionType === STAGE_ACTION_TYPE \? "moderate" : "low"/.test(service));
+
+  // --- Refusals are told apart (§8, §13) ------------------------------------
+  const http = code("lib/ai/actions/http.ts");
+  check("an unsupported archived move is not reported as an invalid lifecycle",
+    /case "archived_not_supported":/.test(http) && /case "invalid_transition":/.test(http) &&
+      http.indexOf('case "archived_not_supported":') !== http.indexOf('case "invalid_transition":'));
+  check("a no-op is answered distinctly", /case "already_in_stage":/.test(http));
+}
+
+// =============================================================================
+// The shared atomic stage writer (§1, §2, §3, §32)
+// =============================================================================
+{
+  const service = code("lib/contacts/service.ts");
+  const plan = service.slice(
+    service.indexOf("export async function planStageChange"),
+    service.indexOf("export async function changeStage")
+  );
+  const manual = service.slice(
+    service.indexOf("export async function changeStage"),
+    service.indexOf("export async function commitStageChange")
+  );
+
+  check("one function owns authorization, validation and the writes",
+    /visibleTo\(ctx\.actor\)/.test(plan) && /canWrite\(ctx\.actor, row\)/.test(plan) &&
+      /canTransition\(from, to\)/.test(plan));
+  check("the plan carries all three domain writes",
+    /update\(contacts\)/.test(plan) && /insert\(contactActivities\)/.test(plan) &&
+      /insert\(auditEvents\)/.test(plan));
+  check("the manual path commits them atomically, not one by one",
+    /commitStageChange\(ctx\.db, planned\.value\.writes\)/.test(manual) &&
+      !/await ctx\.db\.update\(contacts\)/.test(manual) &&
+      !/await ctx\.db\.insert\(contactActivities\)/.test(manual));
+  check("commit goes through db.batch", /db\.batch\(/.test(service.slice(service.indexOf("export async function commitStageChange"))));
+
+  // §3 — the swallow must not survive ON THE STAGE PATH. `createContact`
+  // still has one; that is pre-existing and outside F2-C's scope, so it is
+  // named here rather than silently tolerated by a vaguer assertion.
+  const raw = readFileSync("lib/contacts/service.ts", "utf8");
+  const stagePath = raw.slice(
+    raw.indexOf("export async function planStageChange"),
+    raw.indexOf("export async function commitStageChange")
+  );
+  check("the stage path swallows nothing",
+    !/catch \{/.test(stagePath.slice(0, stagePath.indexOf("export async function changeStage"))) &&
+      !/must never break the write it describes/.test(stagePath));
+  check("the only remaining swallow is createContact's, which F2-C does not touch",
+    (raw.match(/History must never break the write it describes/g) ?? []).length === 1 &&
+      raw.indexOf("History must never break the write it describes") <
+        raw.indexOf("export async function planStageChange"));
+  check("a failed stage change reports failure rather than partial success",
+    /catch \{[\s\S]{0,120}reason: "unavailable"/.test(manual));
+
+  // §5 — mechanism is additive; a manual change records what it always did.
+  check("a manual change records no mechanism",
+    /mechanism === "manual" \? \{\} :/.test(plan));
+  check("an AI-assisted change records the mechanism and the action",
+    /\{ mechanism, \.\.\.\(options\.metadata \?\? \{\}\) \}/.test(plan));
+  check("the activity describes the business event, not the mechanism",
+    /summary: `Stage changed from \$\{from\} to \$\{to\}`/.test(plan));
+  check("the audit event type is the existing declared one",
+    /eventType: "contact_stage_changed"/.test(plan));
+
+  // §32 — one semantic path.
+  const route = code("app/api/contacts/[id]/stage/route.ts");
+  check("the manual UI route still calls the shared writer",
+    /changeStage\(/.test(route) && !/planStageChange|commitStageChange/.test(route));
+  check("the AI path reuses the domain plan rather than forking it",
+    !/changeStageForAI|aiChangeStage/.test(code("lib/ai/actions/service.ts")));
 }
 
 // --- Report ------------------------------------------------------------------

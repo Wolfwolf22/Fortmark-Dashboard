@@ -32,6 +32,16 @@ export function failure(reason: Reason): NextResponse {
       return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
     case "not_permitted":
       return NextResponse.json({ error: "no_identity" }, { status: 403, headers: NO_STORE });
+    // The lifecycle itself refuses the move, as it would for a person.
+    case "invalid_transition":
+      return NextResponse.json({ error: "invalid_transition" }, { status: 409, headers: NO_STORE });
+    case "already_in_stage":
+      return NextResponse.json({ error: "already_in_stage" }, { status: 409, headers: NO_STORE });
+    // The lifecycle permits it; this phase does not expose it to a model.
+    // Kept distinct so a user is never told their CRM forbids something the
+    // Leads screen does every day.
+    case "archived_not_supported":
+      return NextResponse.json({ error: "archived_not_supported" }, { status: 409, headers: NO_STORE });
     case "expired":
       return NextResponse.json({ error: "expired" }, { status: 409, headers: NO_STORE });
     case "stale":

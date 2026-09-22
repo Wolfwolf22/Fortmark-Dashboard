@@ -253,7 +253,55 @@ export async function createContact(ctx: Ctx, input: CreateContactInput): Promis
   return created ? { ok: true, value: created } : { ok: false, reason: "unavailable" };
 }
 
-export async function changeStage(ctx: Ctx, id: string, to: LeadStage, now = new Date()): Promise<ServiceResult<Lead>> {
+/**
+ * How a stage change came to be made. The human is the actor either way.
+ *
+ * `manual` is someone using the Leads screen. `ai_assisted` is someone
+ * pressing Confirm on a change an assistant prepared — the same person, the
+ * same authority, reached through a different door. The distinction is
+ * recorded so the history can answer "how did this happen", never so the two
+ * paths can behave differently.
+ */
+export type StageChangeMechanism = "manual" | "ai_assisted";
+
+/**
+ * A validated, authorized stage change that has NOT been written yet.
+ *
+ * `writes` is the complete set of statements the transition requires, ready to
+ * be handed to `db.batch`. Returning them rather than performing them is what
+ * lets the AI-confirmed path append its own statement — marking the prepared
+ * action executed — and commit all four together, without duplicating a line
+ * of this module's authorization or validation.
+ */
+export interface StageChangePlan {
+  row: ContactRow;
+  from: LeadStage;
+  to: LeadStage;
+  writes: BatchWrite[];
+}
+
+/** One statement in a batch. Drizzle's builders are thenable, not promises. */
+type BatchWrite = Parameters<Db["batch"]>[0][number];
+
+/**
+ * Authorize and validate a stage change, and build its writes.
+ *
+ * Everything that decides whether the change may happen lives here and only
+ * here: visibility, write permission, the lifecycle graph, and the same-stage
+ * rule. Both callers — the Leads screen and AI-confirmed execution — go
+ * through this function, so there is exactly one answer to "may this person
+ * move this contact to that stage", and one definition of what a stage change
+ * writes.
+ */
+export async function planStageChange(
+  ctx: Ctx,
+  id: string,
+  to: LeadStage,
+  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date } = {}
+): Promise<ServiceResult<StageChangePlan>> {
+  const now = options.now ?? new Date();
+  const mechanism = options.mechanism ?? "manual";
+
   const rows = await ctx.db
     .select()
     .from(contacts)
@@ -263,27 +311,80 @@ export async function changeStage(ctx: Ctx, id: string, to: LeadStage, now = new
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
   const from = row.stage as LeadStage;
+  // `canTransition` refuses same-stage, so a no-op arrives here as an invalid
+  // transition rather than as a silent success that writes history.
   if (!canTransition(from, to)) return { ok: false, reason: "invalid_transition" };
 
-  await ctx.db
-    .update(contacts)
-    .set({ stage: to, updatedByUserId: ctx.actor.userId, updatedAt: now })
-    .where(eq(contacts.id, row.id));
+  // The mechanism is additive metadata. A manual change records exactly what
+  // it always recorded, so existing history stays comparable.
+  const extra = mechanism === "manual" ? {} : { mechanism, ...(options.metadata ?? {}) };
+
+  return {
+    ok: true,
+    value: {
+      row,
+      from,
+      to,
+      writes: [
+        ctx.db
+          .update(contacts)
+          .set({ stage: to, updatedByUserId: ctx.actor.userId, updatedAt: now })
+          .where(eq(contacts.id, row.id)),
+        // The business event, in the domain's own words. An AI-assisted change
+        // is the same CRM event as any other — only the metadata differs.
+        ctx.db.insert(contactActivities).values({
+          contactId: row.id,
+          actorUserId: ctx.actor.userId,
+          kind: "status_change",
+          summary: `Stage changed from ${from} to ${to}`,
+          occurredAt: now,
+          safeMetadata: { from, to, ...extra },
+        }),
+        ctx.db.insert(auditEvents).values({
+          eventType: "contact_stage_changed",
+          actorUserId: ctx.actor.userId,
+          targetUserId: null,
+          safeMetadata: scrub({ contactId: row.id, from, to, ...extra }) ?? { contactId: row.id },
+        }),
+      ],
+    },
+  };
+}
+
+/**
+ * Change a contact's stage. The manual path, used by the Leads screen.
+ *
+ * The three writes commit as one Neon transaction. Previously they were
+ * sequential awaits whose activity insert was wrapped in a `catch` that
+ * swallowed — so a failure could leave the stage changed with no history and
+ * nobody told, on the one field an audit trail exists for. If the history
+ * cannot be recorded, the transition does not happen.
+ */
+export async function changeStage(ctx: Ctx, id: string, to: LeadStage, now = new Date()): Promise<ServiceResult<Lead>> {
+  const planned = await planStageChange(ctx, id, to, { mechanism: "manual", now });
+  if (!planned.ok) return planned;
+
   try {
-    await ctx.db.insert(contactActivities).values({
-      contactId: row.id,
-      actorUserId: ctx.actor.userId,
-      kind: "status_change",
-      summary: `Stage changed from ${from} to ${to}`,
-      occurredAt: now,
-      safeMetadata: { from, to },
-    });
+    await commitStageChange(ctx.db, planned.value.writes);
   } catch {
-    // History must never break the write it describes.
+    return { ok: false, reason: "unavailable" };
   }
-  await recordAudit(ctx.db, ctx.actor.userId, "contact_stage_changed", row.id, { from, to });
-  const updated = await getContact(ctx, row.id);
+
+  const updated = await getContact(ctx, planned.value.row.id);
   return updated ? { ok: true, value: updated } : { ok: false, reason: "unavailable" };
+}
+
+/**
+ * Commit a stage change's writes as one transaction.
+ *
+ * `db.batch` maps onto the Neon HTTP client's `transaction(...)`, which is a
+ * real server-side PostgreSQL transaction: every statement commits or none
+ * does. Never call the writes individually.
+ */
+export async function commitStageChange(db: Db, writes: BatchWrite[]): Promise<void> {
+  // drizzle types `batch` as a non-empty tuple; a plan always has three or
+  // more writes, and the cast says so rather than widening the signature.
+  await db.batch(writes as unknown as Parameters<Db["batch"]>[0]);
 }
 
 /** Log a touch. Stamps last-contacted and, when given, the next follow-up. */

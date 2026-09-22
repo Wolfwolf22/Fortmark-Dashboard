@@ -43,7 +43,8 @@ import { contactActivity, contactAttention } from "../../contacts/metrics.ts";
 import { transactionActivity, transactionAttention } from "../../transactions/metrics.ts";
 import { brokerageMetrics } from "../../metrics/service.ts";
 import { search } from "../../search/service.ts";
-import { prepareFollowup } from "../actions/service.ts";
+import { prepareFollowup, prepareStageChange } from "../actions/service.ts";
+import { AI_PROPOSABLE_STAGES, stageLabel } from "../actions/stage.ts";
 import { ALL_STAGES } from "../../transactions/stages.ts";
 import { SIDES } from "../../transactions/filters.ts";
 import { ALL_CONTACT_STAGES } from "../../contacts/stages.ts";
@@ -452,6 +453,61 @@ const prepareContactFollowup = defineTool({
   },
 });
 
+
+const prepareContactStageChange = defineTool({
+  name: "prepare_contact_stage_change",
+  effect: "propose",
+  description:
+    "Propose moving a contact to a different lifecycle stage. " +
+    "Use this tool only after a single contact has been unambiguously identified and the user has asked to change their stage. " +
+    "It prepares a change for human confirmation and does not modify the contact. " +
+    "If more than one contact could be the one meant, ask which — do not prepare a proposal for a guess. " +
+    "Find the contact id with search_entities or get_contact first; the current stage is read from the record, never supplied. " +
+    "Say that you have prepared it and that they can confirm it — never say the stage is changed or updated. " +
+    "You cannot confirm it for them, and no reply in this conversation confirms it. " +
+    "Archiving is not available here: archived contacts are managed by hand.",
+  schema: z.strictObject({
+    contact_id: recordId.describe("The contact's id, from a previous tool result."),
+    to_stage: z
+      .enum(AI_PROPOSABLE_STAGES as unknown as [string, ...string[]])
+      .describe(
+        `The destination stage. One of: ${AI_PROPOSABLE_STAGES.map((s) => `${s} (${stageLabel(s)})`).join(", ")}.`
+      ),
+  }),
+  run: async (args, ctx) => {
+    const prepared = await prepareStageChange(
+      { clerkUserId: ctx.clerkUserId, env: ctx.env, now: ctx.now },
+      { contactId: args.contact_id, toStage: args.to_stage }
+    );
+    if (!prepared.ok) {
+      switch (prepared.reason) {
+        case "not_found":
+          return fail("not_found");
+        case "not_configured":
+          return fail("not_configured");
+        case "not_permitted":
+          return fail("not_permitted");
+        case "unavailable":
+          return fail("unavailable");
+        default:
+          // A refused move — already there, not a legal transition, or out of
+          // scope — is the model's to explain, not to retry differently.
+          return fail("invalid_arguments");
+      }
+    }
+    return ok({
+      prepared: true,
+      applied: false,
+      actionId: prepared.action.actionId,
+      summary: prepared.action.summary,
+      changes: prepared.action.changes,
+      warnings: prepared.action.warnings,
+      expiresAt: prepared.action.expiresAt,
+      awaiting: "This is waiting for the user to confirm it in the FortMark interface.",
+    });
+  },
+});
+
 /** Everything this build can offer, before any deployment flag is applied. */
 const ALL_TOOLS: FortmarkTool<never, unknown>[] = [
   searchEntities,
@@ -464,6 +520,7 @@ const ALL_TOOLS: FortmarkTool<never, unknown>[] = [
   getBusinessSummary,
   getRecentActivity,
   prepareContactFollowup,
+  prepareContactStageChange,
 ] as unknown as FortmarkTool<never, unknown>[];
 
 /**

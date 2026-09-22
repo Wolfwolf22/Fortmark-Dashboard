@@ -98,8 +98,8 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
   const reads = ALL.filter((tool) => tool.effect === "read");
   const proposes = ALL.filter((tool) => tool.effect === "propose");
 
-  check("the registry holds the nine read tools and the one proposing tool",
-    ALL.length === 10 && reads.length === 9 && proposes.length === 1);
+  check("the registry holds the nine read tools and the two proposing tools",
+    ALL.length === 11 && reads.length === 9 && proposes.length === 2);
   check("every tool name is unique", new Set(TOOL_NAMES).size === TOOL_NAMES.length);
   check("every reading tool is named as a read",
     reads.every((tool) => /^(get|list|search)_/.test(tool.name)));
@@ -130,7 +130,7 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
   // its read: through one service, named here so that a second one cannot be
   // added quietly.
   check("the registry's only write path is the reviewed action service",
-    /import \{ prepareFollowup \} from "\.\.\/actions\/service\.ts";/.test(registry) &&
+    /import \{ prepareFollowup, prepareStageChange \} from "\.\.\/actions\/service\.ts";/.test(registry) &&
       !/executePreparedAction|cancelPreparedAction/.test(registry));
   check("the registry writes no SQL of its own",
     !/\b(insert|update|delete)\s*\(/i.test(registry) && !/drizzle-orm/.test(registry));
@@ -269,10 +269,12 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
               ? { transaction_id: "t-1" }
               : name === "prepare_contact_followup"
                 ? { contact_id: "c-1", date: "2026-04-01" }
-                : {};
+                : name === "prepare_contact_stage_change"
+                  ? { contact_id: "c-1", to_stage: "qualified" }
+                  : {};
       // Proposing tools need the flag, or the honest answer is that no such
       // tool exists here — which is asserted separately, in the action suite.
-      const env = name === "prepare_contact_followup" ? { AI_ACTIONS_ENABLED: "1" } : {};
+      const env = name.startsWith("prepare_") ? { AI_ACTIONS_ENABLED: "1" } : {};
       return [name, await executeTool(request(name, input), { ...ctx, env })] as const;
     })
   );
@@ -686,7 +688,9 @@ const request = (name: string, input: unknown = {}, id = "tu_1"): ToolRequest =>
   const route = code("app/api/chat/route.ts");
   const contract = code("lib/ai/actions/contract.ts");
 
-  check("exactly one proposing tool exists", ALL.filter((t) => t.effect === "propose").length === 1);
+  check("exactly two proposing tools exist, both named as proposals",
+    ALL.filter((t) => t.effect === "propose").length === 2 &&
+      ALL.filter((t) => t.effect === "propose").every((t) => t.name.startsWith("prepare_")));
   check("no execution primitive is registered",
     !TOOL_NAMES.some((name) => /execute|confirm|apply|commit/.test(name)));
 
