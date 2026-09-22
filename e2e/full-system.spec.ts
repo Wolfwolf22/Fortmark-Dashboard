@@ -368,7 +368,7 @@ test("§20 transactions are created with money, dates and deadlines, owned by th
   expect(a.contractPrice).toBe(850_000);
   expect(a.projectedCommission).toBe(21_250);
   expect(a.stage).toBe("opportunity");
-  expect(a.closeDate).toBe(isoDay(40));
+  expect(String(a.closeDate).slice(0, 10)).toBe(isoDay(40));
   expect((a.milestones as unknown[]).length).toBe(5);
   // The supplied owner and tenant were not honoured: the row is ours, and a
   // read that would have been 404 had they been is 200.
@@ -401,6 +401,7 @@ test("§22–§26 stage moves: dates stamp as designed, deadlines untouched, ter
   const get = async (id: string) => txnOf((await api(`/dashboard/api/transactions/${id}`)).body);
   // Deadlines surface as milestones: id, due date and state. A stage move must
   // leave all three exactly as they were.
+  // closeDate and milestone dates are ISO timestamps; compare on the calendar day.
   const deadlines = (t: Record<string, unknown>) =>
     ((t.milestones as { id: string; date: string; state: string }[]) ?? []).map((d) => `${d.id}|${d.date}|${d.state}`).sort();
 
@@ -412,7 +413,7 @@ test("§22–§26 stage moves: dates stamp as designed, deadlines untouched, ter
   expect(deadlines(afterA).length).toBe(5);
   // Ordinary active-stage movement stamps nothing: closeDate is still the
   // scheduled closing, not today.
-  expect(afterA.closeDate).toBe(isoDay(40));
+  expect(String(afterA.closeDate).slice(0, 10)).toBe(isoDay(40));
   expect((await move(state.txA, "opportunity")).status, "back three stages is refused").toBeGreaterThanOrEqual(400);
 
   expect((await move(state.txB, "on_hold")).status).toBe(200);
@@ -421,7 +422,7 @@ test("§22–§26 stage moves: dates stamp as designed, deadlines untouched, ter
   expect((await move(state.txE, "closed")).status).toBe(200);
   const e = await get(state.txE);
   // No closing was scheduled on E, so closeDate can only be the stamped one.
-  expect(e.closeDate).toBe(isoDay(0));
+  expect(String(e.closeDate).slice(0, 10)).toBe(isoDay(0));
   expect((await move(state.txE, "opportunity")).status, "closed is irreversible").toBeGreaterThanOrEqual(400);
 
   expect((await move(state.txF, "cancelled")).status).toBe(200);
