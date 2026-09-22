@@ -445,8 +445,12 @@ test("§27/§28 money is integer-exact and Home shows it", async () => {
   expect(t.activeVolumeCents).toBe(135_000_000);
   expect(t.activeVolumeUnpricedCount).toBe(1);
   expect(t.projectedCommissionCents).toBe(2_125_000);
-  expect(t.projectedCommissionUntermedCount).toBe(1);
-  expect(t.closedVolumeCents).toBe(40_000_000);
+  // "Untermed" is every active deal whose projection basis is none — the
+  // priced deal with no terms AND the deal with neither price nor terms. Both
+  // project nothing, which is what the count discloses.
+  expect(t.projectedCommissionUntermedCount).toBe(2);
+  expect(t.closedThisMonthVolumeCents).toBe(40_000_000);
+  expect(t.closedThisMonthCount).toBe(1);
 
   await page.goto("/dashboard/", { waitUntil: "domcontentloaded" });
   await expect(brief()).toBeVisible({ timeout: 30_000 });
