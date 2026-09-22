@@ -567,3 +567,100 @@ producing exactly one activity and exactly one confirmed card, and the card
 usable at 390 / 430 / 1440 with no horizontal overflow.
 
 All twelve domain tables returned to 0 afterwards.
+
+---
+
+# Executed-state certification — rendered, 14/14
+
+The previous pass certified that an executed card *appeared* and carried the
+right heading. That assertion would still have passed if the card had gone
+back to reading "Confirmed and saved", if a second copy had rendered, or if
+the proposal it replaced had stayed live underneath it. The suite now asserts
+what the state owes a person, in one shared helper every executed case runs
+through:
+
+- the past-tense heading, keyed by action type
+- the entity it happened to
+- the resulting value
+- **exactly one** executed record on screen
+- **no proposal still offering a decision that has already been made**
+- no buttons left to press — gone, not disabled
+- `role="status"` with an accessible name, and **one** live region, not two
+
+Read out of the real DOM against Preview `e8e9589`:
+
+```
+Follow-up scheduled                    Stage changed
+UIF2B Jane 0GTF                        UIF2C Jane 0GTF
+Follow-up  Friday, September 25, 2026  Stage  Qualified → Active client
+```
+
+Where a prior value exists the record carries the move rather than the result
+alone: `Follow-up  Friday, September 25, 2026 → Wednesday, March 3, 2027`.
+
+## The defect this pass found
+
+**Confirming a change threw focus to the document.** Measured directly:
+`activeElement` was `BODY` after a real click on Confirm.
+
+Confirm is not disabled in place — it is replaced by the record of what it
+did, so the element holding focus stops existing and focus falls back to
+`<body>`. A keyboard user loses their place in the thread and the outcome
+they just authorised is never announced to them. The mouse hides this
+completely, which is why it survived three rounds of certification: no
+previous assertion ever asked where focus went.
+
+The record now takes the focus its own button gave up — `tabIndex={-1}` so it
+can receive focus without becoming a new tab stop, focused when it mounts,
+keeping `role="status"` and its accessible name so what is announced is the
+whole outcome. Re-certified: `{"tag":"DIV","inRecord":true}`.
+
+## The harness defect this pass found
+
+A run lost its entire 600s hook budget and reported only "beforeAll hook
+timeout exceeded". The log gave it away: **one** retry line printed, then
+nothing — attempts two through five never ran.
+
+Playwright Test leaves `navigationTimeout` and `actionTimeout` at 0, so
+`page.goto` inside the retry loop was bounded by nothing but the hook itself.
+The retry was bounded in shape only, and one wedged navigation ate the whole
+budget. Every awaited step now carries its own timeout, with the worst case
+computed to fit: 2 × 4 × (25 + 20 + 2) + 120 + 20 = 516s of 600s. The failure
+it raises also records what the page was rendering, because "the harness could
+not get Clerk up" and "the portal is down" deserve different answers — and the
+old message gave neither.
+
+Clerk's official testing path is untouched: `clerkSetup`, the Testing Token
+and `clerk.signIn` all still do exactly what they did. Nothing was relaxed in
+middleware, `authorizedParties` or the allowlist.
+
+## Database, from the certified run
+
+Nine prepared actions, and every one of them resolved — none left `prepared`,
+`stale` or `failed`:
+
+| status | action type | n |
+|---|---|---|
+| executed | `contact_followup_schedule` | 3 |
+| executed | `contact_stage_change` | 2 |
+| cancelled | `contact_followup_schedule` | 4 |
+
+Two stage changes were performed and **two** executed stage actions exist, so
+the double-click in §21 produced exactly one. Eleven audits: 2
+`contact_created`, 3 `contact_stage_changed` (one manual setup, two AI-
+confirmed), 3 `contact_updated` (the three executed follow-ups), and 3 from
+the synthetic identity bootstrapping. Eight activities across two contacts.
+
+## Cleanup
+
+All twelve domain tables returned to 0, verified by query. Only the synthetic
+Clerk identity remains.
+
+## Verification
+
+| | |
+|---|---|
+| Rendered certification | **14/14** against Preview `e8e9589` |
+| Dashboard offline | 2,457 checks across 11 suites, typecheck clean, build clean |
+| Registry | 9 read / 2 propose / 0 execute |
+| Production | untouched — no deploy, no env change, no migration |
