@@ -589,7 +589,9 @@ test("§79 protected data routes are not cacheable", async () => {
   ] as const;
   for (const [path, init] of checks) {
     const r = await fetchHeaders(path, init as RequestInit);
-    expect(r.status, path).toBe(200);
+    // The profile route answers 404 where its feature flag is off; the
+    // header discipline has to hold on that answer as well.
+    expect(path.endsWith("/profile") ? [200, 404] : [200], path).toContain(r.status);
     expect(r.cache, `${path} cache-control=${r.cache}`).toContain("no-store");
   }
 });
