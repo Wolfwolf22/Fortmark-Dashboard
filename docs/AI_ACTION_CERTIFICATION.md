@@ -531,3 +531,39 @@ remains.
 | Dashboard offline | 2,430 checks, typecheck clean, build clean |
 | Rendered certification | 12/12 |
 | Production | untouched — no deploy, no env change, no migration |
+
+---
+
+# Action success UX — rendered regression
+
+The executed card previously read only "Confirmed and saved": an
+acknowledgement that something happened rather than a record of what. It now
+collapses the proposal scaffolding and keeps the record, read out of the real
+DOM:
+
+```
+Follow-up scheduled
+UIF2B Jane RK9J
+Follow-up  Friday, September 25, 2026
+```
+
+```
+Stage changed
+UIF2C Jane RK9J
+Stage  Qualified → Active client
+```
+
+The heading is keyed by action type, so a new action cannot be added without
+deciding how its completion reads. The executed card is its own element with
+its own accessible name and is announced politely; the proposal card marks
+itself `aria-busy` while executing and disables both buttons in flight.
+
+Verified in one clean run, 12/12, against Preview `a00d7c1`: both actions
+prepared, typed "yes" inert, real Confirm clicks committing
+(`nextFollowUpDate=2026-09-25T12:00:00.000Z`, `stage=active_client`), real
+Decline leaving the record untouched, archiving rendering no card, keyboard
+focus order Confirm → Decline with Escape confirming nothing, a double-click
+producing exactly one activity and exactly one confirmed card, and the card
+usable at 390 / 430 / 1440 with no horizontal overflow.
+
+All twelve domain tables returned to 0 afterwards.
