@@ -27,7 +27,24 @@ const FOREIGN_ACTION = "11111111-1111-4111-8111-111111111402";
 const RANDOM_ID = "22222222-2222-4222-8222-222222222222";
 
 let page: Page;
-let api: ReturnType<typeof apiFor>;
+/**
+ * Authenticated requests with a token that is never older than 30s.
+ *
+ * Clerk session tokens are short-lived by design. A token captured once and
+ * reused across a long serial run turned into a 401 the moment a recovered
+ * page load pushed the next request past its expiry — read as a product
+ * refusal until the status was compared with the token's age. The page
+ * refreshes the session in the background, so a current token is a question
+ * to the still-open page, asked again whenever the cached one is stale.
+ */
+const TOKEN_MAX_AGE_MS = 30_000;
+let cachedToken: { jwt: string; at: number } | null = null;
+async function api(path: string, init: RequestInit = {}) {
+  if (!cachedToken || Date.now() - cachedToken.at > TOKEN_MAX_AGE_MS) {
+    cachedToken = { jwt: await freshToken(page), at: Date.now() };
+  }
+  return apiFor(cachedToken.jwt)(path, init);
+}
 const consoleErrors: string[] = [];
 const pageErrors: string[] = [];
 const serverErrors: string[] = [];
@@ -152,7 +169,7 @@ const A_PHONE = "+19545550111";
 const A_EMAIL = "sysverify.jane.alpha@example.com";
 
 async function refresh() {
-  api = apiFor(await freshToken(page));
+  cachedToken = { jwt: await freshToken(page), at: Date.now() };
 }
 const json = (b: unknown) => JSON.stringify(b);
 const contactOf = (b: Record<string, unknown>) => b.contact as Record<string, unknown>;
