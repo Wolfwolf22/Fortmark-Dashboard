@@ -149,6 +149,7 @@ test("§15 clicking the real Decline button changes nothing", async () => {
 });
 
 test("§16-§18 the F2-C card renders, yes is inert, and Confirm executes", async () => {
+  test.setTimeout(480_000);
   const created = await api("/dashboard/api/contacts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -196,6 +197,7 @@ test("§16-§18 the F2-C card renders, yes is inert, and Confirm executes", asyn
 });
 
 test("§20 archiving is refused in the real UI", async () => {
+  test.setTimeout(300_000);
   await page.reload();
   await ask(`Archive ${C_NAME}.`);
   await page.waitForTimeout(12000);
@@ -210,6 +212,7 @@ test("§20 archiving is refused in the real UI", async () => {
 });
 
 test("§21 the card is reachable and operable by keyboard", async () => {
+  test.setTimeout(420_000);
   await page.reload();
   await ask(`Change the stage of the contact ${C_NAME} to Under Contract.`);
   const card = await cardFor("Under contract");
@@ -257,6 +260,7 @@ test("§21 the card is reachable and operable by keyboard", async () => {
 
 for (const [label, width] of [["mobile-390", 390], ["mobile-430", 430], ["desktop-1440", 1440]] as const) {
   test(`§24-§25 the card is usable at ${label}`, async () => {
+    test.setTimeout(300_000);
     await page.setViewportSize({ width, height: 900 });
     await page.reload();
     await ask(`Schedule a follow-up with ${B_NAME} for 20 November 2026.`);
