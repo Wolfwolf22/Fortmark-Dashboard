@@ -969,17 +969,38 @@ test("§77/§78 every route loads, with one h1, and what it shows is recorded", 
 test("§31/§95/§96 no horizontal overflow on the primary routes at four widths", async () => {
   test.setTimeout(420_000);
   const routes = ["/dashboard/", "/dashboard/leads", "/dashboard/transactions", "/dashboard/ai", "/dashboard/settings"];
+  // Measure the whole matrix before judging it, and name the element that
+  // sticks out: a finding is worth more than a stopped loop.
+  const findings: string[] = [];
   for (const width of [390, 430, 1280, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     for (const route of routes) {
       await page.goto(route, { waitUntil: "domcontentloaded", timeout: 60_000 });
       await page.waitForTimeout(600);
       const o = await overflow();
-      expect(o, `${route} @${width} overflow=${o}px`).toBeLessThanOrEqual(0);
+      if (o > 0) {
+        const culprit = await page.evaluate(() => {
+          const limit = document.documentElement.clientWidth;
+          let worst: { right: number; desc: string } | null = null;
+          for (const el of Array.from(document.querySelectorAll("body *"))) {
+            const r = el.getBoundingClientRect();
+            if (r.width === 0 || r.right <= limit) continue;
+            if (!worst || r.right > worst.right) {
+              const h = el as HTMLElement;
+              const cls = typeof h.className === "string" ? h.className.split(/\s+/).slice(0, 4).join(".") : "";
+              worst = { right: Math.round(r.right), desc: `${h.tagName.toLowerCase()}${h.id ? "#" + h.id : ""}${cls ? "." + cls : ""} right=${Math.round(r.right)} width=${Math.round(r.width)} text=${JSON.stringify((h.innerText || "").replace(/\s+/g, " ").slice(0, 60))}` };
+            }
+          }
+          return worst?.desc ?? "(none found)";
+        });
+        findings.push(`${route} @${width}: overflow=${o}px widest=${culprit}`);
+      }
     }
-    console.log(`[ui] ${width}px: no overflow on ${routes.length} routes`);
+    console.log(`[ui] ${width}px measured on ${routes.length} routes; findings so far=${findings.length}`);
   }
   await page.setViewportSize({ width: 1440, height: 900 });
+  for (const f of findings) console.log(`[ui] overflow ${f}`);
+  expect(findings, findings.join("\n")).toEqual([]);
 });
 
 test("§97 keyboard reaches something, and the home has exactly one h1", async () => {
