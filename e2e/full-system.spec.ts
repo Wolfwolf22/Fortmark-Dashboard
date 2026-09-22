@@ -869,7 +869,10 @@ test("§43/§44 conversation context resolves, and missing data is not invented"
   await ask("What is the DSCR on this deal?");
   const dscr = await lastReply();
   console.log(`[ai] missing: ${json(dscr.slice(0, 300))}`);
-  expect(dscr).toMatch(/don't have|do not have|not available|no (data|information)|insufficient|isn't|not (stored|recorded|enough)|can't|cannot|unable/i);
+  // The model writes a typographic apostrophe ("can’t"); the refusal is
+  // judged on plain letters, and "does not include" is a refusal too.
+  const plain = dscr.replace(/[\u2018\u2019]/g, "'");
+  expect(plain).toMatch(/don't have|do not have|does not (include|have|record)|not available|no (data|information)|insufficient|isn't|not (stored|recorded|enough)|can't|cannot|unable/i);
   expect(dscr).not.toMatch(/\b\d+\.\d+\s?x\b/);
 });
 
