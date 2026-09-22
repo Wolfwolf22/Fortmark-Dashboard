@@ -214,18 +214,35 @@ reuse a fixture name. The fixture name is now unique per run.
 
 ---
 
-## 4. Cleanup (§22)
+## 4. Cleanup (§22) — complete
 
-All F2LIVE fixtures deleted; domain counts returned to their pre-run values.
+Every certification fixture was deleted and all twelve domain tables returned
+to their pre-run values.
 
-Retained deliberately, as §22 permits:
+| table | before | after run | after cleanup |
+|---|---|---|---|
+| dashboard_users | 0 | 1 | **0** |
+| professional_profiles | 0 | 1 | **0** |
+| profile_images | 0 | 1 | **0** |
+| contacts | 0 | 4 | **0** |
+| contact_activities | 0 | 6 | **0** |
+| contact_opportunities | 0 | 0 | **0** |
+| audit_events | 0 | 7 | **0** |
+| ai_prepared_actions | 0 | 4 | **0** |
+| transactions | 0 | 0 | **0** |
+| transaction_parties | 0 | 0 | **0** |
+| transaction_deadlines | 0 | 0 | **0** |
+| transaction_events | 0 | 0 | **0** |
 
-- the permanent synthetic Clerk identity (non-human, Preview only), now
-  carrying `fortmarkRole: agent` in its Clerk metadata;
-- its `dashboard_users` / profile rows, which are the application actor the
-  next certification run needs and which the app recreates on sign-in anyway.
+No metric polluted; nothing retained in the database.
 
-Pre/post table counts are recorded in §8.
+The application actor was deleted too, rather than kept. It is not a fixture
+worth preserving: the app recreates it on the next sign-in through its own
+`syncCurrentUser`, and it comes back as `agent` because the role lives in Clerk
+metadata rather than in the row.
+
+What remains is only the synthetic Clerk identity itself — non-human, Preview
+only, `fortmarkRole: agent`, which §22 permits and the next run needs.
 
 ---
 
@@ -302,18 +319,14 @@ the fast way to re-check the refusal without a ten-minute wait.
 | | |
 |---|---|
 | Playwright certification | 9/9 passed (`npm run certify:f2b`) |
-| Playwright expiry | passed — see §7 |
+| Playwright expiry | 2/2 passed, self-contained, 10.5m (`npm run certify:f2b:expiry`) |
 | Offline suites | 2,357 checks passed (`npm test`) |
 | Typecheck | clean |
 | Build | clean |
 | Preview revision | `79e799f` |
 | Production impact | **none** |
 
-Pre/post domain counts: **cleanup not yet performed.** At the time of writing
-the Preview database still holds the certification fixtures — 1 contact,
-2 prepared actions (`executed`, `stale`), 3 contact activities, 4 audit events,
-1 `dashboard_users` row — pending the end of the expiry run, which needs its
-own fixture. Pre-run counts were 0 across every domain table.
+Pre/post domain counts: all twelve domain tables 0 before and 0 after — see §4.
 
 ---
 
@@ -329,7 +342,8 @@ only and never imported by application code:
 | `e2e/global.setup.ts` | `clerkSetup()` — Testing Token for the run |
 | `e2e/session.ts` | official sign-in helper; token in memory only |
 | `e2e/f2b-certification.spec.ts` | the nine-step live certification |
-| `e2e/expiry.spec.ts` | the real-clock expiry proof |
+| `e2e/expiry.spec.ts` | self-contained real-clock expiry proof (~10.5m) |
+| `e2e/expired-action.spec.ts` | fast re-check of an already-aged action, by id |
 
 Run with `npm run certify:f2b`. It needs `CLERK_SECRET_KEY` and a publishable
 key for the **development** instance (`cheerful-anteater-89.clerk.accounts.dev`)
