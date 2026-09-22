@@ -86,15 +86,26 @@ async function warm(): Promise<void> {
 async function loadWithClerk(page: Page, path: string): Promise<void> {
   let last: unknown;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    let status: number | undefined;
     try {
-      await page.goto(path, { waitUntil: "domcontentloaded", timeout: NAV_MS });
+      const res = await page.goto(path, { waitUntil: "domcontentloaded", timeout: NAV_MS });
+      status = res?.status();
+      // A document that is not a 200 has no Clerk to wait for: say what it
+      // was and go straight to the next attempt.
+      if (status !== undefined && status !== 200) throw new Error(`document answered ${status}`);
       await clerk.loaded({ page, timeout: CLERK_MS } as Parameters<typeof clerk.loaded>[0]);
       if (attempt > 1) console.log(`[session] Clerk initialised at ${path} on attempt ${attempt}`);
       return;
     } catch (error) {
       last = error;
       const title = await page.title().catch(() => "(no title)");
-      console.log(`[session] Clerk did not initialise at ${path} (attempt ${attempt}, title=${JSON.stringify(title)}, url=${page.url()}); reloading`);
+      const html = await page.content().catch(() => "");
+      const mitigated = await page
+        .evaluate(() => document.body?.innerText.includes("Security Checkpoint"))
+        .catch(() => false);
+      console.log(
+        `[session] Clerk did not initialise at ${path} (attempt ${attempt}, status=${status ?? "none"}, title=${JSON.stringify(title)}, htmlLength=${html.length}, challenge=${mitigated}, url=${page.url()}): ${String(error).slice(0, 120)}; reloading`
+      );
       await page.waitForTimeout(2_000).catch(() => undefined);
     }
   }

@@ -995,6 +995,17 @@ test("§88 a hostile name renders as text, never as markup", async () => {
   // Instrumented: this navigation produced a blank document twice on the
   // certified revision while a fresh-page probe rendered it. Record what the
   // navigation returned before asserting, so a repeat comes with evidence.
+  // Self-sufficient, so the sweep can run on its own: the hostile contact is
+  // created here when §15 has not run in this process.
+  if (!state.X) {
+    const res = await api("/dashboard/api/contacts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: json({ firstName: "SYSVERIFY", lastName: X_LAST, source: "other", opportunities: [{ kind: "seller", area: INJECTION }] }),
+    });
+    expect(res.status, json(res.body).slice(0, 200)).toBe(201);
+    state.X = contactOf(res.body).id as string;
+  }
   await openAndWait(`/dashboard/leads?open=${state.X}`, () => page.getByRole("main").filter({ hasText: "Xavier" }), "§88 hostile name");
   const drawer = page.getByRole("dialog");
   await expect(drawer).toContainText("Xavier", { timeout: 30_000 });
