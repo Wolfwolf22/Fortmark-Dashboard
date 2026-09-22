@@ -21,6 +21,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FlaskConical } from "lucide-react";
 import { useHomeMetrics } from "./metrics-provider";
+import { UnavailableBody } from "./metric-state";
 import { isFirstUse } from "@/lib/metrics/home-layout";
 import { centsToDollars, monthLabel, scopeLabel } from "./metric-format";
 import { ROUTES } from "@/lib/routes";
@@ -100,7 +101,7 @@ export function figures(metrics: BrokerageMetrics): Figure[] {
 }
 
 export function DailyBrief() {
-  const { metrics, loading } = useHomeMetrics();
+  const { metrics, loading, error } = useHomeMetrics();
 
   // The date is the reader's, so it is computed after mount rather than on the
   // server, where "today" would be UTC's idea of it.
@@ -114,6 +115,22 @@ export function DailyBrief() {
       })
     );
   }, []);
+
+  // A request that failed is not a request still in flight. Without this
+  // branch a failed fetch left the skeleton pulsing indefinitely — the widgets
+  // below said "Metrics could not be loaded" while the headline band above
+  // them kept promising figures that were never coming. Certification found
+  // it by reading the code; the same sentence the widgets use goes here.
+  if (error) {
+    return (
+      <section aria-label="Daily brief" className="mb-6" role="status">
+        <UnavailableBody
+          availability="unavailable"
+          detail="Metrics could not be loaded. Refresh to retry."
+        />
+      </section>
+    );
+  }
 
   if (loading || !metrics) {
     return (

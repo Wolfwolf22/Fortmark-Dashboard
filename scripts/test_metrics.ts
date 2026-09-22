@@ -537,6 +537,33 @@ check("nothing else was made public", (() => {
   return routes.length === 2 && routes.includes('"/api/health"') && routes.includes('"/__clerk/(.*)"');
 })());
 
+// --- The daily brief cannot mistake a failed request for one in flight ------------------
+// Every widget hands its group to `MetricState`, which says "could not be
+// loaded" on error. The brief renders its own band, so it must read the same
+// error itself — and it must do so before the loading branch, or a failed
+// fetch is indistinguishable from a slow one.
+check("the daily brief reads the fetch error", (() => {
+  const src = code("components/home/daily-brief.tsx");
+  return /const \{ metrics, loading, error \} = useHomeMetrics\(\)/.test(src);
+})());
+check("a failed metrics request is stated, not left as a skeleton", (() => {
+  const src = code("components/home/daily-brief.tsx");
+  const errorAt = src.indexOf("if (error)");
+  const loadingAt = src.indexOf("if (loading || !metrics)");
+  return (
+    errorAt !== -1 &&
+    loadingAt !== -1 &&
+    errorAt < loadingAt &&
+    /if \(error\) \{[\s\S]{0,400}<UnavailableBody[\s\S]{0,120}availability="unavailable"/.test(src)
+  );
+})());
+check("the brief's failure sentence is the widgets' sentence", (() => {
+  const brief = code("components/home/daily-brief.tsx");
+  const widget = code("components/home/metric-state.tsx");
+  const sentence = "Metrics could not be loaded. Refresh to retry.";
+  return brief.includes(sentence) && widget.includes(sentence);
+})());
+
 // --- Report -------------------------------------------------------------------------------
 console.log(`\n${passed}/${passed + failures.length} metrics checks passed`);
 if (failures.length > 0) {
