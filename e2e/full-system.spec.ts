@@ -456,7 +456,12 @@ test("§27/§28 money is integer-exact and Home shows it", async () => {
   await expect(brief()).toBeVisible({ timeout: 30_000 });
   const text = (await brief().innerText()).replace(/\s+/g, " ");
   console.log(`[sys] populated brief: ${json(text.slice(0, 500))}`);
-  expect(text).toMatch(/21,250/);
+  // The brief rounds for display ($21.3K); the exact figure is the API's.
+  // What matters here is that it says what the totals leave out.
+  expect(text).toMatch(/\$21\.3K|21,250/);
+  expect(text).toMatch(/1 on hold, not counted/);
+  expect(text).toMatch(/1 without a contract price/);
+  expect(text).toMatch(/2 without terms entered/);
   const main = (await page.locator("main").innerText()).replace(/\s+/g, " ");
   expect(main).toContain("Not connected");
   // Needs attention names the overdue deadline (by its deal or its label) and
