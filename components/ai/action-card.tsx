@@ -91,6 +91,24 @@ export function ActionCard({ action, onSettled }: ActionCardProps) {
   const done = settled !== null;
 
   /**
+   * Focus follows the change into its record.
+   *
+   * Confirm is not disabled and left in place — it is replaced by the record
+   * of what it did. Without this the element holding focus simply stops
+   * existing, focus falls back to `<body>`, and someone working by keyboard
+   * loses their place on the page while the outcome they just authorised goes
+   * unannounced. Certification measured exactly that: `activeElement` was
+   * BODY after a real Confirm click.
+   *
+   * `settled` is only ever set by this card's own buttons, so this runs when
+   * the person acted and never on incidental re-render.
+   */
+  const recordRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (settled === "confirmed") recordRef.current?.focus();
+  }, [settled]);
+
+  /**
    * What happened, once it has.
    *
    * The proposal scaffolding is gone — the diff arrows, the "nothing changes
@@ -103,7 +121,12 @@ export function ActionCard({ action, onSettled }: ActionCardProps) {
   if (settled === "confirmed") {
     return (
       <div
-        className="rounded-panel border border-border bg-card px-4 py-3 text-[13px] shadow-card dark:shadow-none"
+        ref={recordRef}
+        // Focusable on purpose but not in the tab order: it is a destination
+        // for the focus its own button gave up, not a new stop for everyone
+        // else tabbing through the thread.
+        tabIndex={-1}
+        className="rounded-panel border border-border bg-card px-4 py-3 text-[13px] shadow-card outline-none dark:shadow-none"
         role="status"
         aria-label="Change confirmed"
       >
