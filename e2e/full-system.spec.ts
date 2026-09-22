@@ -70,9 +70,23 @@ function isoAt(offsetDays: number): string {
 async function ask(text: string) {
   const send = page.getByLabel("Send message");
   await expect(send).toBeVisible({ timeout: 180_000 });
-  await composer().click();
-  await composer().fill(text);
-  await send.click();
+  // The composer is controlled: a value typed before React has hydrated
+  // never reaches state, Send stays disabled, and a click on it would wait
+  // for actionability with no bound. So fill, require Send to enable, and
+  // fill again if it did not — the enabled button is the hydration proof.
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    await composer().click();
+    await composer().fill(text);
+    try {
+      await expect(send).toBeEnabled({ timeout: 10_000 });
+      break;
+    } catch {
+      if (attempt === 4) throw new Error("the composer never accepted input — the page did not hydrate");
+      await page.waitForTimeout(1_500);
+    }
+  }
+  await send.click({ timeout: 30_000 });
+  // The turn is over when the composer offers Send again.
   await expect(send).toBeVisible({ timeout: 180_000 });
 }
 /** The assistant's latest reply, as rendered. */
