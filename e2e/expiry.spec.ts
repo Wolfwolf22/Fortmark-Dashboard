@@ -10,7 +10,13 @@ import { apiFor, chat, freshToken, signInCertificationUser } from "./session";
  *
  * Kept in its own file so the main certification run stays fast; this one is
  * deliberately slow.
+ *
+ * The fixture name is unique per run. A previous run left an identically named
+ * contact behind, and the assistant then correctly refused to prepare anything
+ * for an ambiguous name — right behaviour, but it made this test fail for a
+ * reason that had nothing to do with expiry.
  */
+const RUN_ID = Date.now().toString(36).toUpperCase();
 test.describe.configure({ mode: "serial" });
 
 test("a prepared action expires and is then refused", async ({ browser }) => {
@@ -26,13 +32,13 @@ test("a prepared action expires and is then refused", async ({ browser }) => {
   const created = await api("/dashboard/api/contacts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ firstName: "F2LIVE", lastName: "Expiry Fixture", stage: "lead" }),
+    body: JSON.stringify({ firstName: "F2LIVE", lastName: `Expiry ${RUN_ID}`, stage: "lead" }),
   });
   expect(created.status).toBe(201);
   const contactId = (created.body.contact as Record<string, unknown>).id as string;
 
   await chat(jwt, [
-    { role: "user", content: "Schedule a follow-up with F2LIVE Expiry Fixture next Friday." },
+    { role: "user", content: `Schedule a follow-up with F2LIVE Expiry ${RUN_ID} next Friday.` },
   ]);
 
   const pending = await api("/dashboard/api/ai/actions");

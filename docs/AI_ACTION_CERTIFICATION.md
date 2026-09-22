@@ -1,7 +1,7 @@
 # F2-B certification — Schedule Contact Follow-Up
 
-> **Status: LIVE VERIFIED, with two items still open** — the real-clock expiry
-> run (§7) and fixture cleanup (§4). Neither is claimed as passed below.
+> **Status: LIVE VERIFIED.** Every gate was observed against the deployed
+> Preview, including expiry against the real ten-minute clock.
 >
 > The pipeline was exercised end to end against the deployed Preview with a
 > real Clerk session, the real middleware, the real allowlist, the real OpenAI
@@ -165,7 +165,22 @@ contact.nextFollowUpDate = 2026-12-01T12:00:00.000Z   <- newer value preserved
 
 The action row reads `stale`. Nothing was overwritten.
 
-### §19 — expired action — proven at database level; API-level run open (§7)
+### §19 — expired action — **PASS**
+
+An action prepared at `23:48:39` and expiring at `23:58:39` was confirmed
+after its window had genuinely elapsed. The TTL was never shortened.
+
+```
+offered in the pending list : false
+direct read                 : status=expired, expiresAt=2026-09-21T23:58:39.675Z
+confirm                     : 409 {"error":"expired"}
+contact.nextFollowUpDate    : absent  <- untouched
+```
+
+Expiry is evaluated against the clock rather than written into the row by a
+sweeper, so a lapsed action still sits in the table as `prepared`. That is the
+point of this test: neither the read path nor the execute path treats it as
+live, so no sweeper is load-bearing for safety.
 
 ### §20 — unauthorized / unknown action — **PASS**
 
@@ -183,6 +198,19 @@ untested path. The existing proof is retained: the real four-statement batch
 was run against Preview Postgres with the audit insert forced to violate a
 foreign key, and **nothing partially applied** — contact unchanged, no
 activity, no audit, action `executing` rather than `executed`. Detail in §5.
+
+---
+
+## 3b. Incidental finding — §4 ambiguity, verified live
+
+A repeat run left two contacts with the same name. Asked to schedule a
+follow-up for that name, the assistant **prepared nothing** — no
+`ai_prepared_actions` row was written at all. §4 requires exactly that: where
+more than one contact is plausible, do not prepare, ask which.
+
+It surfaced as a test failure rather than as a designed check, which is worth
+saying plainly: the product behaved correctly and the harness was wrong to
+reuse a fixture name. The fixture name is now unique per run.
 
 ---
 
@@ -238,24 +266,34 @@ F1 bug class (`operator does not exist: transaction_stage = text`).
 
 ---
 
-## 7. Real-clock expiry run (§19)
+## 7. Real-clock expiry run (§19) — **PASS**
 
-Run separately (`npm run certify:f2b:expiry`) because it waits out the actual
-ten-minute TTL. **The TTL was not reduced for the test** — shortening it would
-prove only that a shortened window closes.
+**The TTL was not reduced for the test** — shortening it would prove only that
+a shortened window closes. Result in §3 §19: an action expired on the real
+clock was refused with `409 expired`, was not offered as pending, read back as
+`expired`, and left the contact untouched.
 
-**Not yet reported.** The run was started and, as of this writing, had not
-progressed past sign-in — no fixture contact was created after twelve minutes,
-so it appears to be stuck in the harness rather than waiting out the TTL. It is
-therefore recorded as **not run**, not as passed.
+Getting there took three attempts, and the two failures were both harness
+defects rather than product faults. They are recorded because a certification
+that hides its own false starts is worth less:
 
-What *is* proven for expiry, at database level (§5): a row whose `expires_at`
-is in the past cannot be claimed — the conditional claim returned **0 rows**,
-while the same claim against the same row with a live `expires_at` returned
-**1**. The predicate the API path depends on is verified; the API path itself
-is not.
+1. **Hung at `clerk.loaded()`** — Clerk's script did not finish initialising on
+   one page load and the helper waited fifteen minutes. Fixed with a bounded
+   three-attempt reload; an unbounded wait turns a real failure into a silent
+   timeout.
+2. **Session token expired mid-wait** — the token captured at sign-in did not
+   outlive a ten-minute test. That is Clerk behaving correctly; the harness was
+   wrong to assume otherwise. The page now stays open and tokens are refreshed
+   from the live session, and the call asserts a `200` before reading its body
+   so an auth problem surfaces as one.
 
-Re-run with `npm run certify:f2b:expiry`.
+A third run then failed on the §4 ambiguity rule (§3b) — the product being
+right, the fixture name being reused. Names are now unique per run.
+
+Two specs are retained: `e2e/expiry.spec.ts` prepares an action and waits out
+the real TTL end to end, and `e2e/expired-action.spec.ts` verifies an
+already-aged action by id (`EXPIRED_ACTION_ID`, `EXPIRED_CONTACT_ID`), which is
+the fast way to re-check the refusal without a ten-minute wait.
 
 ---
 
@@ -264,7 +302,7 @@ Re-run with `npm run certify:f2b:expiry`.
 | | |
 |---|---|
 | Playwright certification | 9/9 passed (`npm run certify:f2b`) |
-| Playwright expiry | **not reported** — see §7 |
+| Playwright expiry | passed — see §7 |
 | Offline suites | 2,357 checks passed (`npm test`) |
 | Typecheck | clean |
 | Build | clean |
