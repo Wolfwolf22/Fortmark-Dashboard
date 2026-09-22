@@ -22,6 +22,10 @@ const C_NAME = `UIF2C Jane ${RUN}`;
 const state: { bId?: string; cId?: string } = {};
 
 const CARD = '[aria-label="Suggested change awaiting your confirmation"]';
+// The executed card is a different element: the proposal collapses into a
+// record of what happened, with its own accessible name.
+const CONFIRMED = '[aria-label="Change confirmed"]';
+const confirmedCard = () => page.locator(CONFIRMED).last();
 
 async function refresh() {
   api = apiFor(await freshToken(page));
@@ -145,8 +149,9 @@ test("§14 clicking the real Confirm button executes", async () => {
   await card.getByRole("button", { name: "Confirm" }).click();
 
   // §2/§3 — the executed state stays visible and says what happened.
-  await expect(card).toContainText("Follow-up scheduled", { timeout: 60_000 });
-  const done = (await card.innerText()).replace(/\s+/g, " ");
+  const executed = confirmedCard();
+  await expect(executed).toContainText("Follow-up scheduled", { timeout: 60_000 });
+  const done = (await executed.innerText()).replace(/\s+/g, " ");
   console.log(`[ui] executed card: ${JSON.stringify(done)}`);
   expect(done).toContain(B_NAME);
   expect(done).toMatch(/[A-Z][a-z]+day, [A-Z][a-z]+ \d{1,2}, \d{4}/);
@@ -216,8 +221,9 @@ test("§16-§18 the F2-C card renders, yes is inert, and Confirm executes", asyn
   // §18 — the real click.
   const live = await cardFor("Active client");
   await live.getByRole("button", { name: "Confirm" }).click();
-  await expect(live).toContainText("Stage changed", { timeout: 60_000 });
-  const doneC = (await live.innerText()).replace(/\s+/g, " ");
+  const executedC = confirmedCard();
+  await expect(executedC).toContainText("Stage changed", { timeout: 60_000 });
+  const doneC = (await executedC.innerText()).replace(/\s+/g, " ");
   console.log(`[ui] executed F2-C card: ${JSON.stringify(doneC)}`);
   expect(doneC).toContain(C_NAME);
   expect(doneC).toContain("Qualified → Active client");
@@ -282,7 +288,9 @@ test("§21 the card is reachable and operable by keyboard", async () => {
   const beforeCount = await activityCount();
 
   await confirm.click({ clickCount: 2, delay: 40 });
-  await expect(card).toContainText("Stage changed", { timeout: 60_000 });
+  await expect(confirmedCard()).toContainText("Stage changed", { timeout: 60_000 });
+  // §22 — one executed state, not two.
+  expect(await page.locator(CONFIRMED).count()).toBe(1);
 
   await refresh();
   const stage = await api(`/dashboard/api/contacts/${state.cId}`);
