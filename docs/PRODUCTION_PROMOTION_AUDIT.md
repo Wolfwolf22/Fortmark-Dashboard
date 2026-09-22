@@ -737,3 +737,27 @@ mitigation change, no API key, no data written.
 
 **Stage 1 status: CORE PRODUCTION LIVE — authenticated operator smoke pending.**
 AI and AI actions remain off. Read-only AI requires separate authorisation.
+
+### Stage 1 addendum — owner role change (2026-09-22, explicitly authorised)
+
+The owner confirmed the sole Production dashboard user is their own FortMark
+owner/operator account and authorised `member → admin`.
+
+- **Pre-checks (read-only):** exactly 1 user; role `member`; status `active`;
+  onboarded; `admin` is a value of enum `dashboard_user_role`
+  (`admin,broker,transaction_coordinator,agent,member`).
+- **Change:** one transaction on `br-bitter-cake-av7pmzth`: guarded
+  `UPDATE dashboard_users SET role='admin', updated_at=now()` (only where
+  role=`member`, status=`active`, onboarded; aborts unless exactly one user and
+  exactly one row changed) plus one `role_changed` audit event
+  (`{"from":"member","to":"admin","source":"operator","reason":"owner_operator_confirmed_production_launch"}`).
+  No other column, user, profile, brokerage, Clerk identity or allowlist touched.
+- **After:** users 1 (`admin`/`active`/onboarded); profiles 1; images 1;
+  audit events 47 (46 + the one `role_changed`); contacts 0; transactions 0;
+  prepared actions 0.
+- **Authorisation (repo functions evaluated for the new role):** `isPrivileged`
+  true; Contacts `canCreateFor(self)` true; Transactions `canCreateFor(self)`
+  true (both false for `member`). The actor role is read from the database per
+  request, so this is effective without a redeploy.
+- No env change, no deploy, no Clerk change, no Contact/Transaction created,
+  AI and AI actions still off. The Stage 1 safety branch predates this change.
