@@ -52,9 +52,12 @@ function ReadOnlyField({
   hint?: string;
 }) {
   return (
-    <div className="space-y-2">
+    // `min-w-0` lets the grid cell shrink below the value's own width, and
+    // the value may break anywhere: an account email has no spaces, and at
+    // phone width it was the one thing on Settings wider than the screen.
+    <div className="min-w-0 space-y-2">
       <span className="block text-sm font-semibold leading-none">{label}</span>
-      <div className="flex h-9 items-center text-sm text-foreground">{value}</div>
+      <div className="flex min-h-9 items-center text-sm text-foreground [overflow-wrap:anywhere]">{value}</div>
       {hint && <p className="text-[12px] text-muted-foreground">{hint}</p>}
     </div>
   );

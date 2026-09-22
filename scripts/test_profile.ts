@@ -3764,6 +3764,13 @@ const ALLOWED_ENV = {
       /if \(!value\) return null;/.test(section));
     check("the record renders catalogue labels, not stored keys",
       section.includes("titleLabel(") && section.includes("mlsBoardLabel("));
+
+    // A read-only value with no spaces — the account email — must not be
+    // able to widen the page: certification measured Settings 33px wider
+    // than a 390px viewport because the grid cell could not shrink below
+    // the email and the email could not wrap.
+    check("a read-only field can shrink below its value and the value can wrap anywhere",
+      /function ReadOnlyField[\s\S]{0,600}className="min-w-0 space-y-2"[\s\S]{0,300}\[overflow-wrap:anywhere\]/.test(section));
     check("the record still says MLS is unverified",
       section.includes("mlsStatusLabel("));
 
