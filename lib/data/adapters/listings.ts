@@ -111,14 +111,32 @@ export async function getListing(id: string): Promise<Listing | undefined> {
   }
 }
 
-/** The featured card on Home: highest-priced active listing. */
-export async function getFeaturedListing(): Promise<Listing | undefined> {
+/**
+ * FortMark's own active book for Home: the featured listing (FortMark's
+ * highest-priced active listing, by MLS office id) and the active count.
+ * `activeCount` is undefined for the sample set — generated rows are not
+ * FortMark's listings and are never counted as such.
+ */
+export async function getFortmarkListingSummary(): Promise<{
+  listing: Listing | undefined;
+  activeCount: number | undefined;
+}> {
   if ((await availableSource()) === "sample") {
     await delay(120);
-    return getSampleFeaturedListing();
+    return { listing: getSampleFeaturedListing(), activeCount: undefined };
   }
-  const { listing } = await request<{ listing: Listing | null }>("/api/listings/featured");
-  return listing ?? undefined;
+  const body = await request<{ listing: Listing | null; fortmarkActiveCount?: number }>(
+    "/api/listings/featured"
+  );
+  return {
+    listing: body.listing ?? undefined,
+    activeCount: typeof body.fortmarkActiveCount === "number" ? body.fortmarkActiveCount : undefined,
+  };
+}
+
+/** The featured card on Home. */
+export async function getFeaturedListing(): Promise<Listing | undefined> {
+  return (await getFortmarkListingSummary()).listing;
 }
 
 /** Closed sales comparable to a listing, most recent first. */

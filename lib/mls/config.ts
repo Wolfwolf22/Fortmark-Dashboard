@@ -16,6 +16,8 @@ import "server-only";
  */
 import type { EnvLike } from "../flags.ts";
 
+export { FORTMARK_LIST_OFFICE_MLS_ID } from "./brokerage.ts";
+
 /** Bridge's public RESO endpoint. Overridable for tests and for a proxy. */
 export const DEFAULT_BRIDGE_BASE_URL = "https://api.bridgedataoutput.com/api/v2/OData";
 

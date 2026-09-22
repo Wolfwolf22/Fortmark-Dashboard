@@ -3,7 +3,7 @@ import { requireCaller } from "@/lib/auth/require-caller";
 import { getSampleFeaturedListing } from "@/lib/data/sample-listings";
 import { sampleListingsEnabled } from "@/lib/mls/config";
 import { failureResponse, mlsConfig, notConfigured, NO_STORE } from "@/lib/mls/http";
-import { getFeaturedListing } from "@/lib/mls/service";
+import { getFortmarkListingSummary } from "@/lib/mls/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,8 +25,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const listing = await getFeaturedListing(config.config, request.signal);
-    return NextResponse.json({ listing }, { headers: NO_STORE });
+    const summary = await getFortmarkListingSummary(config.config, request.signal);
+    return NextResponse.json(
+      { listing: summary.featured, fortmarkActiveCount: summary.activeCount },
+      { headers: NO_STORE }
+    );
   } catch (error) {
     return failureResponse(error);
   }

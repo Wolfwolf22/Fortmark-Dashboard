@@ -34,7 +34,7 @@ export interface Stub {
 
 // --- $filter -----------------------------------------------------------------
 
-type Tok = { t: "lp" | "rp" | "and" | "or" | "ident" | "str" | "num" | "op" | "comma"; v: string };
+type Tok = { t: "lp" | "rp" | "and" | "or" | "ident" | "str" | "num" | "bool" | "op" | "comma"; v: string };
 
 function tokenize(src: string): Tok[] {
   const out: Tok[] = [];
@@ -63,6 +63,7 @@ function tokenize(src: string): Tok[] {
       const word = w[0];
       const lower = word.toLowerCase();
       if (lower === "and" || lower === "or") out.push({ t: lower, v: lower });
+      else if (lower === "true" || lower === "false") out.push({ t: "bool", v: lower });
       else if (["eq", "ne", "ge", "le", "gt", "lt"].includes(lower)) out.push({ t: "op", v: lower });
       else out.push({ t: "ident", v: word });
       i += word.length; continue;
@@ -105,8 +106,9 @@ class Parser {
     const field = this.expect("ident").v;
     const op = this.expect("op").v;
     const lit = this.next();
-    if (!lit || (lit.t !== "str" && lit.t !== "num")) throw new Error("expected literal");
-    const value: string | number = lit.t === "num" ? Number(lit.v) : lit.v;
+    if (!lit || (lit.t !== "str" && lit.t !== "num" && lit.t !== "bool")) throw new Error("expected literal");
+    const value: string | number | boolean =
+      lit.t === "num" ? Number(lit.v) : lit.t === "bool" ? lit.v === "true" : lit.v;
     return (row, fields) => {
       if (!fields.has(field)) throw new UnknownField(field);
       const v = row[field];

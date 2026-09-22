@@ -5,6 +5,7 @@ import { SearchX, ServerCrash } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ListingsError, searchListings } from "@/lib/data/adapters/listings";
 import { useQuery } from "@/lib/data/hooks";
@@ -63,10 +64,31 @@ function failureCopy(error: Error): { title: string; description: string } {
   }
 }
 
+type ListingScope = "mls" | "fortmark";
+
+const SCOPE_OPTIONS: { value: ListingScope; label: string }[] = [
+  { value: "mls", label: "MLS search" },
+  { value: "fortmark", label: "FortMark listings" },
+];
+
 export default function ListingsPage() {
   const [filterState, setFilterState] = useState<ListingFilterState>(
     DEFAULT_LISTING_FILTER_STATE
   );
+  // FortMark's own book, by MLS office id, or the whole MLS. Addressable as
+  // `?office=fortmark` so Home can link straight to it.
+  const [scope, setScope] = useState<ListingScope>("mls");
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("office") === "fortmark") setScope("fortmark");
+  }, []);
+  const changeScope = (next: ListingScope) => {
+    setScope(next);
+    setPage(1);
+    const url = new URL(window.location.href);
+    if (next === "fortmark") url.searchParams.set("office", "fortmark");
+    else url.searchParams.delete("office");
+    window.history.replaceState(null, "", url);
+  };
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [view, setView] = useState<ListingView>("grid");
   const [page, setPage] = useState(1);
@@ -88,12 +110,14 @@ export default function ListingsPage() {
     () =>
       searchListings({
         ...toListingFilters(filterState, debouncedQuery),
+        office: scope === "fortmark" ? "fortmark" : undefined,
         page,
         pageSize: LISTINGS_PAGE_SIZE,
         sortKey: view === "table" ? sortKey : "listedDate",
         sortDirection: view === "table" ? sortDirection : "desc",
       }),
     [
+      scope,
       filterState.status,
       filterState.propertyType,
       filterState.city,
@@ -140,6 +164,12 @@ export default function ListingsPage() {
 
   return (
     <div className="space-y-4">
+      <Segmented<ListingScope>
+        options={SCOPE_OPTIONS}
+        value={scope}
+        onChange={changeScope}
+        ariaLabel="Listing scope"
+      />
       <ListingFiltersRow
         state={filterState}
         onChange={patchFilters}

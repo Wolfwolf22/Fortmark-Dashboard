@@ -36,7 +36,9 @@ function matches(l: Listing, q: ListingSearchQuery): boolean {
 }
 
 export function searchSampleListings(q: ListingSearchQuery, range?: DateRange): ListingPage {
-  let rows = listings.filter((l) => matches(l, q));
+  // Generated rows are nobody's listings, and least of all FortMark's: the
+  // brokerage scope over the sample set is always empty.
+  let rows = q.office === "fortmark" ? [] : listings.filter((l) => matches(l, q));
   if (range) rows = rows.filter((l) => inRange(l.listedDate, range));
   const sorted = sortListings(rows, q.sortKey, q.sortDirection);
   const pageSize = Math.max(1, q.pageSize);

@@ -100,6 +100,19 @@ export interface Listing {
   agentId: string;
   /** Listing agent as stated by the feed, when the feed carries it. */
   listingAgent?: { name: string; phone?: string; email?: string; office?: string };
+  /**
+   * Listing brokerage as stated by the feed. IDX display rules require the
+   * listing office to be attributed wherever a listing is shown.
+   */
+  listingOffice?: { name?: string; mlsId?: string };
+  /** True when FortMark is the listing (or co-listing) office, by MLS office id. */
+  isFortmark?: boolean;
+  /**
+   * True when the listing broker has withheld the address from internet
+   * display (RESO `InternetAddressDisplayYN = false`). `address` then holds a
+   * neutral placeholder and coordinates are dropped.
+   */
+  addressWithheld?: boolean;
   /** URLs. Empty for an MLS row whose media has not been fetched or has none. */
   photos: string[];
   description: string;
@@ -110,6 +123,8 @@ export interface Listing {
 }
 
 export interface ListingFilters {
+  /** "fortmark" restricts the search to FortMark's own listings (by MLS office id). */
+  office?: "fortmark";
   status?: ListingStatus[];
   propertyType?: PropertyType[];
   city?: string[];

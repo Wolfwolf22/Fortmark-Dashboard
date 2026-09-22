@@ -11,7 +11,12 @@
  * resource) first, then add it here. Never guess.
  */
 
-/** Property fields verified as publishable. */
+/**
+ * Property fields verified as publishable.
+ *
+ * Confirmed against the `miamire` dataset's Fields resource through the
+ * FortMark MCP `get_fields` tool on 2026-09-22 (537 names published).
+ */
 export const PROPERTY_FIELDS: readonly string[] = [
   "ListingKey",
   "ListingId",
@@ -42,24 +47,38 @@ export const PROPERTY_FIELDS: readonly string[] = [
   "PublicRemarks",
   "Latitude",
   "Longitude",
-];
-
-/**
- * NOT yet verified for this dataset, so NOT selected. Listed so the intent is
- * written down: once `get_fields` confirms them, move them into
- * PROPERTY_FIELDS and the normaliser will start populating the listing agent
- * and neighbourhood from the record. Until then those stay absent rather than
- * guessed.
- */
-export const UNVERIFIED_PROPERTY_FIELDS: readonly string[] = [
+  // Attribution and brokerage identity (verified 2026-09-22).
   "ListAgentFullName",
-  "ListAgentDirectPhone",
-  "ListAgentEmail",
+  "ListAgentMlsId",
   "ListOfficeName",
+  "ListOfficeMlsId",
+  "CoListOfficeMlsId",
   "SubdivisionName",
   "MLSAreaMajor",
   "PhotosCount",
   "ExpirationDate",
+  // IDX display controls (verified 2026-09-22). Honoured by the normaliser.
+  "InternetEntireListingDisplayYN",
+  "InternetAddressDisplayYN",
+];
+
+/**
+ * The embedded media collection on Property. In `miamire` this is where the
+ * photo URLs actually live: the standalone Media resource returns its rows
+ * with `MediaURL: null` (observed 2026-09-22), so a gallery built from it
+ * would always be empty. Selected alongside PROPERTY_FIELDS wherever photos
+ * are shown.
+ */
+export const EMBEDDED_MEDIA_FIELD = "Media";
+
+/**
+ * Present in the dataset but deliberately NOT selected: agent direct contact
+ * details. The dashboard attributes the listing office and agent name; it does
+ * not republish an agent's personal phone or email from the feed.
+ */
+export const UNVERIFIED_PROPERTY_FIELDS: readonly string[] = [
+  "ListAgentDirectPhone",
+  "ListAgentEmail",
 ];
 
 /**

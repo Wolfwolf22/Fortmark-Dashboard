@@ -21,8 +21,10 @@ import type {
 } from "../data/types.ts";
 import { bridgeRequest, MAX_TOP } from "./bridge.ts";
 import type { BridgeConfig } from "./config.ts";
-import { MEDIA_FIELDS, PROPERTY_FIELDS, selectClause } from "./fields.ts";
+import { EMBEDDED_MEDIA_FIELD, MEDIA_FIELDS, PROPERTY_FIELDS, selectClause } from "./fields.ts";
+import { FORTMARK_LIST_OFFICE_MLS_ID } from "./brokerage.ts";
 import {
+  embeddedPhotoUrls,
   PROPERTY_SUB_TYPES_FOR,
   STANDARD_STATUS_FOR,
   toListing,
@@ -57,6 +59,25 @@ const SORT_FIELD: Partial<Record<ListingSortKey, string>> = {
 };
 
 const DEFAULT_ORDER = "ModificationTimestamp desc";
+
+/** Property fields plus the embedded media collection, where photos live. */
+const WITH_MEDIA = selectClause([...PROPERTY_FIELDS, EMBEDDED_MEDIA_FIELD]);
+
+/**
+ * IDX: only listings the broker permits on the internet. The feed already
+ * omits the rest (verified: identical counts with and without this clause on
+ * 2026-09-22), so this changes nothing today — it keeps counts and "featured"
+ * honest if the feed ever carries one. The normaliser guards the same rule.
+ */
+export const DISPLAYABLE = "InternetEntireListingDisplayYN eq true";
+
+/**
+ * FortMark's own listings, by MLS office id — listing office or co-listing
+ * office. An id, never a name match.
+ */
+export function fortmarkOfficeFilter(): string {
+  return `(${eq("ListOfficeMlsId", FORTMARK_LIST_OFFICE_MLS_ID)} or ${eq("CoListOfficeMlsId", FORTMARK_LIST_OFFICE_MLS_ID)})`;
+}
 
 function statusFilter(statuses: readonly ListingStatus[] | undefined): string | undefined {
   if (!statuses || statuses.length === 0) return undefined;
@@ -102,8 +123,15 @@ export function buildSearchFilter(q: ListingSearchQuery): string {
   const minPrice = num(q.minPrice);
   const maxPrice = num(q.maxPrice);
   const minBeds = num(q.minBeds);
+  // Within FortMark's own book every property type is FortMark's business
+  // (a commercial sale is still our listing), so the sales-only default
+  // applies to the MLS-wide search only.
+  const officeScoped = q.office === "fortmark";
+  const types = officeScoped && !(q.propertyType && q.propertyType.length > 0) ? [] : typeFilters(q.propertyType);
   return andFilters([
-    ...typeFilters(q.propertyType),
+    DISPLAYABLE,
+    officeScoped ? fortmarkOfficeFilter() : undefined,
+    ...types,
     statusFilter(q.status),
     anyOf("City", q.city ?? []),
     minPrice !== undefined ? `ListPrice ge ${minPrice}` : undefined,
@@ -141,7 +169,7 @@ export async function searchListings(
     "Property",
     {
       $filter: buildSearchFilter(query),
-      $select: selectClause(PROPERTY_FIELDS),
+      $select: WITH_MEDIA,
       $orderby: order.orderby,
       $top: pageSize,
       $skip: (page - 1) * pageSize,
@@ -149,7 +177,11 @@ export async function searchListings(
     },
     signal
   );
-  const items = result.value.map((r) => toListing(r)).filter((l): l is Listing => l !== null);
+  const items = result.value
+    .map((r) => toListing(r))
+    .filter((l): l is Listing => l !== null)
+    // A results page needs one thumbnail per row, not every photograph.
+    .map((l) => ({ ...l, photos: l.photos.slice(0, 1) }));
   return {
     items,
     // A missing count means the upstream did not honour $count; the page
@@ -175,13 +207,13 @@ export async function getListing(
   const id = idOrMls.trim();
   if (!id) return null;
 
-  const select = selectClause(PROPERTY_FIELDS);
+  const select = WITH_MEDIA;
   let record: ResoRecord | undefined;
 
   const byKey = await bridgeRequest<ResoRecord>(
     config,
     "Property",
-    { $filter: eq("ListingKey", id), $select: select, $top: 1 },
+    { $filter: andFilters([DISPLAYABLE, eq("ListingKey", id)]), $select: select, $top: 1 },
     signal
   );
   record = byKey.value[0];
@@ -190,7 +222,7 @@ export async function getListing(
     const byMls = await bridgeRequest<ResoRecord>(
       config,
       "Property",
-      { $filter: eq("ListingId", id.toUpperCase()), $select: select, $top: 1 },
+      { $filter: andFilters([DISPLAYABLE, eq("ListingId", id.toUpperCase())]), $select: select, $top: 1 },
       signal
     );
     record = byMls.value[0];
@@ -200,6 +232,13 @@ export async function getListing(
   const listing = toListing(record);
   if (!listing) return null;
 
+  // Photos come from the record's own media collection. Only a record that
+  // carries none at all sends us to the Media resource.
+  const embedded = embeddedPhotoUrls(record);
+  if (embedded !== undefined) {
+    listing.photos = embedded;
+    return listing;
+  }
   try {
     listing.photos = await getListingPhotos(config, listing.id, signal);
   } catch {
@@ -229,32 +268,49 @@ export async function getListingPhotos(
   return toPhotoUrls(media.value);
 }
 
-/** The Home widget: the highest-priced active sale listing. */
-export async function getFeaturedListing(
+export interface FortmarkListingSummary {
+  /** Active listings where FortMark is the listing or co-listing office. */
+  activeCount: number;
+  /** FortMark's highest-priced active listing, with its first photo. */
+  featured: Listing | null;
+}
+
+/**
+ * FortMark's active book in one request: the count and the listing Home and
+ * the website feature. The same query serves every consumer, so the dashboard
+ * and anything else asking "what is FortMark listing" cannot drift apart.
+ */
+export async function getFortmarkListingSummary(
   config: BridgeConfig,
   signal?: AbortSignal
-): Promise<Listing | null> {
+): Promise<FortmarkListingSummary> {
   const result = await bridgeRequest<ResoRecord>(
     config,
     "Property",
     {
-      $filter: andFilters([eq("PropertyType", SALES_PROPERTY_TYPE), eq("StandardStatus", "Active")]),
-      $select: selectClause(PROPERTY_FIELDS),
+      $filter: andFilters([DISPLAYABLE, fortmarkOfficeFilter(), eq("StandardStatus", "Active")]),
+      $select: WITH_MEDIA,
       $orderby: "ListPrice desc",
       $top: 1,
+      $count: true,
     },
     signal
   );
   const record = result.value[0];
-  if (!record) return null;
-  const listing = toListing(record);
-  if (!listing) return null;
-  try {
-    listing.photos = (await getListingPhotos(config, listing.id, signal)).slice(0, 1);
-  } catch {
-    listing.photos = [];
-  }
-  return listing;
+  const listing = record ? toListing(record) : null;
+  if (listing) listing.photos = listing.photos.slice(0, 1);
+  return {
+    activeCount: result.count ?? result.value.length,
+    featured: listing,
+  };
+}
+
+/** The Home widget's listing: FortMark's highest-priced active listing. */
+export async function getFeaturedListing(
+  config: BridgeConfig,
+  signal?: AbortSignal
+): Promise<Listing | null> {
+  return (await getFortmarkListingSummary(config, signal)).featured;
 }
 
 export interface ComparablesQuery {
@@ -283,6 +339,7 @@ export async function findComparables(
     "Property",
     {
       $filter: andFilters([
+        DISPLAYABLE,
         ...typeFilters([subject.propertyType]),
         eq("StandardStatus", "Closed"),
         eq("City", subject.city),

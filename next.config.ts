@@ -12,8 +12,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   basePath: "/dashboard",
   images: {
-    // Listing media is served locally as SVG plates for now; the real MLS CDN
-    // gets added to remotePatterns when the media adapter goes live.
+    // Unchanged: optimization stays off as before (sample plates are SVG).
+    // The MLS CDN is declared in remotePatterns below so turning optimization
+    // on later does not break live photos.
     unoptimized: true,
     dangerouslyAllowSVG: true,
     /**
@@ -38,6 +39,17 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "*.public.blob.vercel-storage.com",
         pathname: "/profile-images/**",
+      },
+      /**
+       * MLS listing photos. Bridge serves `miamire` media from this one
+       * CloudFront distribution (observed 2026-09-22 on the Property `Media`
+       * collection). An exact host, HTTPS only — never a wildcard CloudFront
+       * pattern, which would admit any distribution on the internet.
+       */
+      {
+        protocol: "https",
+        hostname: "dvvjkgh94f2v6.cloudfront.net",
+        pathname: "/**",
       },
     ],
   },

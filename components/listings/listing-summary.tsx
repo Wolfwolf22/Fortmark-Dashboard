@@ -63,6 +63,7 @@ export function ListingSummary({
       <CardContent className="space-y-5 pt-6">
         <div className="flex items-center gap-2">
           <StatusPill tone={pill.tone}>{pill.label}</StatusPill>
+          {listing.isFortmark && <StatusPill tone="neutral">FortMark listing</StatusPill>}
         </div>
 
         <div>
@@ -96,6 +97,16 @@ export function ListingSummary({
             {listing.city}, FL {listing.zip}
             {listing.neighborhood && <> · {listing.neighborhood}</>}
           </p>
+          {listing.addressWithheld && (
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              The listing broker does not permit this address to be displayed.
+            </p>
+          )}
+          {listing.source === "mls" && listing.listingOffice?.name && (
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              Listing courtesy of {listing.listingOffice.name}
+            </p>
+          )}
         </div>
 
         <Separator />

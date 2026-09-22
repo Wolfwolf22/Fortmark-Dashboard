@@ -15,6 +15,8 @@
 import type { Listing, ListingStatus, PriceEvent, PropertyType } from "../data/types.ts";
 
 /** A raw RESO Property record, as Bridge returns it. */
+import { FORTMARK_LIST_OFFICE_MLS_ID } from "./brokerage.ts";
+
 export type ResoRecord = Record<string, unknown>;
 
 /** A raw RESO Media record. */
@@ -165,13 +167,39 @@ export function toPriceHistory(r: ResoRecord): PriceEvent[] {
  * the domain cannot function without — a row with no key cannot be linked to,
  * and a row with no MLS number cannot be looked up again.
  */
+/** The address placeholder shown when the listing broker withholds it. */
+export const WITHHELD_ADDRESS = "Address withheld by listing broker";
+
+/** True for an explicit boolean false — or its string spelling — and nothing else. */
+function isExplicitNo(v: unknown): boolean {
+  return v === false || (typeof v === "string" && /^(false|n|no)$/i.test(v.trim()));
+}
+
+/**
+ * Photo URLs carried on the Property record itself (`Media` collection), or
+ * undefined when the record carries no such collection at all — which tells
+ * the caller to ask the Media resource instead.
+ */
+export function embeddedPhotoUrls(r: ResoRecord): string[] | undefined {
+  const media = r.Media;
+  if (!Array.isArray(media)) return undefined;
+  return toPhotoUrls(media as ResoMedia[]);
+}
+
 export function toListing(r: ResoRecord, photos: string[] = []): Listing | null {
   const id = str(r.ListingKey);
   const mlsNumber = str(r.ListingId);
   if (!id || !mlsNumber) return null;
+  // IDX: a listing the broker has excluded from internet display is not shown
+  // anywhere. The feed already omits these; this is the guard if one arrives.
+  if (isExplicitNo(r.InternetEntireListingDisplayYN)) return null;
 
-  const lat = numOpt(r.Latitude);
-  const lng = numOpt(r.Longitude);
+  const addressWithheld = isExplicitNo(r.InternetAddressDisplayYN);
+  const lat = addressWithheld ? undefined : numOpt(r.Latitude);
+  const lng = addressWithheld ? undefined : numOpt(r.Longitude);
+  const officeMlsId = str(r.ListOfficeMlsId);
+  const coOfficeMlsId = str(r.CoListOfficeMlsId);
+  const officeName = str(r.ListOfficeName);
   const listedDate = isoDate(r.ListingContractDate) ?? isoDate(r.ModificationTimestamp) ?? "";
 
   const agentName = str(r.ListAgentFullName);
@@ -179,8 +207,8 @@ export function toListing(r: ResoRecord, photos: string[] = []): Listing | null 
   return {
     id,
     mlsNumber,
-    folioNumber: str(r.ParcelNumber),
-    address: toStreetAddress(r),
+    folioNumber: addressWithheld ? undefined : str(r.ParcelNumber),
+    address: addressWithheld ? WITHHELD_ADDRESS : toStreetAddress(r),
     city: str(r.City) ?? "",
     zip: str(r.PostalCode) ?? "",
     neighborhood: str(r.SubdivisionName) ?? str(r.MLSAreaMajor),
@@ -206,11 +234,14 @@ export function toListing(r: ResoRecord, photos: string[] = []): Listing | null 
           office: str(r.ListOfficeName),
         }
       : undefined,
-    photos,
+    photos: photos.length > 0 ? photos : (embeddedPhotoUrls(r) ?? []),
     description: str(r.PublicRemarks) ?? "",
     priceHistory: toPriceHistory(r),
     source: "mls",
     coordinates: lat !== undefined && lng !== undefined ? { lat, lng } : undefined,
+    listingOffice: officeName || officeMlsId ? { name: officeName, mlsId: officeMlsId } : undefined,
+    isFortmark: officeMlsId === FORTMARK_LIST_OFFICE_MLS_ID || coOfficeMlsId === FORTMARK_LIST_OFFICE_MLS_ID,
+    ...(addressWithheld ? { addressWithheld: true } : {}),
   };
 }
 

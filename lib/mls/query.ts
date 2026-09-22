@@ -92,6 +92,7 @@ export function parseListingQuery(params: URLSearchParams): ListingSearchQuery {
   const dir = params.get("dir");
   const q = params.get("q")?.trim().slice(0, MAX_QUERY_CHARS);
   return {
+    office: params.get("office") === "fortmark" ? "fortmark" : undefined,
     status: list(params.get("status"), STATUSES),
     propertyType: list(params.get("propertyType"), TYPES),
     city: cities(params.get("city")),
@@ -111,6 +112,7 @@ export function parseListingQuery(params: URLSearchParams): ListingSearchQuery {
 /** The inverse, for the browser adapter. Omits defaults to keep URLs short. */
 export function toSearchParams(q: ListingSearchQuery): URLSearchParams {
   const p = new URLSearchParams();
+  if (q.office === "fortmark") p.set("office", "fortmark");
   if (q.status?.length) p.set("status", q.status.join(","));
   if (q.propertyType?.length) p.set("propertyType", q.propertyType.join(","));
   if (q.city?.length) p.set("city", q.city.join(","));

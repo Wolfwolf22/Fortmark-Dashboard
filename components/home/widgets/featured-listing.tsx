@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { LISTING_STATUS_PILL, StatusPill } from "@/components/ui/status-pill";
 import { WidgetCard } from "@/components/widgets/widget-card";
 import { getAgent } from "@/lib/data/adapters/agents";
-import { getFeaturedListing, ListingsError } from "@/lib/data/adapters/listings";
+import { getFortmarkListingSummary, ListingsError } from "@/lib/data/adapters/listings";
 import { useQuery } from "@/lib/data/hooks";
 import type { Agent, Listing } from "@/lib/data/types";
 import { formatCurrency, initials } from "@/lib/utils";
@@ -36,13 +36,18 @@ export default function FeaturedListingWidget() {
   const { data, loading, error } = useQuery<{
     listing: Listing | undefined;
     agent: Agent | undefined;
+    activeCount: number | undefined;
   }>(async () => {
-    const listing = await getFeaturedListing();
+    const { listing, activeCount } = await getFortmarkListingSummary();
     // The sample roster only applies to sample rows; an MLS row states its
     // own agent on the record.
     const agent = listing?.agentId ? await getAgent(listing.agentId) : undefined;
-    return { listing, agent };
+    return { listing, agent, activeCount };
   }, []);
+
+  // FortMark's own active count, straight from the MLS office id. Only a live
+  // feed can state it; it is never derived from sample rows.
+  const liveCount = data?.activeCount;
 
   // A sample row is not a listing for these purposes: Home shows the MLS state
   // rather than a generated property.
@@ -57,7 +62,7 @@ export default function FeaturedListingWidget() {
   return (
     <WidgetCard
       icon={Building2}
-      title={connected && !unconfigured ? "Featured listing" : "MLS"}
+      title={!unconfigured && (connected || liveCount !== undefined) ? "FortMark listings" : "MLS"}
       preset={null}
       expandable={false}
       contentClassName="flex flex-col"
@@ -76,8 +81,8 @@ export default function FeaturedListingWidget() {
       ) : !data.listing ? (
         <EmptyState
           icon={Building2}
-          title="No listing to feature"
-          description="Add an active listing and it will be spotlighted here."
+          title="No active FortMark listings"
+          description="The MLS shows no active listing for FortMark's office right now."
         />
       ) : !connected ? (
         // Home is the executive brief, and a generated listing has no place on
@@ -89,7 +94,18 @@ export default function FeaturedListingWidget() {
           detail="Listings appear here once the MLS feed is connected."
         />
       ) : (
-        <FeaturedBody listing={data.listing} agent={data.agent} />
+        <div className="flex flex-col gap-3">
+          {liveCount !== undefined && (
+            <p className="text-[13px] text-muted-foreground">
+              <span className="font-semibold tabular text-foreground">{liveCount}</span>{" "}
+              active {liveCount === 1 ? "listing" : "listings"} ·{" "}
+              <Link href="/listings?office=fortmark" className="underline underline-offset-4 hover:text-foreground">
+                View all
+              </Link>
+            </p>
+          )}
+          <FeaturedBody listing={data.listing} agent={data.agent} />
+        </div>
       )}
     </WidgetCard>
   );
@@ -153,7 +169,10 @@ function FeaturedBody({
                   {initials((listing.listingAgent ?? agent)!.name)}
                 </AvatarFallback>
               </Avatar>
-              <span className="text-micro">{(listing.listingAgent ?? agent)!.name} · Listing agent</span>
+              <span className="text-micro">
+                {(listing.listingAgent ?? agent)!.name} · Listing agent
+                {listing.listingOffice?.name && <> · {listing.listingOffice.name}</>}
+              </span>
             </span>
           )}
         </div>
