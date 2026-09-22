@@ -19,44 +19,113 @@ import type { Page } from "@playwright/test";
 export const CERT_EMAIL = "fortmark.ai.certification+clerk_test@example.com";
 export const CERT_USER_ID = "user_3JeOWKOgBRVFdt0KubrrjVfRFyl";
 export const DASHBOARD = process.env.CERT_DASHBOARD_URL ?? "https://fortmark-dashboard-preview.vercel.app";
+export const PORTAL = process.env.CERT_PORTAL_URL ?? "https://fortmark-app-preview.vercel.app";
+
+/**
+ * Bounds for the sign-in sequence.
+ *
+ * Every one of these is deliberate. Playwright Test leaves `navigationTimeout`
+ * and `actionTimeout` at 0 — no limit — so an awaited step inside a retry loop
+ * is bounded only by the surrounding hook. One wedged `page.goto` therefore
+ * consumed a whole 600s budget while attempts two through five never ran, and
+ * the run reported "hook timeout" rather than "Clerk did not initialise".
+ *
+ * Worst case now: 2 x 4 x (25 + 20 + 2) + 120 + 20 = 516s, inside the hook's
+ * 600s. A bound that does not fit the budget is not a bound.
+ */
+const NAV_MS = 25_000;
+const CLERK_MS = 20_000;
+const SIGNIN_MS = 120_000;
+const ATTEMPTS = 4;
+
+/** Fail with our own message instead of being killed by the hook's timeout. */
+async function withDeadline<T>(label: string, ms: number, work: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} did not finish within ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Ask both origins for a page before driving a browser at them.
+ *
+ * A Preview deployment that has had no traffic answers its first request cold,
+ * and the first request of the run is the one the browser is waiting on. This
+ * is an ordinary unauthenticated GET — it establishes nothing and authenticates
+ * nobody; it only means the browser is not the one paying for the cold start.
+ */
+async function warm(): Promise<void> {
+  await Promise.allSettled(
+    [`${PORTAL}/sign-in`, `${DASHBOARD}/dashboard/ai`].map((url) =>
+      fetch(url, { signal: AbortSignal.timeout(20_000) }).catch(() => undefined)
+    )
+  );
+}
 
 /**
  * Navigate somewhere and wait for Clerk to actually initialise there.
  *
- * Clerk's script intermittently fails to finish loading against a cold
- * Preview deployment, and `clerk.loaded()` then waits until it is killed.
- * Reloading is the whole fix; the retry is bounded so a genuine failure still
- * surfaces as one rather than as an unexplained timeout.
+ * Clerk's script intermittently fails to finish loading, and `clerk.loaded()`
+ * then waits until something kills it. Reloading is the whole fix.
+ *
+ * Both steps carry their own timeout, which is the part that was missing:
+ * without one on the navigation the loop was bounded by nothing, so a single
+ * wedged load spent the entire budget and the remaining attempts never
+ * happened. The failure it raises names what the page was actually showing, so
+ * a portal that stopped rendering is not filed as a Clerk flake.
  */
 async function loadWithClerk(page: Page, path: string): Promise<void> {
-  const ATTEMPTS = 5;
+  let last: unknown;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     try {
-      await page.goto(path, { waitUntil: "domcontentloaded" });
-      await clerk.loaded({ page, timeout: 20_000 } as Parameters<typeof clerk.loaded>[0]);
+      await page.goto(path, { waitUntil: "domcontentloaded", timeout: NAV_MS });
+      await clerk.loaded({ page, timeout: CLERK_MS } as Parameters<typeof clerk.loaded>[0]);
+      if (attempt > 1) console.log(`[session] Clerk initialised at ${path} on attempt ${attempt}`);
       return;
     } catch (error) {
+      last = error;
       console.log(`[session] Clerk did not initialise at ${path} (attempt ${attempt}); reloading`);
-      if (attempt === ATTEMPTS) throw error;
-      await page.waitForTimeout(2_000);
+      await page.waitForTimeout(2_000).catch(() => undefined);
     }
   }
+  // Whether the application rendered at all is the line between "the harness
+  // could not get Clerk up" and "the product is down". Say which.
+  const rendered = await page
+    .locator("h1")
+    .first()
+    .innerText()
+    .catch(() => "(nothing)");
+  throw new Error(
+    `Clerk did not initialise at ${path} in ${ATTEMPTS} attempts. ` +
+      `The page rendered: ${JSON.stringify(rendered)}. Last error: ${String(last)}`
+  );
 }
 
 export async function signInCertificationUser(page: Page): Promise<string> {
+  await warm();
   await setupClerkTestingToken({ page });
 
-  // Clerk's script occasionally does not finish initialising on a given load,
-  // and `clerk.loaded()` then waits forever. Reloading is the whole fix; the
-  // retry is bounded so a genuine failure still surfaces as one rather than as
-  // a test timeout with no explanation.
   await loadWithClerk(page, "/sign-in");
 
-  await clerk.signIn({ page, signInParams: { strategy: "email_code", identifier: CERT_EMAIL } });
+  // Clerk's own helper, unchanged — a real sign-in against the development
+  // instance. Only the wait around it is bounded, so a hung sign-in reports
+  // itself rather than surfacing as an unexplained hook timeout.
+  await withDeadline(
+    "clerk.signIn",
+    SIGNIN_MS,
+    clerk.signIn({ page, signInParams: { strategy: "email_code", identifier: CERT_EMAIL } })
+  );
 
-  // The same retry applies here. Clerk failing to initialise after sign-in is
-  // the identical cold-deployment flake, and leaving this call bare is what
-  // let one run burn its whole hook budget on a single unlucky load.
+  // The same retry applies here: Clerk failing to initialise after sign-in is
+  // the identical flake, and leaving this call bare is what let one run burn
+  // its whole hook budget on a single unlucky load.
   await loadWithClerk(page, "/");
   // Clerk restores the session asynchronously after a navigation; getToken()
   // returns null until it has.
