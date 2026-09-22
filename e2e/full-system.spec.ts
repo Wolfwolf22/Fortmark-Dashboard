@@ -888,11 +888,21 @@ test("§43/§44 conversation context resolves, and missing data is not invented"
   await ask("What is the DSCR on this deal?");
   const dscr = await lastReply();
   console.log(`[ai] missing: ${json(dscr.slice(0, 300))}`);
-  // The model writes a typographic apostrophe ("can’t"); the refusal is
-  // judged on plain letters, and "does not include" is a refusal too.
+  // Chasing the model's phrasing here was a losing game: "can't calculate",
+  // "does not include", "does not show enough", "I don't see NOI" are all the
+  // same honest answer, and an allow-list of sentences fails on the next
+  // wording rather than on a defect.
+  //
+  // So the property is stated directly. The answer must NOT contain a DSCR
+  // figure — that is the invention this section exists to catch — and it must
+  // say something negative about what FortMark holds. A reply that quietly
+  // produced "1.35x" would fail the first check whatever words surrounded it.
   const plain = dscr.replace(/[\u2018\u2019]/g, "'");
-  expect(plain).toMatch(/don't have|do not have|does not (include|have|record)|not available|no (data|information)|insufficient|isn't|not (stored|recorded|enough)|can't|cannot|unable/i);
-  expect(dscr).not.toMatch(/\b\d+\.\d+\s?x\b/);
+  expect(plain, "a DSCR ratio was stated").not.toMatch(/\b\d+(\.\d+)?\s?x\b/i);
+  expect(plain, "a DSCR was computed").not.toMatch(/DSCR (is|of|=|:)\s*\d/i);
+  expect(plain, "the absence is not stated at all").toMatch(
+    /\b(no|not|n't|cannot|unable|lacks?|lacking|missing|without|need|require)\b/i
+  );
 });
 
 test("§45/§89 stored text that tries to instruct the model is treated as data", async () => {

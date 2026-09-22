@@ -102,10 +102,31 @@ const composer = () => page.locator('textarea[aria-label="Message"]');
 async function ask(text: string) {
   const send = page.getByLabel("Send message");
   await expect(send).toBeVisible({ timeout: 180_000 });
-  const box = composer();
-  await box.click();
-  await box.fill(text);
-  await send.click();
+  // The composer is controlled: a value typed before React has hydrated
+  // never reaches state, Send stays disabled, and clicking it waits for an
+  // actionability that never comes. The enabled button is the hydration
+  // proof. A page whose script chunk the platform refused is loaded again
+  // rather than waited on — see ISS-09.
+  for (let load = 0; load < 3; load += 1) {
+    let accepted = false;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await composer().click({ timeout: 15_000 });
+      await composer().fill(text, { timeout: 15_000 });
+      try {
+        await expect(send).toBeEnabled({ timeout: 10_000 });
+        accepted = true;
+        break;
+      } catch {
+        await page.waitForTimeout(1_500);
+      }
+    }
+    if (accepted) break;
+    if (load === 2) throw new Error("the composer never accepted input — the page did not hydrate");
+    console.log(`[ui] composer did not accept input on load ${load + 1}; reloading`);
+    await page.goto("/dashboard/ai", { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await expect(send).toBeVisible({ timeout: 60_000 });
+  }
+  await send.click({ timeout: 30_000 });
   // The turn is over when the composer offers Send again.
   await expect(send).toBeVisible({ timeout: 180_000 });
 }
