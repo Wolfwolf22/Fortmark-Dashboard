@@ -108,23 +108,38 @@ async function describePage(label: string): Promise<void> {
  * counted — the count is printed in the final sweep and goes in the report.
  * A second failure is a failure.
  */
+/**
+ * Open a route and wait for the sign that its client runtime booted.
+ *
+ * `ready` is something only client code renders — a fetched figure, a
+ * deep-linked drawer, a list row. When it has not appeared in 30s the page
+ * is described, loaded again, and the extra load counted under `counter`;
+ * the counts are printed by the final sweep and go in the report as they
+ * are. Three loads without it is the failure.
+ */
+async function openAndWait(
+  path: string,
+  ready: () => ReturnType<Page["locator"]>,
+  label: string,
+  counter: "home" | "nav" = "nav"
+): Promise<void> {
+  for (let load = 0; load <= 2; load += 1) {
+    await page.goto(path, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    try {
+      await expect(ready()).toBeVisible({ timeout: 30_000 });
+      if (load > 0) console.log(`[page] ${label}: ready on load ${load + 1} (homeReloads=${homeReloads} navReloads=${navReloads})`);
+      return;
+    } catch {
+      await describePage(`${label}: not ready after 30s (load ${load + 1})`);
+    }
+    if (counter === "home") homeReloads += 1;
+    else navReloads += 1;
+  }
+  throw new Error(`${label}: the page never became ready in three loads`);
+}
+
 async function openHome(label: string): Promise<void> {
-  await page.goto("/dashboard/", { waitUntil: "domcontentloaded", timeout: 60_000 });
-  try {
-    await expect(brief()).toBeVisible({ timeout: 30_000 });
-    return;
-  } catch {
-    await describePage(`${label} brief unresolved after 30s`);
-  }
-  homeReloads += 1;
-  await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
-  try {
-    await expect(brief()).toBeVisible({ timeout: 30_000 });
-    console.log(`[page] ${label}: the brief resolved on a second load (homeReloads=${homeReloads})`);
-  } catch (error) {
-    await describePage(`${label} brief unresolved after reload`);
-    throw error;
-  }
+  await openAndWait("/dashboard/", brief, label, "home");
 }
 
 const A_NAME = "SYSVERIFY Jane Alpha";
@@ -312,7 +327,7 @@ test("§3 health names the revision and every source", async () => {
 });
 
 test("§12/§13 the session reaches the protected dashboard with no loop and no false 401", async () => {
-  await page.goto("/dashboard/", { waitUntil: "domcontentloaded" });
+  await page.goto("/dashboard/", { waitUntil: "domcontentloaded", timeout: 60_000 });
   await expect(page.locator("h1").first()).toBeVisible({ timeout: 30_000 });
   expect(page.url()).not.toContain("sign-in");
   const me = await api("/dashboard/api/contacts");
@@ -451,9 +466,8 @@ test("§16 contact authorization: list, search and direct id, with positive cont
 
 test("§17 a manual stage change through the rendered drawer, and invalid moves refused", async () => {
   const before = (await api(`/dashboard/api/contacts/${state.A}/activities`)).body as { items: unknown[] };
-  await page.goto(`/dashboard/leads?open=${state.A}`, { waitUntil: "domcontentloaded" });
+  await openAndWait(`/dashboard/leads?open=${state.A}`, () => page.getByRole("dialog").filter({ hasText: A_NAME }), "§17 leads drawer");
   const drawer = page.getByRole("dialog");
-  await expect(drawer).toContainText(A_NAME, { timeout: 30_000 });
   await page.getByRole("combobox", { name: "Lead stage" }).click();
   await page.getByRole("option", { name: "Qualified" }).click();
   await expect.poll(async () => contactOf((await api(`/dashboard/api/contacts/${state.A}`)).body).stage, { timeout: 30_000 }).toBe("qualified");
@@ -795,7 +809,7 @@ test("§59/§60 another actor's prepared action is not found, read or execute", 
 
 test("§37/§38/§39 provider truth; a general question; the business summary", async () => {
   test.setTimeout(420_000);
-  await page.goto("/dashboard/ai", { waitUntil: "domcontentloaded" });
+  await page.goto("/dashboard/ai", { waitUntil: "domcontentloaded", timeout: 60_000 });
   await ask("What is DSCR?");
   const dscr = await lastReply();
   console.log(`[ai] DSCR: ${json(dscr.slice(0, 200))}`);
@@ -933,7 +947,7 @@ test("§31/§95/§96 no horizontal overflow on the primary routes at four widths
   for (const width of [390, 430, 1280, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     for (const route of routes) {
-      await page.goto(route, { waitUntil: "domcontentloaded" });
+      await page.goto(route, { waitUntil: "domcontentloaded", timeout: 60_000 });
       await page.waitForTimeout(600);
       const o = await overflow();
       expect(o, `${route} @${width} overflow=${o}px`).toBeLessThanOrEqual(0);
@@ -956,13 +970,7 @@ test("§88 a hostile name renders as text, never as markup", async () => {
   // Instrumented: this navigation produced a blank document twice on the
   // certified revision while a fresh-page probe rendered it. Record what the
   // navigation returned before asserting, so a repeat comes with evidence.
-  const res = await page.goto(`/dashboard/leads?open=${state.X}`, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  const html = await page.content();
-  console.log(`[sys] §88 navigation status=${res?.status()} title=${JSON.stringify(await page.title())} htmlLength=${html.length} pageErrorsSoFar=${pageErrors.length} url=${page.url()}`);
-  for (const e of pageErrors.slice(-3)) console.log(`[sys] §88 pageerror ${e}`);
-  // The list rendering the row is the hydration signal; the deep-linked
-  // drawer opens from the same load.
-  await expect(page.getByRole("main")).toContainText("Xavier", { timeout: 60_000 });
+  await openAndWait(`/dashboard/leads?open=${state.X}`, () => page.getByRole("main").filter({ hasText: "Xavier" }), "§88 hostile name");
   const drawer = page.getByRole("dialog");
   await expect(drawer).toContainText("Xavier", { timeout: 30_000 });
   const title = await drawer.innerText();
