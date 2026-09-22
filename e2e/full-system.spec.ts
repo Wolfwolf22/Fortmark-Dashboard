@@ -623,22 +623,6 @@ test("§86 malformed and privilege-escalating input is refused", async () => {
   console.log(`[sys] escalation attempt status=${escalate.status}`);
 });
 
-test("§88 a hostile name renders as text, never as markup", async () => {
-  await page.goto(`/dashboard/leads?open=${state.X}`, { waitUntil: "domcontentloaded" });
-  // The list rendering the row is the hydration signal; the deep-linked
-  // drawer opens from the same load.
-  await expect(page.getByRole("main")).toContainText("Xavier", { timeout: 30_000 });
-  const drawer = page.getByRole("dialog");
-  await expect(drawer).toContainText("Xavier", { timeout: 30_000 });
-  const title = await drawer.innerText();
-  expect(title).toContain("<script>");
-  const executed = await page.evaluate(() => (window as unknown as { __sysverify_xss?: number }).__sysverify_xss);
-  expect(executed).toBeUndefined();
-  const injected = await page.evaluate(() => Array.from(document.scripts).some((s) => s.textContent?.includes("__sysverify_xss")));
-  expect(injected).toBe(false);
-  await page.keyboard.press("Escape");
-});
-
 test("§59/§60 another actor's prepared action is not found, read or execute", async () => {
   for (const id of [AGENT_B_ACTION, FOREIGN_ACTION, RANDOM_ID]) {
     const read = await api(`/dashboard/api/ai/actions/${id}`);
@@ -800,6 +784,29 @@ test("§97 keyboard reaches something, and the home has exactly one h1", async (
   await page.keyboard.press("Tab");
   const tag = await page.evaluate(() => document.activeElement?.tagName ?? "none");
   expect(tag).not.toBe("BODY");
+});
+
+test("§88 a hostile name renders as text, never as markup", async () => {
+  test.setTimeout(240_000);
+  // Instrumented: this navigation produced a blank document twice on the
+  // certified revision while a fresh-page probe rendered it. Record what the
+  // navigation returned before asserting, so a repeat comes with evidence.
+  const res = await page.goto(`/dashboard/leads?open=${state.X}`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  const html = await page.content();
+  console.log(`[sys] §88 navigation status=${res?.status()} title=${JSON.stringify(await page.title())} htmlLength=${html.length} pageErrorsSoFar=${pageErrors.length} url=${page.url()}`);
+  for (const e of pageErrors.slice(-3)) console.log(`[sys] §88 pageerror ${e}`);
+  // The list rendering the row is the hydration signal; the deep-linked
+  // drawer opens from the same load.
+  await expect(page.getByRole("main")).toContainText("Xavier", { timeout: 60_000 });
+  const drawer = page.getByRole("dialog");
+  await expect(drawer).toContainText("Xavier", { timeout: 30_000 });
+  const title = await drawer.innerText();
+  expect(title).toContain("<script>");
+  const executed = await page.evaluate(() => (window as unknown as { __sysverify_xss?: number }).__sysverify_xss);
+  expect(executed).toBeUndefined();
+  const injected = await page.evaluate(() => Array.from(document.scripts).some((s) => s.textContent?.includes("__sysverify_xss")));
+  expect(injected).toBe(false);
+  await page.keyboard.press("Escape");
 });
 
 test("§78 no uncaught exceptions or server errors during the whole run", async () => {
