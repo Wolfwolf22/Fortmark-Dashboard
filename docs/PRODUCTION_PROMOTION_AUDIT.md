@@ -761,3 +761,45 @@ owner/operator account and authorised `member → admin`.
   request, so this is effective without a redeploy.
 - No env change, no deploy, no Clerk change, no Contact/Transaction created,
   AI and AI actions still off. The Stage 1 safety branch predates this change.
+
+---
+
+## STAGE 2 — READ-ONLY AI (2026-09-22) — BLOCKED BEFORE ENABLEMENT
+
+Authorised: read-only FortMark AI in Production; AI actions stay off.
+
+### Reconfirmed at 19:24–19:27Z (no Production change made)
+
+- Production deployment `dpl_5LHqLuT3qAYUTcKAtxLE73pncN72`, revision `b4c04d0`; nothing deployed since Stage 1.
+- Health: `{"ok":true,"revision":"b4c04d0","sources":{"transactions":"db","contacts":"db","listings":"not_configured","homeMetrics":"real-only","assistant":{"provider":"openai","model":"gpt-5.5","status":"no_credential"},"actions":"disabled"}}`.
+- Operator: 1 user, `admin` / active / onboarded. Migrations 9. Contacts 0, transactions 0, prepared actions 0.
+- Audit events 65 (47 at the role change): +17 `user_synced_from_clerk`, +1 `profile_updated` — the owner's smoke session (sync writes one event per synced request; pre-existing behaviour). No business-mutation events.
+- Runtime since Stage 1 on the deployment: 200 ×96, 307 ×7, 401 ×8 (Stage 1 probes), 404 ×2, 503 ×1; 0 error/warning/fatal lines. The 503 is `POST /api/chat` at 19:19:09 — the route's designed `not_configured` answer while no credential exists; the 404s are `GET /api/ai/actions`, which is hidden while actions are off. Both are the certified "AI off" behaviour, from the owner's session, with 200s before and after.
+
+### Blocker
+
+**PRODUCTION OPENAI KEY REQUIRED.** `OPENAI_API_KEY` is absent in Production
+scope (present only in Preview, where it must stay). Per the authorisation, no
+key was copied, decrypted or created, and `AI_CHAT_PROVIDER_ENABLED` was not set.
+
+### Pre-enablement verification (done; independent of the key)
+
+- **Hard action gate** — `toolsFor()` from `lib/ai/tools/registry.ts` evaluated with the Stage 2 environment: **9 read / 0 propose / 0 execute**. `AI_ACTIONS_ENABLED` absent, `"0"` or `"true"` all give 0 propose; only exactly `"1"` exposes the two prepare tools. With the Stage 2 environment, `findTool("prepare_contact_followup")` and `findTool("prepare_contact_stage_change")` resolve to `unknown_tool`, so a recalled or guessed name cannot dispatch either.
+- **Read tools exposed (repository truth):** `search_entities` (search service), `get_contact`, `list_contacts`, `get_followups` (contacts service/metrics), `get_transaction`, `list_transactions`, `get_upcoming_deadlines` (transactions service/metrics), `get_business_summary` (metrics service), `get_recent_activity` (contacts + transactions activity). Every tool resolves the actor from the session's Clerk user via `resolveActor` and calls the same certified services that the pages use (tenant + owner scoping inside the services). No Opportunity or transaction-stage tooling exists.
+- **No mock / no fallback** — `app/api/chat/route.ts` has no mock path and no cross-vendor fallback; an unavailable provider is a 503 `not_configured`. `lib/ai/providers/select.ts` is exclusive and fails closed. The AI client (`lib/ai/client.ts`, `store.ts`, `stream.ts`) imports nothing from the fixture layer `lib/data/*`.
+- **`store: false`** — set in `lib/ai/providers/openai.ts`, unchanged from Preview.
+- **Model** — leave `AI_MODEL` **unset**: Preview was certified with it unset and `DEFAULT_MODEL.openai = "gpt-5.5"`; health already reports `gpt-5.5`. Pinning is equivalent but would differ from the certified configuration.
+- **Suggestion chips / Home copy** — `lib/ai/suggestions.ts` offers read questions and drafting only; nothing claims to schedule, change a stage or edit a record. Home has no AI write claim (its "Add a contact" / "Create a transaction" links are manual, role-gated UI).
+- Git clean; no code change; runtime tree unchanged from `b4c04d0`.
+
+### To unblock (human)
+
+1. Create a new API key in a **Production-specific OpenAI project**. Set a monthly budget cap, usage alerts and conservative rate limits on that project, and confirm it has access to `gpt-5.5`.
+2. In Vercel → `fortmark-dashboard` → Settings → Environment Variables, add `OPENAI_API_KEY`: **Production only**, type **Sensitive**. Do not share the value in chat.
+3. Report back. The executor then sets `AI_CHAT_PROVIDER_ENABLED=1` (Production), makes a fresh Production build of `b4c04d0`, verifies health `available` / actions `disabled`, and hands the §15–§22 prompts to the owner for the signed-in smoke.
+
+Kill switch once live: remove `AI_CHAT_PROVIDER_ENABLED` and redeploy, or revoke the key at OpenAI (immediate). Never enable actions or mock AI as a remedy.
+
+### Known infrastructure debt
+
+The migration runner (`drizzle-orm` neon-http migrator via `scripts/migrate.mjs`) is not transactional; it must be repaired and certified before O1 or the next schema-bearing phase.
