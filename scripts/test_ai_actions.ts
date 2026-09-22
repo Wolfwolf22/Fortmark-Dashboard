@@ -881,6 +881,13 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
 
 // --- Report ------------------------------------------------------------------
 
+
+{
+  const svc = readFileSync("lib/ai/actions/service.ts", "utf8");
+  check("a malformed action id is not found before any query, on read, cancel and execute",
+    (svc.match(/if \(!isRecordId\(actionId\)\) return \{ ok: false, reason: "not_found" \}/g) ?? []).length === 3);
+}
+
 console.log(`\n${passed}/${passed + failures.length} AI action checks passed`);
 if (failures.length > 0) {
   console.log("Failures:");

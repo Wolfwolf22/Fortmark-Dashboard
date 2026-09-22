@@ -1,4 +1,5 @@
 import "server-only";
+import { isRecordId } from "../db/ids.ts";
 
 /**
  * Server-only contacts service.
@@ -152,6 +153,7 @@ export async function listContacts(ctx: Ctx, filters: ContactFilters = {}): Prom
 }
 
 export async function getContact(ctx: Ctx, id: string): Promise<Lead | null> {
+  if (!isRecordId(id)) return null;
   const rows = await ctx.db
     .select()
     .from(contacts)
@@ -164,6 +166,7 @@ export async function getContact(ctx: Ctx, id: string): Promise<Lead | null> {
 
 /** The activity history of one contact, newest first. Scoped like a read. */
 export async function listActivities(ctx: Ctx, id: string, limit = 50): Promise<ContactActivityRow[] | null> {
+  if (!isRecordId(id)) return null;
   const contact = await getContact(ctx, id);
   if (!contact) return null;
   return ctx.db
@@ -299,6 +302,7 @@ export async function planStageChange(
   to: LeadStage,
   options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date } = {}
 ): Promise<ServiceResult<StageChangePlan>> {
+  if (!isRecordId(id)) return { ok: false, reason: "not_found" };
   const now = options.now ?? new Date();
   const mechanism = options.mechanism ?? "manual";
 
@@ -389,6 +393,7 @@ export async function commitStageChange(db: Db, writes: BatchWrite[]): Promise<v
 
 /** Log a touch. Stamps last-contacted and, when given, the next follow-up. */
 export async function logActivity(ctx: Ctx, id: string, input: ActivityInput, now = new Date()): Promise<ServiceResult<Lead>> {
+  if (!isRecordId(id)) return { ok: false, reason: "not_found" };
   const rows = await ctx.db
     .select()
     .from(contacts)

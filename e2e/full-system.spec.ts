@@ -597,7 +597,12 @@ test("§79 protected data routes are not cacheable", async () => {
 });
 
 test("§86 malformed and privilege-escalating input is refused", async () => {
-  expect((await api("/dashboard/api/contacts/not-a-uuid")).status).toBeLessThan(500);
+  // A malformed id is not found — never a 503 produced by user input.
+  for (const path of ["/dashboard/api/contacts/not-a-uuid", "/dashboard/api/transactions/not-a-uuid", "/dashboard/api/ai/actions/not-a-uuid"]) {
+    const r = await api(path);
+    expect(r.status, path).toBe(404);
+    expect(r.body, path).toEqual({ error: "Not found" });
+  }
   expect((await api("/dashboard/api/contacts", { method: "POST", headers: { "Content-Type": "application/json" }, body: json({ email: "nobody@example.com" }) })).status).toBe(400);
   expect((await api("/dashboard/api/transactions", { method: "POST", headers: { "Content-Type": "application/json" }, body: json({ transactionType: "residential_sale", side: "bogus", addressLine1: "x", city: "y" }) })).status).toBe(400);
   expect((await api("/dashboard/api/transactions", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{not json" })).status).toBe(400);

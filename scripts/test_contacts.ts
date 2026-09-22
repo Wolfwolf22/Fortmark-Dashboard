@@ -227,7 +227,18 @@ check("the primary need is the newest open one",
 }
 
 // --- Summary --------------------------------------------------------------------------------
+{
+  // A malformed id must be answered as not found by the service itself,
+  // before any query — a 503 produced by user input was the live finding.
+  const svc = readFileSync("lib/contacts/service.ts", "utf8");
+  check("a malformed contact id is not found before any query, in every id-taking entry",
+    (svc.match(/if \(!isRecordId\(id\)\) return/g) ?? []).length >= 4);
+  check("the id guard is the shared one", /from "\.\.\/db\/ids\.ts"/.test(svc));
+}
+
 const total = passed + failures.length;
+
+
 console.log(`\n${passed}/${total} contact checks passed`);
 if (failures.length > 0) {
   console.log("Failures:");

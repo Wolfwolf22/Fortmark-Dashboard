@@ -456,6 +456,12 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
 }
 
 // --- Summary -------------------------------------------------------------------------
+{
+  const svc = readFileSync("lib/transactions/service.ts", "utf8");
+  check("a malformed transaction id is not found before any query, in every id-taking entry",
+    (svc.match(/if \(!isRecordId\(id\)\) return/g) ?? []).length >= 2);
+}
+
 const total = passed + failures.length;
 console.log(`\n${passed}/${total} transaction checks passed`);
 if (failures.length > 0) {

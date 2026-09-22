@@ -1,4 +1,5 @@
 import "server-only";
+import { isRecordId } from "../../db/ids.ts";
 
 /**
  * Prepared actions: propose, confirm, execute.
@@ -340,6 +341,7 @@ export async function getPreparedAction(
   ctx: ActionContext,
   actionId: string
 ): Promise<{ ok: true; action: PreparedAction } | { ok: false; reason: "not_configured" | "not_permitted" | "not_found" | "unavailable" }> {
+  if (!isRecordId(actionId)) return { ok: false, reason: "not_found" };
   const resolved = await contactsCtx(ctx);
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   const { actor, db } = resolved.ctx;
@@ -410,6 +412,7 @@ export async function cancelPreparedAction(
   ctx: ActionContext,
   actionId: string
 ): Promise<{ ok: true } | { ok: false; reason: "not_configured" | "not_permitted" | "not_found" | "unavailable" }> {
+  if (!isRecordId(actionId)) return { ok: false, reason: "not_found" };
   const resolved = await contactsCtx(ctx);
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   const { actor, db } = resolved.ctx;
@@ -450,6 +453,7 @@ export async function executePreparedAction(
   ctx: ActionContext,
   actionId: string
 ): Promise<ExecuteResult> {
+  if (!isRecordId(actionId)) return { ok: false, reason: "not_found" };
   const resolved = await contactsCtx(ctx);
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   const { actor, db } = resolved.ctx;

@@ -1,4 +1,5 @@
 import "server-only";
+import { isRecordId } from "../db/ids.ts";
 
 /**
  * Server-only transactions service.
@@ -166,6 +167,7 @@ export async function getTransaction(
   id: string,
   now: Date = new Date()
 ): Promise<Transaction | null> {
+  if (!isRecordId(id)) return null;
   const rows = await ctx.db
     .select()
     .from(transactions)
@@ -327,6 +329,7 @@ export async function planStageChange(
   to: TransactionStage,
   options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date } = {}
 ): Promise<ServiceResult<StageChangePlan>> {
+  if (!isRecordId(id)) return { ok: false, reason: "not_found" };
   const now = options.now ?? new Date();
   const mechanism = options.mechanism ?? "manual";
 
