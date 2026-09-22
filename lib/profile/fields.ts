@@ -123,7 +123,7 @@ export const PROFILE_FIELDS: Record<ProfileFieldKey, FieldMeta> = {
     label: "Licence number",
     kind: "text",
     hint: "Self-reported. FortMark does not verify licence details.",
-    maxLength: 60,
+    maxLength: 30,
   },
   licenseExpiration: {
     key: "licenseExpiration",

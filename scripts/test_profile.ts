@@ -15,7 +15,9 @@
 import { resolveBlobToken } from "../lib/profile/image-storage.ts";
 import {
   FORTMARK_BROKERAGE_NAME,
+  LICENSE_NUMBER_MESSAGE,
   cleanText,
+  isValidLicenseNumber,
   isBrokerageTampering,
   licenseDetailsChanged,
   toProfileUrl,
@@ -245,6 +247,44 @@ check("empty profile is 0%", profileCompletion(normalizeProfileUpdate({})) === 0
   });
   check("complete profile is 100%", profileCompletion(full) === 100);
   check("licence number is normalised upper", full.licenseNumber === "BK123456");
+
+  // Licence-number shape: a format check, never a verification.
+  for (const ok of ["SL3456789", "BK123456", "12-3456", "LIC 12.345/6", "AB"]) {
+    check(`licence number accepted: ${ok}`, isValidLicenseNumber(ok));
+  }
+  for (const bad of ["A", "-BK1", "BK1-", "BK#123", "BK_123", "<script>", "X".repeat(31), "BK12\u00e9"]) {
+    check(`licence number rejected: ${bad.slice(0, 12)}`, !isValidLicenseNumber(bad));
+  }
+  const rejects = (value: unknown) => {
+    try {
+      normalizeProfileUpdate({ licenseNumber: value });
+      return false;
+    } catch (error) {
+      return (
+        error instanceof zod.ZodError &&
+        error.issues.some((i) => i.path[0] === "licenseNumber" && i.message === LICENSE_NUMBER_MESSAGE)
+      );
+    }
+  };
+  check("schema rejects a pasted sentence as a licence number", rejects("my license is BK123456!"));
+  check("schema rejects a one-character licence number", rejects("7"));
+  check("blank licence number clears rather than fails", normalizeProfileUpdate({ licenseNumber: "  " }).licenseNumber === null);
+  check("null licence number clears rather than fails", normalizeProfileUpdate({ licenseNumber: null }).licenseNumber === null);
+  check(
+    "licence number spacing collapses and cases up",
+    normalizeProfileUpdate({ licenseNumber: "  sl  3456789 " }).licenseNumber === "SL 3456789"
+  );
+  check(
+    "partial update carries the same licence rule",
+    (() => {
+      try {
+        normalizeProfileUpdatePartial({ licenseNumber: "BK#1" });
+        return false;
+      } catch (error) {
+        return error instanceof zod.ZodError;
+      }
+    })()
+  );
   const partial = profileCompletion(
     normalizeProfileUpdate({ preferredDisplayName: "D", legalFirstName: "Daniel" })
   );

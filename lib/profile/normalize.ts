@@ -99,6 +99,28 @@ export function toE164(v: unknown): string | null {
   return null;
 }
 
+/**
+ * Licence-number shape. Deliberately a format check only: it bounds the length
+ * and the alphabet so a typo or a pasted sentence is caught at the form, and it
+ * never implies the number was checked against a licensing authority. Real
+ * identifiers — Florida's `SL3456789` / `BK123456`, other states' digits with
+ * hyphens or periods — fit comfortably.
+ */
+export const LICENSE_NUMBER_MIN = 2;
+export const LICENSE_NUMBER_MAX = 30;
+export const LICENSE_NUMBER_MESSAGE =
+  `Use ${LICENSE_NUMBER_MIN}\u2013${LICENSE_NUMBER_MAX} letters or numbers; spaces, hyphens, periods and slashes are allowed.`;
+const LICENSE_NUMBER_PATTERN = /^[A-Z0-9](?:[A-Z0-9 ./-]*[A-Z0-9])?$/;
+
+/** True when the (already trimmed, upper-cased) value is an acceptable licence number. */
+export function isValidLicenseNumber(v: string): boolean {
+  return (
+    v.length >= LICENSE_NUMBER_MIN &&
+    v.length <= LICENSE_NUMBER_MAX &&
+    LICENSE_NUMBER_PATTERN.test(v)
+  );
+}
+
 /** Uppercase two-letter state, or null when not a known jurisdiction. */
 export function toLicenseState(v: unknown): string | null {
   const s = cleanText(v);
@@ -229,7 +251,15 @@ export const profileUpdateSchema = z
     phoneE164: z.string().max(40).nullish(),
     licenseState: z.string().max(40).nullish(),
     licenseType: z.string().max(60).nullish(),
-    licenseNumber: z.string().max(60).nullish(),
+    licenseNumber: z
+      .string()
+      .max(60)
+      .nullish()
+      // Blank clears the field; anything else must look like a licence number.
+      .refine((v) => {
+        const cleaned = cleanText(v)?.toUpperCase();
+        return !cleaned || isValidLicenseNumber(cleaned);
+      }, LICENSE_NUMBER_MESSAGE),
     licenseExpiration: z.string().max(20).nullish(),
     nrdsNumber: z.string().max(40).nullish(),
     biography: z.string().max(2000).nullish(),

@@ -31,7 +31,12 @@ import { sampleDashboardEnabled, type EnvLike } from "../flags.ts";
  * The domains that have no real source yet.
  *
  * Listings is absent on purpose: it has a real MLS path and owns its own
- * three-state availability. Contacts, transactions and the Home metrics are
+ * three-state availability.
+ *
+ * `team` here gates only the GENERATED colleague set that fixture screens
+ * (reports, calendar, drawers) draw on. The Settings roster itself is real —
+ * `/api/team` reads dashboard users and their professional profiles — and
+ * decides its own source server-side. Contacts, transactions and the Home metrics are
  * absent for the same reason — they are real.
  */
 export const UNBACKED_SUBSYSTEMS = [

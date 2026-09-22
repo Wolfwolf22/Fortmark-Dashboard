@@ -1,13 +1,18 @@
 "use client";
 
 /**
- * Team — members table from getTeam() with per-row role selection and an
- * invite flow. Role changes and invites are client-side only; invites send
- * when the account service connects.
+ * Team — the brokerage roster.
+ *
+ * Real mode reads `/api/team`: actual dashboard users with their professional
+ * profiles, read-only. There is no role-change or invitation service behind
+ * the dashboard yet, so real mode offers neither control; it says so instead.
+ *
+ * `TeamManager` below is the labelled fixture roster, reachable only when the
+ * server reports explicit sample mode.
  */
 import { useState } from "react";
 import { UserPlus } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,7 +47,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { getTeam } from "@/lib/data/adapters/settings";
+import { getTeamRoster } from "@/lib/data/adapters/team";
+import type { RosterEntry } from "@/lib/team/roster";
 import { useQuery } from "@/lib/data/hooks";
 import { SubsystemNotConnected, unavailableSubsystem } from "@/components/common/subsystem-state";
 import { SampleDataNotice } from "@/components/listings/sample-data-notice";
@@ -58,14 +64,113 @@ const TEAM_ROLES: TeamMember["role"][] = [
 ];
 
 export function TeamSection() {
-  const { data, loading, error } = useQuery(() => getTeam(), []);
+  const { data, loading, error } = useQuery(() => getTeamRoster(), []);
 
   // A failed read is not a slow one: without this the section pulsed
   // forever when the subsystem refused, saying nothing at all.
   const missing = unavailableSubsystem(error);
   if (missing) return <SubsystemNotConnected subsystem={missing} />;
+  if (error) return <TeamUnavailable />;
   if (loading || !data) return <SectionSkeleton rows={5} />;
-  return <TeamManager initial={data} />;
+  if (data.source === "sample") return <TeamManager initial={data.items} />;
+  return <TeamRosterCard items={data.items} viewerPrivileged={data.viewerPrivileged} />;
+}
+
+function TeamUnavailable() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Team</CardTitle>
+        <CardDescription>
+          The team roster could not be loaded right now. Nothing is shown rather than a guess.
+        </CardDescription>
+      </CardHeader>
+    </Card>
+  );
+}
+
+const STATUS_LABEL: Record<NonNullable<RosterEntry["status"]>, string> = {
+  active: "Active",
+  pending_profile: "Pending",
+  suspended: "Suspended",
+};
+
+function licenceText(member: RosterEntry): string | null {
+  if (!member.licenseNumber) return null;
+  const prefix = [member.licenseState, member.licenseType].filter(Boolean).join(" ");
+  return prefix ? `${prefix} ${member.licenseNumber}` : member.licenseNumber;
+}
+
+function TeamRosterCard({ items, viewerPrivileged }: { items: RosterEntry[]; viewerPrivileged: boolean }) {
+  return (
+    <Card>
+      <CardHeader className="space-y-1">
+        <CardTitle>Team</CardTitle>
+        <CardDescription>
+          {viewerPrivileged
+            ? "Everyone with an account in this workspace, from their own professional profiles."
+            : "Your active colleagues, as their professional profiles present them."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Member</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead>Licence</TableHead>
+              {viewerPrivileged && <TableHead>Status</TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((member) => {
+              const licence = licenceText(member);
+              return (
+                <TableRow key={member.id}>
+                  <TableCell>
+                    <div className="flex items-center gap-3">
+                      <Avatar>
+                        {member.imageUrl && <AvatarImage src={member.imageUrl} alt="" />}
+                        <AvatarFallback>{member.hasName ? initials(member.name) : "?"}</AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className={member.hasName ? "truncate font-semibold" : "truncate text-muted-foreground"}>
+                          {member.name}
+                          {member.isSelf && <span className="ml-2 text-[12px] font-normal text-muted-foreground">You</span>}
+                        </p>
+                        <p className="truncate text-muted-foreground">
+                          {[member.title, member.email].filter(Boolean).join(" · ") || "No professional details yet"}
+                        </p>
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{member.roleLabel}</Badge>
+                  </TableCell>
+                  <TableCell className="text-[13px]">
+                    {licence ?? <span className="text-muted-foreground">Not provided</span>}
+                  </TableCell>
+                  {viewerPrivileged && (
+                    <TableCell>
+                      {member.status && (
+                        <Badge variant={member.status === "active" ? "outline" : "muted"}>
+                          {STATUS_LABEL[member.status]}
+                        </Badge>
+                      )}
+                    </TableCell>
+                  )}
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+        <p className="mt-3 text-[12px] text-muted-foreground">
+          Licence details are self-reported by each member; FortMark does not verify them. Adding
+          teammates and changing roles are not available in the dashboard yet.
+        </p>
+      </CardContent>
+    </Card>
+  );
 }
 
 function TeamManager({ initial }: { initial: TeamMember[] }) {
