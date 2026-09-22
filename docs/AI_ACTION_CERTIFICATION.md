@@ -366,3 +366,107 @@ step observed against the real deployment.
 Two items remain open and are not claimed as passed: the API-level expiry run
 (§7, proven at database level only) and fixture cleanup (§4). The gaps in §6
 are stated rather than papered over.
+
+---
+
+# Rendered confirmation certification
+
+The gap F2-B and F2-C left open — the Confirm button was never clicked in a
+rendered DOM — is closed. Both actions were driven end to end through the real
+browser, on the portal origin, through the real dashboard UI.
+
+## The portal auth fix
+
+**Cause.** The portal's `proxy.ts` built `authorizedParties` from
+`https://app.fortmark.net` plus, on preview, `VERCEL_URL` (the deployment) and
+`VERCEL_BRANCH_URL` (the branch). A browser reaches Preview through the
+**stable alias** `https://fortmark-app-preview.vercel.app`, which is neither —
+so a valid session's `azp` matched nothing in the list and every
+`/dashboard/*` request bounced to `/sign-in`.
+
+Recorded before the fix, with a genuinely valid session:
+
+```
+signed in as user_3JeOWKOgBRVFdt0KubrrjVfRFyl
+azp = https://fortmark-app-preview.vercel.app
+iss = https://cheerful-anteater-89.clerk.accounts.dev
+dashboard API with the same session -> 200
+portal /dashboard/ai                -> .../sign-in     <- rejected here
+```
+
+The dashboard accepted the identical session because it already had an
+additive `CLERK_AUTHORIZED_PARTIES` variable. The portal had **no env-driven
+mechanism at all**, which is why F2-C stopped rather than patching it.
+
+**Fix.** `lib/authorized-parties.ts` in the portal, reusing the dashboard's
+established variable name. Strictly additive: the canonical production origin
+is seeded first and cannot be removed, so malformed or empty configuration
+degrades to the previous behaviour rather than locking anyone out.
+
+**Why it does not weaken authentication.**
+
+- No wildcard syntax, no substring matching. Clerk compares `azp` exactly, so
+  `https://app.fortmark.net` never authorizes `https://app.fortmark.net.evil.test`.
+- Every entry must be an absolute `http:`/`https:` URL and is reduced to its
+  **origin**, so a path, query, fragment, credential or default port cannot
+  smuggle anything past the comparison.
+- A hostname containing anything but letters, digits, dots and hyphens is
+  dropped. `new URL("https://*.vercel.app")` parses cleanly, and without this
+  a wildcard would have sat in the list matching nothing — configured in
+  appearance, inert in fact.
+- Nothing is read from a request; `Host` and `Origin` are never consulted.
+- Preview origins are not added in production, so a preview alias cannot
+  become a production authorized party by accident.
+- Production needs no new variable and is unchanged.
+
+30 focused tests (`npm run test:auth`), typecheck and build clean.
+
+**After the fix:** `portal /dashboard/ai -> https://fortmark-app-preview.vercel.app/dashboard/ai`.
+
+## A defect only the rendered test could find
+
+Clicking Confirm **removed the card immediately**, so the person who had just
+authorised a change watched it vanish with no indication it took. The card's
+own "Confirmed and saved" state existed but could never render, and the comment
+above the handler claimed the opposite of what the code did.
+
+Every server-side assertion passed throughout. This is precisely the class of
+defect API-level certification cannot see, and it is the strongest argument
+for having closed this gap. Fixed: a settled card stays on screen showing its
+outcome, and leaves when the next turn re-fetches.
+
+## Clerk path
+
+`clerkSetup()` → `setupClerkTestingToken()` → `clerk.signIn()`, the official
+Playwright support, with the synthetic certification identity. No Bearer
+shortcut for the rendered flow: the browser authenticates on the portal and
+carries its own session through to the dashboard. No auth bypass, no test
+login route, no middleware exception, no special-casing of the certification
+user.
+
+## What the rendered cards actually said
+
+F2-B, read out of the DOM:
+
+> Schedule a follow-up with UIF2B Jane 8QL3 for Friday, September 25, 2026
+> Prepared by the assistant. Nothing changes until you confirm it.
+> Follow-up · No follow-up scheduled · Friday, September 25, 2026
+> [Confirm] [Decline]
+
+F2-C:
+
+> Change UIF2C Jane 8QL3 from Qualified to Active client
+> Prepared by the assistant. Nothing changes until you confirm it.
+> Stage · Qualified · Active client
+> This contact will be counted in Active Clients.
+> [Confirm] [Decline]
+
+Human labels throughout — the raw enum `active_client` is asserted absent.
+
+## Note on button copy
+
+The brief specifies `Cancel` / `Confirm`; the shipped component uses
+**`Decline`** / `Confirm`. The semantics match the specification — declining is
+persisted server-side, not a client-side dismissal — and only the label
+differs. It was implemented this way in F2-B and is recorded here rather than
+changed mid-certification.

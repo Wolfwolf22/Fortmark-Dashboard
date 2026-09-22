@@ -241,10 +241,17 @@ test("§21 the card is reachable and operable by keyboard", async () => {
   expect(contactOf(afterEscape.body).stage).toBe("active_client");
 
   // §22 — a double click must not produce two of anything.
-  const before = await api("/dashboard/api/contacts/" + state.cId + "/activities");
-  const beforeCount = Array.isArray(before.body.activities)
-    ? (before.body.activities as unknown[]).length
-    : (before.body as unknown as unknown[]).length;
+  // The route returns { items: [...] }; asserting against the real field
+  // rather than a guessed one, so a shape change fails loudly instead of
+  // comparing undefined to undefined.
+  const activityCount = async (): Promise<number> => {
+    const res = await api(`/dashboard/api/contacts/${state.cId}/activities`);
+    expect(res.status).toBe(200);
+    const items = (res.body as { items?: unknown[] }).items;
+    expect(Array.isArray(items), "the activities route returns an items array").toBe(true);
+    return items!.length;
+  };
+  const beforeCount = await activityCount();
 
   await confirm.click({ clickCount: 2, delay: 40 });
   await expect(card).toContainText("Confirmed and saved", { timeout: 60_000 });
@@ -253,10 +260,7 @@ test("§21 the card is reachable and operable by keyboard", async () => {
   const stage = await api(`/dashboard/api/contacts/${state.cId}`);
   expect(contactOf(stage.body).stage).toBe("under_contract");
 
-  const after = await api("/dashboard/api/contacts/" + state.cId + "/activities");
-  const afterCount = Array.isArray(after.body.activities)
-    ? (after.body.activities as unknown[]).length
-    : (after.body as unknown as unknown[]).length;
+  const afterCount = await activityCount();
   console.log(`[ui] double-click: activities ${beforeCount} -> ${afterCount} (expect +1)`);
   expect(afterCount).toBe(beforeCount + 1);
 });
