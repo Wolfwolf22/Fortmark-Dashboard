@@ -20,6 +20,8 @@ const state: { contactId?: string; actionId?: string; secondActionId?: string } 
 const FIXTURE = { firstName: "F2LIVE", lastName: "Jane Smith" };
 
 test.beforeAll(async ({ browser }) => {
+  // Sign-in retries are bounded to fit 600s, not the 180s a hook inherits.
+  test.setTimeout(600_000);
   const page = await browser.newPage();
   jwt = await signInCertificationUser(page);
   api = apiFor(jwt);

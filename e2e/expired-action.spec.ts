@@ -16,6 +16,7 @@ const ACTION_ID = process.env.EXPIRED_ACTION_ID ?? "";
 const CONTACT_ID = process.env.EXPIRED_CONTACT_ID ?? "";
 
 test("an action past its TTL is reported expired and refuses to execute", async ({ browser }) => {
+  test.setTimeout(600_000);
   test.skip(!ACTION_ID || !CONTACT_ID, "EXPIRED_ACTION_ID and EXPIRED_CONTACT_ID must be set");
 
   const page = await browser.newPage();

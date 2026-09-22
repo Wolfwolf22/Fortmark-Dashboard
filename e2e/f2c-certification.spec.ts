@@ -37,6 +37,8 @@ async function refresh() {
 }
 
 test.beforeAll(async ({ browser }) => {
+  // Sign-in retries are bounded to fit 600s, not the 180s a hook inherits.
+  test.setTimeout(600_000);
   page = await browser.newPage();
   jwt = await signInCertificationUser(page);
   api = apiFor(jwt);
