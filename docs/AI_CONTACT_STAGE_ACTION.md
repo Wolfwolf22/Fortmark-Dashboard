@@ -1,8 +1,15 @@
 # F2-C architecture review — AI-prepared contact stage change
 
-> **Status: architecture and domain audit only.** Nothing is implemented. The
-> tool registry is unchanged: nine read tools, one proposing tool
-> (`prepare_contact_followup`), zero execution tools.
+> **Status: IMPLEMENTED and LIVE VERIFIED.** The registry now holds nine read
+> tools, two proposing tools (`prepare_contact_followup`,
+> `prepare_contact_stage_change`) and zero execution tools.
+>
+> `archived` is excluded in both directions, by decision. The domain lifecycle
+> is unchanged — the Leads screen still archives and restores exactly as it
+> did; a model simply has no way to ask.
+>
+> Live evidence: §19 below. The audit that follows (§2–§18) is retained as
+> written, because it is why the implementation looks the way it does.
 
 ---
 
@@ -514,3 +521,129 @@ Unchanged by this review:
 
 `ToolEffect` remains `"read" | "propose"`. No migration, no lifecycle change,
 no flag change, no new stage field.
+
+---
+
+## 19. Implementation and live certification
+
+Certified against Preview revision `f13a02c`, real Clerk session, real OpenAI
+`gpt-5.5`, real database. Ten steps, all passing.
+
+### Prerequisite A — the shared atomic writer
+
+`changeStage` became two functions:
+
+- **`planStageChange`** — authorizes (`visibleTo`, `canSee`, `canWrite`),
+  validates (`canTransition`, which refuses same-stage), and **returns the
+  writes** instead of performing them;
+- **`commitStageChange`** — sends them as one `db.batch`.
+
+Returning the writes is what lets AI-confirmed execution append a fourth
+statement (the prepared action's transition) into the *same* batch without
+duplicating a line of authorization or validation. The swallowed
+activity-insert failure is gone from this path: if the history cannot be
+recorded, the transition does not happen.
+
+**The proof that both paths are one path.** Six stage changes during the live
+run — four manual, two AI-assisted — read back from the database:
+
+```
+Stage changed from lead to qualified          [manual]
+Stage changed from qualified to active_client [ai_assisted]
+Stage changed from active_client to archived  [manual]
+Stage changed from archived to lead           [manual]
+Stage changed from lead to lost               [ai_assisted]
+Stage changed from lost to qualified          [manual]
+```
+
+Identical summaries, identical `contact_stage_changed` audit type, one
+distinct actor (the human), differing only in the `mechanism` metadata.
+Six activities, six audits — no gap, which is the atomicity showing.
+
+### The live run
+
+| § | Test | Result |
+|---|---|---|
+| 44 | real OpenAI prepares from natural language | **PASS** |
+| 44 | nothing mutates before confirmation; `activeClients` unmoved | **PASS** |
+| 45 | typed "yes" executes nothing | **PASS** |
+| 47 | confirmation commits; `activeClients` 0 → 1 | **PASS** |
+| 47 | assistant reads the new stage back from the record | **PASS** |
+| 49 | duplicate confirmation returns `alreadyExecuted` | **PASS** |
+| 50 | archiving refused, both directions; manual path unaffected | **PASS** |
+| 51 | follow-up consequence disclosed, then proven true | **PASS** |
+| 48 | stale action refused `409`, newer stage preserved | **PASS** |
+
+Assistant, preparing (verbatim):
+
+> "I've prepared the stage change for F2CLIVE Jane QBT3 from Qualified to
+> Active client. Please use the Confirm button in FortMark to apply it."
+
+On a typed "yes":
+
+> "To confirm it, use the **Confirm** button on the prepared change card in
+> FortMark. Replying "yes" here doesn't apply the stage change."
+
+On being asked to archive:
+
+> "I can't archive contacts from here. Archiving is managed manually in
+> FortMark; open the contact record and use the archive option there."
+
+And, once the contact had been archived by hand, on being asked to move it out:
+
+> "I found one matching contact in FortMark: **F2CLIVE Jane SASF**, currently
+> **Archived**. I can't move archived contacts or prepare that stage change
+> here."
+
+### §51 — the consequence was real, not decorative
+
+The card disclosed:
+
+> "Their follow-up on Friday, October 2, 2026 will be kept on the contact but
+> will no longer appear in your follow-ups due."
+
+After confirming the move to `lost`:
+
+```
+nextFollowUpDate = 2026-10-02T12:00:00.000Z   <- kept, exactly as promised
+followUpsDue     = 0                          <- and suppressed, as promised
+```
+
+Both halves of the sentence verified independently. This is the audit's
+headline finding (§8) surfacing to a human for the first time.
+
+### Two model observations, recorded rather than smoothed over
+
+1. **Ambiguity held, twice.** A leftover fixture left two contacts sharing a
+   name, and the assistant prepared nothing — it listed both and asked which.
+   Correct behaviour; the harness was wrong to reuse a name. Fixture names are
+   now unique per run.
+2. **The model is not deterministic.** On one run it declined a perfectly
+   valid transition ("I can't change contact stages from chat") despite
+   holding the tool. That is a model wobble, not a product refusal, and the
+   stale step now asks a second time rather than failing on phrasing. Worth
+   knowing: the assistant under-claims its own capability occasionally.
+
+### Cleanup
+
+All twelve domain tables returned to 0, matching the pre-run state. Only the
+synthetic Clerk identity remains.
+
+### The rendered Confirm button — still not clicked (§30)
+
+**Root cause, now precisely identified.** The portal's `proxy.ts` builds its
+authorized parties from `https://app.fortmark.net` plus, on preview,
+`VERCEL_URL` and `VERCEL_BRANCH_URL`. The browser reaches the portal at its
+**stable alias** `https://fortmark-app-preview.vercel.app`, which is neither of
+those, so the session's `azp` is rejected — by the portal, not by Clerk and not
+by the dashboard, which accepts the same token because it has an additive
+`CLERK_AUTHORIZED_PARTIES` variable the portal lacks.
+
+**This is not fixable by configuration alone.** The portal has no env-driven
+authorized-party mechanism to add a value to; giving it one is a code change to
+its auth configuration, in a separate repository. §30 reserves that for a
+deliberate decision, so it was not made. Reported, not worked around.
+
+The boundary, stated exactly: **API live certified; rendered confirmation not
+certified.** The execute route, its payload, its refusals and its consequences
+are proven live; the button and its rendering remain covered offline only.

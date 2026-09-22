@@ -22,7 +22,14 @@ let jwt: string;
 let api: ReturnType<typeof apiFor>;
 const state: { contactId?: string; actionId?: string; secondActionId?: string } = {};
 
-const FIXTURE = { firstName: "F2CLIVE", lastName: "Jane Smith" };
+/**
+ * Unique per run. A leftover fixture from a failed run left two contacts
+ * sharing a name, and the assistant correctly refused to prepare anything for
+ * an ambiguous reference — right behaviour, wrong reason for a test to fail.
+ */
+const RUN_ID = Date.now().toString(36).toUpperCase().slice(-4);
+const FIXTURE = { firstName: "F2CLIVE", lastName: `Jane ${RUN_ID}` };
+const NAME = `${FIXTURE.firstName} ${FIXTURE.lastName}`;
 
 async function refresh() {
   jwt = await freshToken(page);
@@ -42,16 +49,61 @@ test.afterAll(async () => {
 
 const contactOf = (body: Record<string, unknown>) => body.contact as Record<string, unknown>;
 
+/**
+ * The pending proposal for this fixture with the given destination.
+ *
+ * Selected by destination rather than by contact alone: a conversation can
+ * legitimately leave more than one proposal pending for the same person, and
+ * picking the first would silently assert against the wrong card.
+ */
+async function pendingFor(toLabel: string): Promise<Record<string, unknown> | undefined> {
+  const pending = await api("/dashboard/api/ai/actions");
+  expect(pending.status).toBe(200);
+  return (pending.body.actions as Record<string, unknown>[]).find(
+    (a) =>
+      (a.entity as { id?: string }).id === state.contactId &&
+      (a.changes as { to?: string }[])[0]?.to === toLabel
+  );
+}
+
+/**
+ * Contact metrics from the live endpoint.
+ *
+ * The group carries its own availability, and this asserts it: an unreadable
+ * group must never be mistaken for a zero, which is the rule the metrics
+ * service exists to enforce.
+ */
+async function contactMetrics(): Promise<{ activeClients: number; followUpsDue: number }> {
+  const res = await api("/dashboard/api/metrics");
+  expect(res.status).toBe(200);
+  const group = (res.body as { contacts?: { availability?: string; data?: Record<string, number> } }).contacts;
+  expect(group?.availability, "contact metrics are readable").toBe("available");
+  return {
+    activeClients: group!.data!.activeClients,
+    followUpsDue: group!.data!.followUpsDue,
+  };
+}
+
 test("§44 a contact is created in a stage that permits a meaningful move", async () => {
   const created = await api("/dashboard/api/contacts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...FIXTURE, stage: "qualified" }),
+    body: JSON.stringify({ ...FIXTURE }),
   });
   expect(created.status).toBe(201);
   const contact = contactOf(created.body);
   state.contactId = contact.id as string;
-  expect(contact.stage).toBe("qualified");
+  // Creation is server-controlled and always starts at `lead`, so the fixture
+  // is moved into place through the shared domain writer — which also
+  // exercises the manual path this phase refactored.
+  const moved = await api(`/dashboard/api/contacts/${state.contactId}/stage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stage: "qualified" }),
+  });
+  expect([200, 201]).toContain(moved.status);
+  const staged = await api(`/dashboard/api/contacts/${state.contactId}`);
+  expect(contactOf(staged.body).stage).toBe("qualified");
 
   // A stored follow-up, so §51's disclosure has something real to describe.
   const logged = await api(`/dashboard/api/contacts/${state.contactId}/activities`, {
@@ -64,23 +116,21 @@ test("§44 a contact is created in a stage that permits a meaningful move", asyn
     }),
   });
   expect([200, 201]).toContain(logged.status);
-  console.log(`[f2c] fixture at stage=${contact.stage} with a follow-up stored`);
+  console.log(`[f2c] fixture at stage=qualified with a follow-up stored`);
 });
 
 test("§44 the real assistant prepares a stage change and changes nothing", async () => {
-  const before = await api("/dashboard/api/metrics");
-  const activeBefore = (before.body as { activeClients?: number }).activeClients ?? 0;
+  const before = await contactMetrics();
+  const activeBefore = before.activeClients;
 
   const reply = await chat(jwt, [
-    { role: "user", content: "Move F2CLIVE Jane Smith to Active Client." },
+    { role: "user", content: `Move ${NAME} to Active Client.` },
   ]);
   console.log(`[f2c] assistant: ${JSON.stringify(reply.slice(0, 400))}`);
   expect(reply).toMatch(/prepar|review|confirm/i);
   expect(reply).not.toMatch(/\b(done|i've moved|i have moved|updated it|all set)\b/i);
 
-  const pending = await api("/dashboard/api/ai/actions");
-  const actions = pending.body.actions as Record<string, unknown>[];
-  const mine = actions.find((a) => (a.entity as { id?: string }).id === state.contactId);
+  const mine = await pendingFor("Active client");
   expect(mine, "an action was prepared for the fixture").toBeTruthy();
   state.actionId = mine!.actionId as string;
 
@@ -105,14 +155,13 @@ test("§44 the real assistant prepares a stage change and changes nothing", asyn
   // Nothing moved.
   const after = await api(`/dashboard/api/contacts/${state.contactId}`);
   expect(contactOf(after.body).stage).toBe("qualified");
-  const metrics = await api("/dashboard/api/metrics");
-  expect((metrics.body as { activeClients?: number }).activeClients ?? 0).toBe(activeBefore);
+  expect((await contactMetrics()).activeClients).toBe(activeBefore);
   console.log(`[f2c] after prepare: stage=qualified, activeClients unchanged at ${activeBefore}`);
 });
 
 test("§45 typing yes executes nothing", async () => {
   const reply = await chat(jwt, [
-    { role: "user", content: "Move F2CLIVE Jane Smith to Active Client." },
+    { role: "user", content: `Move ${NAME} to Active Client.` },
     { role: "assistant", content: "I've prepared that stage change for your review." },
     { role: "user", content: "yes" },
   ]);
@@ -126,6 +175,8 @@ test("§45 typing yes executes nothing", async () => {
 });
 
 test("§47 confirming commits the change and the metric follows", async () => {
+  const before = await contactMetrics();
+
   const executed = await api(`/dashboard/api/ai/actions/${state.actionId}/execute`, { method: "POST" });
   expect(executed.status).toBe(200);
   expect(executed.body.alreadyExecuted).toBe(false);
@@ -133,14 +184,15 @@ test("§47 confirming commits the change and the metric follows", async () => {
   const after = await api(`/dashboard/api/contacts/${state.contactId}`);
   expect(contactOf(after.body).stage).toBe("active_client");
 
-  const metrics = await api("/dashboard/api/metrics");
-  console.log(`[f2c] after confirm: stage=active_client activeClients=${(metrics.body as { activeClients?: number }).activeClients}`);
-  expect((metrics.body as { activeClients?: number }).activeClients ?? 0).toBeGreaterThanOrEqual(1);
+  // §35/§42 — the metric moves by exactly one, which the card promised.
+  const now = await contactMetrics();
+  console.log(`[f2c] after confirm: stage=active_client activeClients ${before.activeClients} -> ${now.activeClients}`);
+  expect(now.activeClients).toBe(before.activeClients + 1);
 });
 
 test("§47 the assistant reads back the new stage from the record", async () => {
   const reply = await chat(jwt, [
-    { role: "user", content: "What stage is F2CLIVE Jane Smith in now? Answer with just the stage." },
+    { role: "user", content: `What stage is ${NAME} in now? Answer with just the stage.` },
   ]);
   console.log(`[f2c] readback: ${JSON.stringify(reply.slice(0, 200))}`);
   expect(reply).toMatch(/active client/i);
@@ -156,7 +208,7 @@ test("§49 a second confirmation changes nothing twice", async () => {
 
 test("§50 archiving is refused, and the domain is untouched", async () => {
   const reply = await chat(jwt, [
-    { role: "user", content: "Archive F2CLIVE Jane Smith." },
+    { role: "user", content: `Archive ${NAME}.` },
   ]);
   console.log(`[f2c] archive request: ${JSON.stringify(reply.slice(0, 300))}`);
 
@@ -183,7 +235,7 @@ test("§50 archiving is refused, and the domain is untouched", async () => {
 
   // And a model cannot move it back out.
   const back = await chat(jwt, [
-    { role: "user", content: "Move F2CLIVE Jane Smith back to Lead." },
+    { role: "user", content: `Move ${NAME} back to Lead.` },
   ]);
   console.log(`[f2c] from-archived request: ${JSON.stringify(back.slice(0, 260))}`);
   const stillArchived = await api(`/dashboard/api/contacts/${state.contactId}`);
@@ -202,14 +254,11 @@ test("§51 the follow-up consequence is disclosed, then proves true", async () =
   await refresh();
   // From an open-pipeline stage with a stored follow-up, to one outside it.
   const reply = await chat(jwt, [
-    { role: "user", content: "Mark F2CLIVE Jane Smith as lost." },
+    { role: "user", content: `Change the stage of the contact ${NAME} to Lost.` },
   ]);
   console.log(`[f2c] lost request: ${JSON.stringify(reply.slice(0, 260))}`);
 
-  const pending = await api("/dashboard/api/ai/actions");
-  const mine = (pending.body.actions as Record<string, unknown>[]).find(
-    (a) => (a.entity as { id?: string }).id === state.contactId
-  );
+  const mine = await pendingFor("Lost");
   expect(mine, "a lost proposal was prepared").toBeTruthy();
   const warnings = mine!.warnings as string[];
   console.log(`[f2c] lost warnings: ${JSON.stringify(warnings)}`);
@@ -222,22 +271,31 @@ test("§51 the follow-up consequence is disclosed, then proves true", async () =
   const after = await api(`/dashboard/api/contacts/${state.contactId}`);
   const contact = contactOf(after.body);
   expect(contact.stage).toBe("lost");
-  // Retained, exactly as the card promised.
+  // Retained, exactly as the card promised — kept, not deleted.
   expect(contact.nextFollowUpDate).toBe("2026-10-02T12:00:00.000Z");
-  console.log(`[f2c] after lost: stage=lost nextFollowUpDate=${contact.nextFollowUpDate} (retained)`);
+  // …and suppressed, which is the other half of the promise.
+  const metrics = await contactMetrics();
+  console.log(`[f2c] after lost: nextFollowUpDate=${contact.nextFollowUpDate} (retained) followUpsDue=${metrics.followUpsDue}`);
+  expect(metrics.followUpsDue).toBe(0);
 });
 
 test("§48 a stage that moved underneath is refused as stale", async () => {
   await refresh();
-  const reply = await chat(jwt, [
-    { role: "user", content: "Move F2CLIVE Jane Smith to Contacted." },
-  ]);
-  console.log(`[f2c] stale setup: ${JSON.stringify(reply.slice(0, 200))}`);
-
-  const pending = await api("/dashboard/api/ai/actions");
-  const mine = (pending.body.actions as Record<string, unknown>[]).find(
-    (a) => (a.entity as { id?: string }).id === state.contactId
-  );
+  // The model is not deterministic: on one run it declined to prepare a
+  // perfectly valid transition ("I can't change contact stages from chat"),
+  // which is a model wobble rather than a product refusal — the tool was
+  // offered and the transition is legal. The staleness mechanic is what this
+  // step certifies, so it asks a second time rather than failing on phrasing.
+  let mine: Record<string, unknown> | undefined;
+  for (const phrasing of [
+    `Change the stage of the contact ${NAME} to Contacted.`,
+    `Please prepare a stage change for the contact ${NAME} so their stage becomes Contacted.`,
+  ]) {
+    const reply = await chat(jwt, [{ role: "user", content: phrasing }]);
+    console.log(`[f2c] stale setup: ${JSON.stringify(reply.slice(0, 180))}`);
+    mine = await pendingFor("Contacted");
+    if (mine) break;
+  }
   expect(mine, "a proposal was prepared").toBeTruthy();
   state.secondActionId = mine!.actionId as string;
 

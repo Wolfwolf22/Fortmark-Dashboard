@@ -1,4 +1,10 @@
-# F2-B certification — Schedule Contact Follow-Up
+# AI action certification — F2-B and F2-C
+
+> F2-C (contact stage change) is certified in
+> **`docs/AI_CONTACT_STAGE_ACTION.md` §19**, alongside the domain audit that
+> shaped it. This document remains the F2-B record.
+
+# F2-B — Schedule Contact Follow-Up
 
 > **Status: LIVE VERIFIED.** Every gate was observed against the deployed
 > Preview, including expiry against the real ten-minute clock.

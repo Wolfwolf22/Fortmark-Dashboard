@@ -721,8 +721,10 @@ Reviewed in **`docs/AI_CONTACT_STAGE_ACTION.md`**, kept separate to keep this
 document manageable. Nothing is implemented; the registry still holds nine read
 tools, one proposing tool and zero execution tools.
 
-**Recommendation: PROCEED** — `contacts.stage` is the correct mutation target,
-with two blocking prerequisites.
+**Implemented and live verified.** Both prerequisites were done first: the
+shared atomic stage writer, and the follow-up suppression disclosed on the
+card. `archived` is excluded from AI proposals in both directions while the
+domain lifecycle is untouched. See §19 of that document for the live evidence.
 
 The audit's findings that matter here:
 
