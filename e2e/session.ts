@@ -93,7 +93,9 @@ async function loadWithClerk(page: Page, path: string): Promise<void> {
       // A document that is not a 200 has no Clerk to wait for: say what it
       // was and go straight to the next attempt.
       if (status !== undefined && status !== 200) throw new Error(`document answered ${status}`);
-      await clerk.loaded({ page, timeout: CLERK_MS } as Parameters<typeof clerk.loaded>[0]);
+      // `clerk.loaded` does not honour a timeout of its own — one attempt sat
+      // in it for a whole test budget ("Test ended") — so the bound is ours.
+      await withDeadline("clerk.loaded", CLERK_MS, clerk.loaded({ page }));
       if (attempt > 1) console.log(`[session] Clerk initialised at ${path} on attempt ${attempt}`);
       return;
     } catch (error) {

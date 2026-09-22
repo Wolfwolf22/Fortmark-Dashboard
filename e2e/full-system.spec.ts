@@ -981,10 +981,18 @@ test("§31/§95/§96 no horizontal overflow on the primary routes at four widths
       if (o > 0) {
         const culprit = await page.evaluate(() => {
           const limit = document.documentElement.clientWidth;
+          // An element inside a scrolling ancestor is clipped there and
+          // cannot widen the document; only unclipped ones are suspects.
+          const clipped = (el: Element): boolean => {
+            for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+              if (getComputedStyle(p).overflowX !== "visible") return true;
+            }
+            return false;
+          };
           let worst: { right: number; desc: string } | null = null;
           for (const el of Array.from(document.querySelectorAll("body *"))) {
             const r = el.getBoundingClientRect();
-            if (r.width === 0 || r.right <= limit) continue;
+            if (r.width === 0 || r.right <= limit || clipped(el)) continue;
             if (!worst || r.right > worst.right) {
               const h = el as HTMLElement;
               const cls = typeof h.className === "string" ? h.className.split(/\s+/).slice(0, 4).join(".") : "";
