@@ -775,3 +775,32 @@ terminal stage; closing stamps `closed_date` and immediately rewrites closed
 production; and a deal may close with **no contract price**, contributing zero
 to closed volume without saying so. The recommendation, if a capability is ever
 authorized, is to begin with active-stage moves and `on_hold` only.
+
+## 29. Opportunity actions — see the CRM architecture first
+
+**Not implemented. Not authorized. No opportunity tool exists.**
+
+Any future AI capability over the CRM funnel — proposing that an objective
+move from qualified to representation, say — belongs to the Opportunity
+domain, not to `contacts.stage`. That domain does not exist yet:
+`contact_opportunities` is present but nearly inert, has no pipeline stage, and
+carries neither `brokerage_key` nor an owner column, so it cannot even be
+authorized by `visibleTo()` today.
+
+The design work is `docs/CRM_OPPORTUNITY_ARCHITECTURE.md`. Two conclusions
+there bear directly on this document:
+
+- **A future `prepare_opportunity_stage_change` sits at the same risk tier as
+  F2-C** — reversible, no money moved, no date stamped, no reporting
+  rewritten — and below transaction stage. Its first scope must exclude `won`
+  and `lost`: `won` asserts a transaction closed, and `lost` is a judgement
+  about a person's intent that a model should not infer from a thread. Same
+  reasoning that excluded `archived` from F2-C.
+- **F2-C is scheduled to retire, not to grow.** As `contacts.stage` collapses
+  into a derived relationship field, the set of stages anything may set
+  directly shrinks to `archived`, which F2-C already excludes. It should retire
+  in the same release that ships the opportunity action, so no window exists
+  where the AI writes a column that is also being derived.
+
+Until then F2-B and F2-C are unchanged, and the registry stays **9 read, 2
+propose, 0 execute.**
