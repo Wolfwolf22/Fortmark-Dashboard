@@ -30,8 +30,10 @@ export const PORTAL = process.env.CERT_PORTAL_URL ?? "https://fortmark-app-previ
  * consumed a whole 600s budget while attempts two through five never ran, and
  * the run reported "hook timeout" rather than "Clerk did not initialise".
  *
- * Worst case now: 2 x 4 x (25 + 20 + 2) + 120 + 20 = 516s, inside the hook's
- * 600s. A bound that does not fit the budget is not a bound.
+ * Worst case now: 3 x 30 + 2 x 4 x (25 + 20 + 2) + 120 + 20 = 606s, which is
+ * why the hooks that call this carry a 600s budget of their own and the
+ * token step gives up first. A bound that does not fit the budget is not a
+ * bound.
  */
 const NAV_MS = 25_000;
 const CLERK_MS = 20_000;
@@ -91,7 +93,8 @@ async function loadWithClerk(page: Page, path: string): Promise<void> {
       return;
     } catch (error) {
       last = error;
-      console.log(`[session] Clerk did not initialise at ${path} (attempt ${attempt}); reloading`);
+      const title = await page.title().catch(() => "(no title)");
+      console.log(`[session] Clerk did not initialise at ${path} (attempt ${attempt}, title=${JSON.stringify(title)}, url=${page.url()}); reloading`);
       await page.waitForTimeout(2_000).catch(() => undefined);
     }
   }
@@ -104,15 +107,45 @@ async function loadWithClerk(page: Page, path: string): Promise<void> {
     .first()
     .innerText({ timeout: 5_000 })
     .catch(() => "(nothing)");
+  // The title and the first words of the body tell a challenge page
+  // ("Vercel Security Checkpoint") apart from a portal that did not render.
+  const title = await page.title().catch(() => "(no title)");
+  const body = await page
+    .locator("body")
+    .innerText({ timeout: 5_000 })
+    .then((t) => t.replace(/\s+/g, " ").slice(0, 160))
+    .catch(() => "(unreadable)");
   throw new Error(
     `Clerk did not initialise at ${path} in ${ATTEMPTS} attempts. ` +
-      `The page rendered: ${JSON.stringify(rendered)}. Last error: ${String(last)}`
+      `The page rendered: h1=${JSON.stringify(rendered)} title=${JSON.stringify(title)} body=${JSON.stringify(body)}. ` +
+      `Last error: ${String(last)}`
   );
+}
+
+/**
+ * Fetch Clerk's Testing Token, bounded and retried.
+ *
+ * This is a request to Clerk's API from the runner, and it was the one step
+ * in the sequence with no bound of its own: one run sat in it for the whole
+ * hook budget and reported nothing, because nothing here had a chance to.
+ */
+async function testingToken(page: Page): Promise<void> {
+  let last: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await withDeadline("setupClerkTestingToken", 30_000, setupClerkTestingToken({ page }));
+      return;
+    } catch (error) {
+      last = error;
+      console.log(`[session] the Testing Token request did not complete (attempt ${attempt}); retrying`);
+    }
+  }
+  throw new Error(`Clerk's Testing Token could not be obtained in 3 attempts. Last error: ${String(last)}`);
 }
 
 export async function signInCertificationUser(page: Page): Promise<string> {
   await warm();
-  await setupClerkTestingToken({ page });
+  await testingToken(page);
 
   await loadWithClerk(page, "/sign-in");
 
