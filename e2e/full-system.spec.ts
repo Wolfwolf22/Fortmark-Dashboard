@@ -526,15 +526,21 @@ test("§36 the palette opens by keyboard, uses POST, navigates, and restores foc
   await page.keyboard.press("Escape");
   const palette = () => page.getByRole("dialog", { name: "Search FortMark" });
   await expect(page.getByRole("dialog", { name: A_NAME })).toBeHidden({ timeout: 15_000 });
+  // The dialog paints before its effects run: focus moves into the input and
+  // the Escape listener attaches a tick later. Focus in the input is the
+  // readiness signal; an Escape that still leaves it open after that is real.
+  const ready = () => expect(page.getByPlaceholder(/Search people/)).toBeFocused({ timeout: 10_000 });
   await page.keyboard.press("Control+k");
   await expect(palette()).toBeVisible({ timeout: 15_000 });
+  await ready();
   await page.keyboard.press("Escape");
-  await expect(palette()).toBeHidden();
+  await expect(palette()).toBeHidden({ timeout: 10_000 });
   // Opened from its button, so focus has somewhere defined to return to.
   await trigger.click();
   await expect(palette()).toBeVisible({ timeout: 15_000 });
+  await ready();
   await page.keyboard.press("Escape");
-  await expect(palette()).toBeHidden();
+  await expect(palette()).toBeHidden({ timeout: 10_000 });
   const focused = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.tagName ?? "none");
   console.log(`[sys] palette: POST ok, navigated, Ctrl+K opens, focus after Escape = ${focused}`);
   expect(focused).toBe("Search (Command K)");
