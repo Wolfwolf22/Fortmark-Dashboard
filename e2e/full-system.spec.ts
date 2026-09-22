@@ -882,7 +882,9 @@ test("§43/§44 conversation context resolves, and missing data is not invented"
   // stored ("2026-11-01"); the assertion is about the fact, not the format.
   const closing = new Date(isoDay(40));
   const month = closing.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
-  expect(closes).toMatch(new RegExp(`${month}|${closing.toISOString().slice(0, 10)}`));
+  const short = closing.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  const numeric = `${closing.getUTCMonth() + 1}/${closing.getUTCDate()}/${closing.getUTCFullYear()}`;
+  expect(closes).toMatch(new RegExp(`${month}|${short}\\.? ${closing.getUTCDate()}|${closing.toISOString().slice(0, 10)}|${numeric.replace(/\//g, "\\/")}`));
   await ask("What is the DSCR on this deal?");
   const dscr = await lastReply();
   console.log(`[ai] missing: ${json(dscr.slice(0, 300))}`);
