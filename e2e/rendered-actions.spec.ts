@@ -38,9 +38,16 @@ async function ask(text: string) {
   await page.getByLabel("Send message").click();
 }
 
-/** Wait for a card whose proposed value is `to`. */
+/**
+ * Wait for a card whose proposed value is `to`.
+ *
+ * `.last()` because a settled card now stays on screen showing its outcome
+ * (which is the point — see the page's settleAction). Without it, a declined
+ * card from an earlier step can shadow the new proposal and the test waits
+ * forever for buttons that card no longer has.
+ */
 async function cardFor(to: string) {
-  const card = page.locator(CARD).filter({ hasText: to });
+  const card = page.locator(CARD).filter({ hasText: to }).last();
   await expect(card).toBeVisible({ timeout: 90_000 });
   return card;
 }
