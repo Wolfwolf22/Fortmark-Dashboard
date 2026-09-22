@@ -919,7 +919,9 @@ test("§46/§47 MLS is honest about being unconfigured, and no protocol leaks", 
   const said = reply.replace(/[\u2018\u2019]/g, "'");
   expect(said).toMatch(/not (connected|configured|set up|available)|isn't (connected|configured|available)|unavailable|no MLS|can't (search|access|query|reach)|cannot (search|access|query|reach)|(don't|do not) (provide|have|include)/i);
   expect(reply).not.toMatch(/\$\s?\d/);
-  expect(reply).not.toMatch(/MLS\s?#|MLS number|\bA\d{6,}\b/i);
+  // An invented listing carries a number; asking the person for one does
+  // not ("if you have a specific MLS number, I can look for it").
+  expect(reply).not.toMatch(/MLS\s?#\s?[A-Z]?\d{5,}|MLS number\s+(is\s+)?[A-Z]?\d{5,}|\bA\d{6,}\b/i);
   expect(reply).not.toMatch(/\b0 (active )?listings\b/i);
 
   const all = (await page.locator("body").innerText()).replace(/\s+/g, " ");
