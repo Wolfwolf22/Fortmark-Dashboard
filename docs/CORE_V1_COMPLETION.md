@@ -1,0 +1,194 @@
+# FortMark Dashboard — Core V1 Completion
+
+**Phase:** Core product completion — dashboard first, AI second.
+**Date:** 2026-09-22 · **Branch:** `claude/dashboard-status-yir55p` · **Preview:** `2d80e68` → `6244813`
+**Production impact:** none. Production still serves `b4c04d0` (Stage 1); nothing
+in this phase touched Production configuration, data or deployments.
+
+---
+
+## 1. Baseline audit (repository + runtime truth)
+
+| Domain | State | Backing source | Notes |
+|---|---|---|---|
+| Authentication | REAL | Clerk + fail-closed allowlist | Unchanged. |
+| Professional profile | REAL | `professional_profiles`, `profile_images` | Onboarding, editor, photo, business card. |
+| Professional licensing | REAL (self-reported) | `license_state/type/number/expiration`, `nrds_number` columns — already first-class | Labelled "Self-reported. FortMark does not verify licence details." No authoritative verification exists (DBPR not integrated), and none is claimed. |
+| Team / agents | REAL (this phase) | `dashboard_users` + profiles via `/api/team` | Was a generated roster. Role changes and invitations: NOT IMPLEMENTED (and no longer pretended). |
+| Brokerage identity | NOT CONFIGURED | — | Settings › Brokerage refuses the generated brokerage. See §6. |
+| Listings / MLS search | NOT CONFIGURED (code complete) | Bridge RESO `miamire` | The dashboard project has no Bridge credential in any environment. |
+| Listing detail / media | NOT CONFIGURED (code complete) | Bridge `Property` + embedded `Media` | Media defect fixed this phase (§4). |
+| Comparables | NOT CONFIGURED (code complete) | Bridge closed sales | Upstream verified working (254 closed SFR, Sunrise, 6 mo). |
+| Contacts | REAL | `contacts` + activities | Production live since Stage 1. |
+| Opportunities | PARTIAL | `contact_opportunities` (stored with a contact) | No dedicated view; O1 frozen by product priority. |
+| Transactions | REAL | `transactions` + parties/deadlines/events | Production live. |
+| Home metrics | REAL | metrics service over contacts/transactions | `real-only`; zeros are real zeros. |
+| Search (⌘K) | REAL for contacts/transactions | search service | Listing provider built; activates with the MLS credential. |
+| Reports, Calendar, Documents, Messages, Notifications, Market activity, Integrations | NOT IMPLEMENTED | — | Honest `not_configured` states, verified by the zero-data sweep (no invented money, names, files, appointments). |
+| Settings | PARTIAL | Profile real, Team real; Brokerage/Notifications/Integrations not configured | |
+| AI | REAL on Preview; DISABLED in Production | OpenAI `gpt-5.5`, 9 read tools | Frozen. No change in this phase. |
+
+No domain is in MOCK in normal mode. Fixture data exists only behind the explicit
+`SAMPLE_DASHBOARD_ENABLED` / `SAMPLE_LISTINGS_ENABLED` flags, labelled on screen.
+
+### Implementation order used
+1. Migration runner (infrastructure prerequisite for any schema work).
+2. P0 — licence rules + real Team (no schema change needed).
+3. P1–P3 — listings: credential investigation, architecture, FortMark book, media, IDX, Home.
+4. P4 — brokerage identity: audited, minimum defined (§6).
+5. AI prominence: audited, no change needed (§7).
+
+---
+
+## 2. Professional identity
+
+**Licence number** was already a first-class, typed, nullable column, editable in
+Profile and onboarding, shown on the business card and Home identity card. Added:
+
+- A format rule (`lib/profile/normalize.ts`): 2–30 characters, letters and digits,
+  with space `.` `/` `-` allowed inside; blank clears; upper-cased and
+  space-collapsed. Surfaced per field through the existing 400 path. Existing
+  Production data passes (one value, 7 characters, in the allowed set — checked by
+  count/length only).
+- Still self-reported. No active/expired/disciplinary status is fabricated.
+
+**Team** (`/api/team`, `lib/team/roster.ts`, `lib/team/service.ts`):
+
+- Real `dashboard_users` joined to profile and image; actor resolved from the
+  session, never from the request.
+- Privileged roles (admin, broker, TC) see every account with status; everyone else
+  sees active colleagues only, with no status.
+- Fields: name (or "Name not added yet"), role, title, licence (state/type/number,
+  labelled self-reported), published contact email (the same choice the business
+  card makes), photo. Never: Clerk id, phone, NRDS, MLS agent id, biography, settings.
+- Read-only. The fixture roster, with its client-only role and invite controls, survives
+  only in labelled sample mode.
+- Verified on Preview (e2e): Settings › Team renders the real roster.
+
+---
+
+## 3. Listings — architecture and credential
+
+**Architecture: A — Dashboard → Bridge directly**, server-side, through `lib/mls`.
+
+- The FortMark MCP endpoint is OAuth-only by documented policy (`docs/DEPLOYMENT.md`,
+  "MCP boundary"); a dashboard session is not an MCP token, so B would need a new
+  service-auth surface on the MCP.
+- The dashboard client already exists, is tested (202 MLS checks), and adds no hop.
+- **One authority for FortMark's own book:** `getFortmarkListingSummary()` in
+  `lib/mls/service.ts` (office id, displayable, active) is the single definition. The
+  dashboard Home uses it; the website's Featured Listings should consume it through a
+  dashboard API rather than re-implementing the filter. Exposing it publicly is a
+  separate decision.
+- **Drift control:** the dashboard's field list is verified against the dataset through
+  the MCP's `get_fields`, and the office id lives in one pure module
+  (`lib/mls/brokerage.ts`). Long term, the two Bridge clients (MCP server and dashboard)
+  should share one package.
+
+**Credential status (no values printed)**
+
+| Holder | Credential present | Accepted upstream | Evidence |
+|---|---|---|---|
+| FortMark MCP server (Bridge, `miamire`) | true | **true** | Live queries 2026-09-22: 2,280 active residential in Fort Lauderdale; Property, Media, Fields and closed-sales queries all answered. The earlier upstream rejection is resolved. |
+| Dashboard project (Vercel `fortmark-dashboard`), Preview | **false** (`BRIDGE_API_TOKEN`, `BRIDGE_DATASET`, `MLS_LISTINGS_ENABLED` absent) | n/a | Preview build log: `BRIDGE_API_TOKEN present=false BRIDGE_DATASET present=false`. |
+| Dashboard project, Production | **false** | n/a | Env listing (presence only). |
+
+**Human action needed (the only blocker):** in Vercel › `fortmark-dashboard` ›
+Environment Variables, **Preview scope first**:
+
+- `BRIDGE_API_TOKEN`: a Bridge server token for dataset `miamire` from FortMark's Bridge account, type Sensitive. A dashboard-specific application token is preferable to reusing the MCP server's.
+- `BRIDGE_DATASET` = `miamire`
+- `MLS_LISTINGS_ENABLED` = `1`
+
+Then redeploy Preview for live certification. Production follows only through a
+separate promotion audit.
+
+---
+
+## 4. Listings — what was built and verified this phase
+
+| Capability | Result |
+|---|---|
+| FortMark's own listings | `ListOfficeMlsId = FTMK01` ("FortMark, LLC", `ListOfficeKey 445b411d…`) — an id, not a name match. The id filter returns exactly the same six active listings as the name (Pembroke Pines, Coral Springs, Hollywood, Sunrise, and two in Miami, one of them a commercial sale). Listing or co-listing office. Every property type within FortMark's book. |
+| Listings page | `MLS search` / `FortMark listings` scope, addressable as `?office=fortmark`. The sample set is never "FortMark's". |
+| Photos | **Defect fixed:** in `miamire` the Media resource returns `MediaURL: null`; the URLs live on `Property.Media` (CloudFront `dvvjkgh94f2v6.cloudfront.net`, category Photo, ordered). List, detail and featured now select the embedded collection; results pages carry one thumbnail per row. No stand-in image for a real listing; broken images show an explicit "No photo available" state. The CDN host is allowlisted exactly in `next.config` (optimization unchanged). |
+| IDX display rules | Every Property query requires `InternetEntireListingDisplayYN eq true` (count unchanged today: the feed already omits the rest) and the normaliser drops any such record. `InternetAddressDisplayYN = false` (5 of 2,280 active listings in Fort Lauderdale) withholds the address, folio and coordinates. The listing office is attributed on detail ("Listing courtesy of …") and on Home. |
+| Detail fields | MLS #, status, price, address, city, type, beds, baths, sqft, lot, list date, DOM, remarks, office, agent name, media. Missing values stay "—". Agent direct phone/email are deliberately not selected. |
+| Home | "FortMark listings": active count plus FortMark's highest-priced active listing, from a single request. When there are none: "No active FortMark listings" — never another office's listing. When not configured: the compact MLS status. |
+| Search (⌘K) | Existing listing provider; activates with the credential. MLS numbers go to an exact `ListingId` lookup. |
+| Comparables | Dashboard path built; upstream verified. Independent of core listings. |
+| Performance | Server-side filter, sort, `$top`/`$skip`, `$count`; 12 per page by default, 48 max; one request per page; media carried inline (about 24 rows per listing on detail, trimmed to one on lists). Live latency is unmeasured until the credential exists. |
+| Access | Every allowlisted, signed-in user can search the MLS (brokerage-wide data). FortMark-owned records keep their own authorisation. |
+
+**Live certification: BLOCKED** on the dashboard credential. Everything else is
+covered offline against a Bridge-faithful stub (202/202), with shapes taken from live
+responses.
+
+---
+
+## 5. Migration infrastructure
+
+- **Defect:** `drizzle-orm/neon-http/migrator` sent each statement as its own HTTP
+  request (the HTTP driver has no session) and inserted bookkeeping afterwards, so
+  it was not atomic.
+- **Canonical method now:** `scripts/migrate-core.mjs` `runMigrations()` — one Neon
+  WebSocket session (`@neondatabase/serverless` `Client`), drizzle's
+  `neon-serverless` migrator (all pending migrations plus their bookkeeping in one
+  `BEGIN … COMMIT`), a session advisory lock, and an up-front refusal of DDL that
+  Postgres cannot run in a transaction. The same function serves the Preview build
+  guard and `npm run db:migrate`.
+- **Verification:**
+  - `npm run test:migrate` — 19/19 against a real local Postgres through the unmodified Neon driver: fresh apply with drizzle-identical hashes, idempotent re-run, a failed migration and a failed batch leave nothing behind, concurrent runners apply each migration once, non-transactional DDL is refused.
+  - Live: Preview build `dpl_9BSj9AwQqncKG6NUm5xLmStcDnrS` logged `migrations applied atomically (bookkeeping rows 9 -> 9, 0 new)` on the real Neon Preview branch.
+- Migration 0009 was not created: no schema change was needed this phase.
+
+---
+
+## 6. Brokerage identity (audit only)
+
+- **Real today:** brokerage name "FortMark, LLC" and MLS office id `FTMK01` (from the MLS); the brokerage key `fortmark`.
+- **Also available from the MLS office record once the credential exists:** `ListOfficePhone`, `ListOfficeURL`.
+- **Minimum for a truthful Settings › Brokerage:**
+  - name and MLS office id (known now);
+  - office phone and website (MLS);
+  - brokerage licence number and office address (owner-entered; needs a small brokerage table — a schema change, now safe with the new runner).
+- Logo: the FortMark brand assets.
+- No generated brokerage is shown meanwhile.
+
+## 7. AI prominence (audit only)
+
+AI is one navigation item (8th of 9), with no Home widget and no top-bar entry. Home
+leads with identity and business state. No change was needed. AI remains frozen:
+there were no tool, provider, model or prompt changes.
+
+---
+
+## 8. Core V1 definition and scorecard
+
+**Core V1 =** Auth · Professional profile + licence · Real team · Home daily brief ·
+Live MLS listings · FortMark's own listings · Contacts · Transactions · Unified search ·
+Truthful settings · Read-only AI as a secondary layer.
+
+| Capability | State | Backing source | Production? | Remaining |
+|---|---|---|---|---|
+| Auth | COMPLETE | Clerk + allowlist | Yes | — |
+| Profile + licence | COMPLETE | profile tables | Yes (licence rule pending promotion) | Promote this phase |
+| Real team | COMPLETE | users + profiles | No (Preview) | Promote; invites/roles later |
+| Home daily brief | COMPLETE | metrics service | Yes | FortMark listings card goes live with the MLS |
+| Contacts | COMPLETE | `contacts` | Yes | — |
+| Transactions | COMPLETE | `transactions` | Yes | — |
+| Unified search | PARTIAL | search service | Yes (contacts, transactions) | Listings provider needs the credential |
+| Live MLS listings | BLOCKED | Bridge `miamire` | No | Dashboard credential; live certification |
+| FortMark listings | BLOCKED | Bridge, `FTMK01` | No | Same |
+| Listing detail / media | BLOCKED | Bridge `Property.Media` | No | Same |
+| Comparables | BLOCKED (deferrable) | Bridge closed sales | No | Same; not required for core listings |
+| Truthful settings | PARTIAL | profile + team | Partly | Brokerage section (§6) |
+| Read-only AI | PARTIAL | OpenAI `gpt-5.5` | Disabled | Production key (Stage 2, frozen) |
+| Migration runner | COMPLETE | `migrate-core.mjs` | Used by Preview builds | Use for the next Production migration |
+
+**Biggest blocker:** the dashboard project has no Bridge credential
+(`BRIDGE_API_TOKEN`, `BRIDGE_DATASET=miamire`, `MLS_LISTINGS_ENABLED=1`).
+
+**Recommended next implementation:** live MLS listings certification on Preview —
+search, FortMark listings, detail, media, Home and ⌘K — once the credential is added
+to Preview scope.
