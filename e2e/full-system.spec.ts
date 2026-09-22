@@ -178,9 +178,10 @@ test("§29 Home is an honest zero state before any fixture exists", async () => 
   expect(text).toContain("Active transactions");
   expect(text).not.toMatch(/\$[1-9]/);
   expect(text).toMatch(/Nothing is on the books yet|Add a contact/);
-  // The MLS state lives in its own Home module, not in the brief.
+  // The MLS state lives in its own Home module, not in the brief, and that
+  // module renders after its own source fetch — so wait for it.
+  await expect(page.getByRole("main")).toContainText("Not connected", { timeout: 30_000 });
   const main = (await page.locator("main").innerText()).replace(/\s+/g, " ");
-  expect(main).toContain("Not connected");
   expect(main).not.toMatch(/sample data|generated for development/i);
   expect(main).not.toMatch(/\b0 listings\b/i);
 });
@@ -462,14 +463,17 @@ test("§27/§28 money is integer-exact and Home shows it", async () => {
   expect(text).toMatch(/1 on hold, not counted/);
   expect(text).toMatch(/1 without a contract price/);
   expect(text).toMatch(/2 without terms entered/);
-  const main = (await page.locator("main").innerText()).replace(/\s+/g, " ");
-  expect(main).toContain("Not connected");
+  // Each Home module resolves on its own fetch: wait for the positives, then
+  // judge the negatives on the settled page.
+  const main = page.getByRole("main");
+  await expect(main).toContainText("Not connected", { timeout: 30_000 });
   // Needs attention names the overdue deadline (by its deal or its label) and
   // the due follow-up, and stays silent about the lost contact.
-  expect(main).toMatch(/SYSVERIFY Overdue title|850 Alpha Ave/);
-  expect(main).toContain(A_NAME);
-  expect(main).not.toContain(C_NAME);
-  expect(main).not.toContain("Foreign Blvd");
+  await expect(main).toContainText(/SYSVERIFY Overdue title|850 Alpha Ave/, { timeout: 30_000 });
+  await expect(main).toContainText(A_NAME, { timeout: 30_000 });
+  const settled = (await main.innerText()).replace(/\s+/g, " ");
+  expect(settled).not.toContain(C_NAME);
+  expect(settled).not.toContain("Foreign Blvd");
 });
 
 // ---------------------------------------------------------------- search
