@@ -219,17 +219,49 @@ export async function freshToken(page: Page): Promise<string> {
   return jwt;
 }
 
-/** An authenticated request to the dashboard deployment. */
+/**
+ * How many requests the platform's own bot mitigation refused (ISS-09).
+ *
+ * Vercel answers some requests from this runner with a 403 and an
+ * `x-vercel-mitigated: challenge` header — the "Security Checkpoint" page —
+ * instead of passing them to the application. That is not the product
+ * refusing anything, and reading it as one has already produced two false
+ * findings. It is counted rather than hidden: a run that needed twenty
+ * retries to finish is a run whose environment should be reported.
+ */
+export const platformChallenges = { count: 0, paths: [] as string[] };
+
+/** True when the response is the platform's challenge page, not the app's. */
+function isPlatformChallenge(res: Response): boolean {
+  return res.status === 403 && res.headers.get("x-vercel-mitigated") === "challenge";
+}
+
+/**
+ * An authenticated request to the dashboard deployment.
+ *
+ * A platform challenge is retried with a short backoff rather than returned:
+ * the caller asked the application a question and deserves the application's
+ * answer. Three attempts, so a persistent challenge still surfaces as a 403
+ * the test can see, and every occurrence is counted.
+ */
 export function apiFor(jwt: string) {
   return async function api(path: string, init: RequestInit = {}) {
-    const res = await fetch(`${DASHBOARD}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        Accept: "application/json",
-        ...(init.headers ?? {}),
-      },
-    });
+    let res!: Response;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      res = await fetch(`${DASHBOARD}${path}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+          Accept: "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
+      if (!isPlatformChallenge(res)) break;
+      platformChallenges.count += 1;
+      platformChallenges.paths.push(path);
+      console.log(`[platform] challenge on ${path} (attempt ${attempt + 1}); retrying`);
+      await new Promise((resolve) => setTimeout(resolve, 1_500 * (attempt + 1)));
+    }
     const text = await res.text();
     let body: unknown;
     try { body = JSON.parse(text); } catch { body = { raw: text.slice(0, 200) }; }
