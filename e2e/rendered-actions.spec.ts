@@ -30,12 +30,25 @@ async function refresh() {
 /** The composer's textarea. `getByLabel` also matches the autosize mirror. */
 const composer = () => page.locator('textarea[aria-label="Message"]');
 
-/** Ask the assistant something, through the composer a person would use. */
+/**
+ * Ask the assistant something, through the composer a person would use.
+ *
+ * Waits for the previous turn to finish first, and for this one to finish
+ * after. While a turn streams, the composer swaps Send for Stop, so clicking
+ * Send during a stream blocks until Playwright's timeout — which is what made
+ * a step that normally takes fifteen seconds sit for five minutes. Real model
+ * latency varies a lot; the test should wait for the application's own signal
+ * rather than race it.
+ */
 async function ask(text: string) {
+  const send = page.getByLabel("Send message");
+  await expect(send).toBeVisible({ timeout: 180_000 });
   const box = composer();
   await box.click();
   await box.fill(text);
-  await page.getByLabel("Send message").click();
+  await send.click();
+  // The turn is over when the composer offers Send again.
+  await expect(send).toBeVisible({ timeout: 180_000 });
 }
 
 /**
@@ -115,7 +128,6 @@ test("§12 the F2-B card renders from server state", async () => {
 
 test("§13 typing yes in the real UI changes nothing", async () => {
   await ask("yes");
-  await page.waitForTimeout(8000);
 
   const after = await api(`/dashboard/api/contacts/${state.bId}`);
   expect(contactOf(after.body).nextFollowUpDate).toBeUndefined();
@@ -189,7 +201,6 @@ test("§16-§18 the F2-C card renders, yes is inert, and Confirm executes", asyn
 
   // §17 — typed yes.
   await ask("yes");
-  await page.waitForTimeout(8000);
   await refresh();
   let after = await api(`/dashboard/api/contacts/${state.cId}`);
   expect(contactOf(after.body).stage).toBe("qualified");
@@ -210,7 +221,6 @@ test("§20 archiving is refused in the real UI", async () => {
   test.setTimeout(300_000);
   await page.reload();
   await ask(`Archive ${C_NAME}.`);
-  await page.waitForTimeout(12000);
 
   const cards = await page.locator(CARD).count();
   console.log(`[ui] cards rendered after an archive request: ${cards}`);
