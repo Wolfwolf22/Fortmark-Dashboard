@@ -26,9 +26,64 @@ const CARD = '[aria-label="Suggested change awaiting your confirmation"]';
 // record of what happened, with its own accessible name.
 const CONFIRMED = '[aria-label="Change confirmed"]';
 const confirmedCard = () => page.locator(CONFIRMED).last();
+/** Proposals still offering a decision. A settled card keeps no buttons. */
+const liveProposals = () =>
+  page.locator(CARD).filter({ has: page.getByRole("button", { name: "Confirm" }) });
 
 async function refresh() {
   api = apiFor(await freshToken(page));
+}
+
+/**
+ * How many activities a contact has.
+ *
+ * The route returns `{ items: [...] }`; asserting against the real field
+ * rather than a guessed one, so a shape change fails loudly instead of
+ * comparing undefined to undefined.
+ */
+async function activityCount(contactId: string): Promise<number> {
+  const res = await api(`/dashboard/api/contacts/${contactId}/activities`);
+  expect(res.status).toBe(200);
+  const items = (res.body as { items?: unknown[] }).items;
+  expect(Array.isArray(items), "the activities route returns an items array").toBe(true);
+  return items!.length;
+}
+
+/**
+ * Everything the executed state has to be, in one place.
+ *
+ * This card is the only thing telling the person their change went through,
+ * so "it did not disappear" is not the bar. It has to still name what
+ * happened and to whom, no longer offer a decision that has already been
+ * made, exist exactly once, and announce itself exactly once.
+ */
+async function assertExecutedRecord(heading: string, mustContain: (string | RegExp)[]) {
+  const executed = confirmedCard();
+  await expect(executed).toContainText(heading, { timeout: 60_000 });
+  const text = (await executed.innerText()).replace(/\s+/g, " ");
+  for (const needle of mustContain) {
+    if (needle instanceof RegExp) expect(text).toMatch(needle);
+    else expect(text).toContain(needle);
+  }
+  // Not a bare acknowledgement: the record carries the result, and the
+  // proposal scaffolding that described an undecided change is gone.
+  expect(text).not.toContain("Confirmed and saved");
+  expect(text).not.toContain("Nothing changes until you confirm it");
+  // Exactly one executed record, not two.
+  await expect(page.locator(CONFIRMED)).toHaveCount(1);
+  // No proposal card falsely remains active.
+  await expect(liveProposals()).toHaveCount(0);
+  // The buttons are gone, not merely disabled — there is nothing left to press.
+  expect(await executed.getByRole("button").count()).toBe(0);
+  // One accessible status with a name a screen reader can read out.
+  expect(await executed.getAttribute("role")).toBe("status");
+  expect(await executed.getAttribute("aria-label")).toBe("Change confirmed");
+  // ...and only one, so the outcome is not announced twice.
+  const nested = await executed.evaluate(
+    (el) => el.querySelectorAll('[role="status"],[role="alert"],[aria-live]').length
+  );
+  expect(nested, "the executed record is one live region, not two").toBe(0);
+  return text;
 }
 
 /** The composer's textarea. `getByLabel` also matches the autosize mirror. */
@@ -145,24 +200,28 @@ test("§13 typing yes in the real UI changes nothing", async () => {
 });
 
 test("§14 clicking the real Confirm button executes", async () => {
+  const beforeCount = await activityCount(state.bId!);
   const card = await cardFor("2026");
   await card.getByRole("button", { name: "Confirm" }).click();
 
-  // §2/§3 — the executed state stays visible and says what happened.
-  const executed = confirmedCard();
-  await expect(executed).toContainText("Follow-up scheduled", { timeout: 60_000 });
-  const done = (await executed.innerText()).replace(/\s+/g, " ");
-  console.log(`[ui] executed card: ${JSON.stringify(done)}`);
-  expect(done).toContain(B_NAME);
-  expect(done).toMatch(/[A-Z][a-z]+day, [A-Z][a-z]+ \d{1,2}, \d{4}/);
-  // The proposal scaffolding is gone; the decision has been made.
-  expect(done).not.toContain("Nothing changes until you confirm it");
+  // §2 — the executed state stays visible and says what happened: the action
+  // that was taken, who it was taken on, and the value it ended at.
+  const done = await assertExecutedRecord("Follow-up scheduled", [
+    B_NAME,
+    /[A-Z][a-z]+day, [A-Z][a-z]+ \d{1,2}, \d{4}/,
+  ]);
+  console.log(`[ui] executed F2-B card: ${JSON.stringify(done)}`);
 
   await refresh();
   const after = await api(`/dashboard/api/contacts/${state.bId}`);
   const followUp = contactOf(after.body).nextFollowUpDate;
   console.log(`[ui] after clicking Confirm: nextFollowUpDate=${followUp}`);
   expect(followUp).toBeTruthy();
+
+  // §2 — one confirm, one execution. Not one card and two writes.
+  const afterCount = await activityCount(state.bId!);
+  console.log(`[ui] F2-B activities ${beforeCount} -> ${afterCount} (expect +1)`);
+  expect(afterCount).toBe(beforeCount + 1);
 });
 
 test("§15 clicking the real Decline button changes nothing", async () => {
@@ -220,18 +279,24 @@ test("§16-§18 the F2-C card renders, yes is inert, and Confirm executes", asyn
 
   // §18 — the real click.
   const live = await cardFor("Active client");
+  const beforeCount = await activityCount(state.cId!);
   await live.getByRole("button", { name: "Confirm" }).click();
-  const executedC = confirmedCard();
-  await expect(executedC).toContainText("Stage changed", { timeout: 60_000 });
-  const doneC = (await executedC.innerText()).replace(/\s+/g, " ");
+  // §3 — the executed record names the action, the contact, and the stage it
+  // ended at, with the stage it came from so the move is legible.
+  const doneC = await assertExecutedRecord("Stage changed", [
+    C_NAME,
+    "Qualified → Active client",
+  ]);
   console.log(`[ui] executed F2-C card: ${JSON.stringify(doneC)}`);
-  expect(doneC).toContain(C_NAME);
-  expect(doneC).toContain("Qualified → Active client");
 
   await refresh();
   after = await api(`/dashboard/api/contacts/${state.cId}`);
   expect(contactOf(after.body).stage).toBe("active_client");
-  console.log(`[ui] F2-C after clicking Confirm: stage=active_client`);
+  const afterCount = await activityCount(state.cId!);
+  console.log(
+    `[ui] F2-C after clicking Confirm: stage=active_client, activities ${beforeCount} -> ${afterCount}`
+  );
+  expect(afterCount).toBe(beforeCount + 1);
 });
 
 test("§20 archiving is refused in the real UI", async () => {
@@ -275,28 +340,19 @@ test("§21 the card is reachable and operable by keyboard", async () => {
   expect(contactOf(afterEscape.body).stage).toBe("active_client");
 
   // §22 — a double click must not produce two of anything.
-  // The route returns { items: [...] }; asserting against the real field
-  // rather than a guessed one, so a shape change fails loudly instead of
-  // comparing undefined to undefined.
-  const activityCount = async (): Promise<number> => {
-    const res = await api(`/dashboard/api/contacts/${state.cId}/activities`);
-    expect(res.status).toBe(200);
-    const items = (res.body as { items?: unknown[] }).items;
-    expect(Array.isArray(items), "the activities route returns an items array").toBe(true);
-    return items!.length;
-  };
-  const beforeCount = await activityCount();
+  const beforeCount = await activityCount(state.cId!);
 
   await confirm.click({ clickCount: 2, delay: 40 });
-  await expect(confirmedCard()).toContainText("Stage changed", { timeout: 60_000 });
-  // §22 — one executed state, not two.
-  expect(await page.locator(CONFIRMED).count()).toBe(1);
+  // §4 — it settles into exactly one executed record. A card that vanished
+  // would satisfy "not two" and is explicitly not what is being asserted:
+  // assertExecutedRecord requires the record to be there and to be singular.
+  await assertExecutedRecord("Stage changed", [C_NAME, "Active client → Under contract"]);
 
   await refresh();
   const stage = await api(`/dashboard/api/contacts/${state.cId}`);
   expect(contactOf(stage.body).stage).toBe("under_contract");
 
-  const afterCount = await activityCount();
+  const afterCount = await activityCount(state.cId!);
   console.log(`[ui] double-click: activities ${beforeCount} -> ${afterCount} (expect +1)`);
   expect(afterCount).toBe(beforeCount + 1);
 });
@@ -331,3 +387,85 @@ for (const [label, width] of [["mobile-390", 390], ["mobile-430", 430], ["deskto
     await expect(card).toContainText("Declined", { timeout: 30_000 });
   });
 }
+
+/**
+ * §26 — the record that replaced the proposal has to survive a narrow screen.
+ *
+ * Measured on one real executed record at three widths rather than by
+ * executing three times: the same DOM is re-laid-out, so a difference is the
+ * layout's and not the run's.
+ */
+test("§26 the executed record stays readable at every width", async () => {
+  test.setTimeout(420_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.reload();
+  await ask(`Schedule a follow-up with ${B_NAME} for 3 March 2027.`);
+  const card = await cardFor("2027");
+  await card.getByRole("button", { name: "Confirm" }).click();
+  const record = await assertExecutedRecord("Follow-up scheduled", [B_NAME, "2027"]);
+  console.log(`[ui] executed record under measurement: ${JSON.stringify(record)}`);
+
+  for (const [label, width] of [
+    ["mobile-390", 390],
+    ["mobile-430", 430],
+    ["desktop-1440", 1440],
+  ] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    const executed = confirmedCard();
+    await expect(executed).toBeVisible();
+
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1
+    );
+    expect(overflow, `no horizontal page scroll at ${label}`).toBe(false);
+
+    const box = await executed.boundingBox();
+    expect(box, "the executed record has a measurable box").toBeTruthy();
+    expect(box!.width).toBeLessThanOrEqual(width);
+
+    // Fitting the viewport is not enough: the authoritative result must not be
+    // clipped inside the card's own box either.
+    const clipped = await executed.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(clipped, `the executed record is not clipped at ${label}`).toBe(false);
+
+    const still = (await executed.innerText()).replace(/\s+/g, " ");
+    expect(still).toContain("Follow-up scheduled");
+    expect(still).toContain(B_NAME);
+    expect(still).toContain("2027");
+    console.log(
+      `[ui] executed record at ${label}: ${Math.round(box!.width)}px wide, no overflow, result intact`
+    );
+  }
+});
+
+/**
+ * §27 — where focus goes when the button someone pressed stops existing.
+ *
+ * Confirm is replaced by the record of what it did. If nothing catches focus
+ * it falls back to the document, which for a keyboard or screen-reader user
+ * means the confirmation they just triggered is never announced and their
+ * place on the page is lost.
+ */
+test("§27 focus survives the confirmation", async () => {
+  test.setTimeout(420_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.reload();
+  await ask(`Schedule a follow-up with ${B_NAME} for 8 April 2027.`);
+  const card = await cardFor("2027");
+  const confirm = card.getByRole("button", { name: "Confirm" });
+  await confirm.focus();
+  expect(await confirm.evaluate((el) => el === document.activeElement)).toBe(true);
+
+  await confirm.click();
+  await expect(confirmedCard()).toContainText("Follow-up scheduled", { timeout: 60_000 });
+
+  const landed = await page.evaluate(() => {
+    const el = document.activeElement;
+    return {
+      tag: el?.tagName ?? "none",
+      inRecord: Boolean(el?.closest('[aria-label="Change confirmed"]')),
+    };
+  });
+  console.log(`[ui] focus after Confirm: ${JSON.stringify(landed)}`);
+  expect(landed.inRecord, "focus follows the record that replaced the button").toBe(true);
+});
