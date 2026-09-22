@@ -28,14 +28,18 @@ export async function signInCertificationUser(page: Page): Promise<string> {
   // retry is bounded so a genuine failure still surfaces as one rather than as
   // a test timeout with no explanation.
   let loaded = false;
-  for (let attempt = 1; attempt <= 3 && !loaded; attempt += 1) {
+  const ATTEMPTS = 5;
+  for (let attempt = 1; attempt <= ATTEMPTS && !loaded; attempt += 1) {
     try {
       await page.goto("/sign-in", { waitUntil: "domcontentloaded" });
-      await clerk.loaded({ page, timeout: 30_000 } as Parameters<typeof clerk.loaded>[0]);
+      await clerk.loaded({ page, timeout: 20_000 } as Parameters<typeof clerk.loaded>[0]);
       loaded = true;
     } catch (error) {
       console.log(`[session] Clerk did not initialise on attempt ${attempt}; reloading`);
-      if (attempt === 3) throw error;
+      if (attempt === ATTEMPTS) throw error;
+      // A cold deployment is the usual reason; give it a moment rather than
+      // hammering the same instant.
+      await page.waitForTimeout(2_000);
     }
   }
 

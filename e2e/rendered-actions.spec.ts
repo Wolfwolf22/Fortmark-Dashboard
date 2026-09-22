@@ -48,6 +48,9 @@ async function cardFor(to: string) {
 const contactOf = (b: Record<string, unknown>) => b.contact as Record<string, unknown>;
 
 test.beforeAll(async ({ browser }) => {
+  // Sign-in retries can legitimately take a while against a cold deployment,
+  // and a hook inherits the per-test timeout unless it says otherwise.
+  test.setTimeout(300_000);
   page = await browser.newPage();
   await signInCertificationUser(page);
   await refresh();
