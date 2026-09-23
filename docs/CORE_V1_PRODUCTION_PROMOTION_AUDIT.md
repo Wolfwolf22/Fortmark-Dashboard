@@ -447,3 +447,34 @@ independent and gives a same-code, MLS-off deployment to roll back to in seconds
 - **AI:** secondary and unchanged.
 - **This audit:** no Production migration, no Bridge key, no MLS enablement, no deploy
   and no merge were performed.
+
+---
+
+# CORE V1 PRODUCTION EXECUTION
+
+**Authorised:** 2026-09-23 (two-stage: Core first, MLS second; AI unchanged).
+**Runtime revision:** `c4e304b`.
+
+## Pre-change reconfirmation (03:47Z) — matches the audit, no drift
+
+- Production deployment `dpl_5LHqLuT3qAYUTcKAtxLE73pncN72` (`b4c04d0`), the latest Production deployment; Production git branch at `b4c04d0`.
+- Health: `{"ok":true,"revision":"b4c04d0","sources":{"transactions":"db","contacts":"db","listings":"not_configured","homeMetrics":"real-only","assistant":{"provider":"openai","model":"gpt-5.5","status":"no_credential"},"actions":"disabled"}}`. This AI state is to be preserved unchanged.
+- DB `br-bitter-cake-av7pmzth`: migrations 9; users 1 (`admin`/`active`); profiles 1; images 1; audit events 65; contacts 0; transactions 0; prepared actions 0; `brokerage_identities` absent.
+- Certified source `c4e304b`: clean tree, runtime-identical to the audited tree.
+
+## Migration method decision
+
+- This session cannot obtain Production's direct connection string without printing
+  it: the Vercel variables are write-only, and the Neon tool returns it into the
+  transcript.
+- The operator chose to run the canonical `npm run db:migrate` on their own machine,
+  with the secret read by `read -rs` (audit §6).
+- No SQL is applied by hand.
+
+## Database safety point
+
+- Neon branch **`br-lingering-wave-avznii5k`**
+  (`pre-core-v1-promotion-20260923T0350Z-from-production-fortmark-professional-profiles`).
+- Parent `br-bitter-cake-av7pmzth` at LSN `0/1E99E98`, parent timestamp 2026-09-23T03:50:13Z.
+- No compute; state `ready`; taken at migration level 9.
+- Restore only by explicit human approval.
