@@ -553,3 +553,489 @@ independent and gives a same-code, MLS-off deployment to roll back to in seconds
 - **Status: DEPLOY A LIVE — waiting for the owner's signed-in smoke and Settings ›
   Brokerage configuration.** Deploy B is not started. No Bridge variable exists in
   Production.
+
+---
+
+# CORE V1 AGENT IDENTITY — PRODUCTION PROMOTION RE-AUDIT (2026-09-23)
+
+**Audit only. Nothing was deployed, migrated or configured.** Production reads were
+read-only SQL, the public health endpoint, and env var *names* (no values
+decrypted). This section extends the audit above and does not replace it. Deploy A
+(`c4e304b`, migration 0009) stands as recorded.
+
+**Decision: GO**, conditional on the Production Bridge token passing the
+three-request preflight (§R8) before it is added to Vercel.
+
+## R1. Certified runtime
+
+**`CERTIFIED_RUNTIME_REVISION = dadadeb`** (`dadadebe104c…`).
+- The live identity certification ran on `308e549` (`dpl_3z3BifQnv6vQChnAq47EBQ34Skd4`).
+- `dadadeb` changes only docs, e2e specs, and one runtime line: a copy literal in
+  `components/home/widgets/featured-listing.tsx`. The "office not configured" branch
+  no longer tells users to set the office in Settings, because the office is now
+  server configuration.
+- `dadadeb` is built on Preview as `dpl_9RLQnRqP4aA9dJAdkWStbp6LzNvX` (READY, served
+  by `fortmark-dashboard-preview.vercel.app`). The regressions in §R16 were re-run
+  on it.
+- `c4e304b` is an ancestor of `dadadeb`, so the Production branch can fast-forward
+  to it, exactly like Deploy A.
+- Later commits on this branch are docs only. Do not promote any tip other than
+  `dadadeb`.
+
+## R2. Production reconfirmation (no drift)
+
+| Item | Value |
+|---|---|
+| Deployment | `dpl_C1LNWdNA8CEdYTRtoXyXrrghNnH1`, READY, `c4e304b` |
+| Health | `ok`, revision `c4e304b`; contacts `db`, transactions `db`, listings `not_configured`, assistant `no_credential`, actions `disabled` |
+| Neon | `br-bitter-cake-av7pmzth`; bookkeeping rows **10**; last `created_at` 1790131131105 |
+| Users | 1 (`admin`, `active`) |
+| Profiles / images | 1 / 1 |
+| Audit events | 76 |
+| `brokerage_identities` | 0 rows |
+| Contacts / transactions / PreparedActions | 0 / 0 / 0 |
+| `mls_member_links` | absent; new brokerage columns 0/4 (0010 not applied) |
+| Env (Production names) | no `BRIDGE_*`, no `MLS_LISTINGS_ENABLED`, no `FORTMARK_MLS_OFFICE_ID`, no `SAMPLE_*` |
+
+## R3. Functional delta `c4e304b → dadadeb`
+
+45 non-doc, non-test files. Every change belongs to one of the expected groups:
+
+1. **Role display** (`lib/auth/session.ts`, `lib/profile/roles.ts`): the display now
+   comes from `dashboard_users.role`; a shared `ROLE_DISPLAY` table.
+2. **Member resolution** (`lib/mls/member.ts`, `lib/mls-identity/*`).
+3. **Office sync** (`lib/brokerage/service.ts`, `app/api/brokerage/sync`).
+4. **`mls_member_links`** plus **4 brokerage columns** (`lib/db/schema.ts`, `0010`,
+   snapshot, journal).
+5. **Onboarding MLS step** (`lib/profile/onboarding.ts`, `onboarding-wizard.tsx`).
+6. **Profile MLS status** (`app/api/profile/mls`, `mls-identity-status.tsx`,
+   `profile-section.tsx`, `profile-editor.tsx`; save hooks in the profile and
+   onboarding routes).
+7. **My Listings and co-listing** (`lib/mls/service.ts` `memberFilter`,
+   `normalize.ts` `agentRole`, `fields.ts`, `query.ts`, listings routes,
+   `listing-grid.tsx`).
+8. **Role-aware Home and Listings default** (`featured`, `source` routes, the Home
+   widget, the listings page, the adapters).
+9. **System-managed brokerage MLS fields** (`lib/brokerage/identity.ts`,
+   `brokerage-section.tsx`, the brokerage route).
+10. **Team MLS column** (`lib/team/*`, `team-section.tsx`).
+11. **Tooling:**
+    - `.gitattributes` (LF for migrations; EX-C1);
+    - `scripts/migrate.mjs` (the `mls_member_links` presence check, the office id
+      presence log);
+    - `package.json` (`test:mls-identity`).
+
+There are **no unrelated changes**: no AI, auth middleware, contacts, transactions,
+metrics or dependency changes.
+
+## R4. Migration 0010 (`0010_flaky_toad`, journal `when` 1790138386822)
+
+- **New table `mls_member_links`:**
+  - `user_id` uuid, PK, FK → `dashboard_users.id`, ON DELETE CASCADE;
+  - `status` text NOT NULL, with CHECK `mls_member_links_status_check` ∈ {linked,
+    office_mismatch, not_found, ambiguous, conflict, unavailable};
+  - `license_number`, `license_state`, `member_key`, `member_mls_id`,
+    `office_mls_id`: text, nullable;
+  - `candidate_count` int NOT NULL DEFAULT 0;
+  - `checked_at`, `created_at`, `updated_at`: timestamptz NOT NULL DEFAULT now();
+  - `linked_at`: timestamptz, nullable;
+  - index `mls_member_links_member_key_idx` (btree, **not unique**).
+- **`brokerage_identities`:** ADD COLUMN `mls_office_key`, `mls_office_name`,
+  `mls_office_phone` (text) and `mls_synced_at` (timestamptz). All four are
+  **nullable with no default**.
+- **Nothing else:** no drops, renames, type changes, enum changes or new
+  uniqueness on existing tables.
+
+## R5. Migration risk: **LOW** (proved)
+
+- **Table rewrites:** adding a nullable column with no default is a catalog-only
+  change in Postgres, with no row rewrite (and there are 0 brokerage rows anyway).
+- **Constraints that could fail:** none on existing data. The CHECK and the FK are on
+  a new, empty table. The only unique constraint is the PK `user_id` (one row per
+  user), and the member key index is non-unique.
+- **Applying it:**
+  - Drizzle applies 0010 because `1790138386822` > the last `created_at`,
+    `1790131131105`.
+  - Expected result: `bookkeeping rows 10 -> 11, 1 new` and "Core V1 MLS member link
+    table present".
+  - `npm run test:migrate` passes 23/23, including the 0010 fresh apply and a
+    refused bad status.
+- **Backward compatibility (old `c4e304b` on the 0010 schema):** compatible by
+  construction.
+  - Drizzle enumerates columns explicitly in every select and insert.
+  - `c4e304b` never references `mls_member_links`, and the four new columns are
+    nullable.
+  - An old-code insert into `brokerage_identities` (Settings save) leaves them NULL.
+- **Forward incompatibility:** the new runtime *requires* 0010. It reads
+  `mls_member_links` and selects the new brokerage columns. Production builds skip
+  migrations ("build guard allows preview only").
+  - **Hard ordering:** apply 0010 first, then deploy `dadadeb`.
+- **Rollback:** leave 0010 in place. The old app ignores it; never drop the table or
+  the columns during an incident.
+
+## R6. Production data preflight (read-only)
+
+- `brokerage_identities`: 0 rows. After 0010 the MLS columns do not exist on any row;
+  the first sync creates the row.
+- The profile has a licence, state `FL`, stored without an `SL`/`BK` prefix. Resolution
+  tries both spellings. The value is not recorded here.
+- Legacy MLS fields: `mls_agent_id` empty, `mls_organization` empty,
+  `mls_verification_status = unverified`, `mls_verified_at` null.
+- With a single admin there is no possible unique-key conflict: the link PK is
+  per user, and the member conflict rule needs a second linked account.
+
+## R7. Legacy MLS profile fields: policy **A**
+
+**Policy: leave the columns and data in place, unused.** There is nothing to clear in
+Production.
+- The runtime never reads them for identity, listings, Home or Team.
+- No UI renders an input for them: the Profile rows and the onboarding step were
+  removed in `308e549`.
+- `scripts/migrate.mjs` still asserts that these Release B columns are present, so
+  dropping them would be a separate, deliberate migration later (policy C).
+- **Finding F2 (P3):**
+  - `PATCH /api/profile` still *accepts* `mlsAgentId` and `mlsOrganization` in its
+    zod schema. This is an API-only path with no UI; the values are stored as
+    self-reported and never read.
+  - Follow-up: remove them from the input schema. Not a promotion blocker.
+
+## R8. Role, office configuration and Bridge token
+
+**Role display:**
+- `getSession()` labels the role with `displayRole(await applicationRole(userId),
+  clerkHint)`. `applicationRole` is `resolveActor(...)`: the same
+  `dashboard_users` row every API authorisation uses.
+- Clerk is used only when no dashboard row exists.
+- `session.role` is display-only (the user menu and the Profile badge). No route
+  authorises from it, so the change cannot widen permissions.
+- Expected after promotion: Profile, Team and user menu all show **Admin**.
+- Production Clerk is **not** touched.
+
+**Clerk boundary:**
+- Clerk plus the allowlist decide who signs in.
+- `dashboard_users.role` decides authorisation, display, the Home scope and the
+  Listings default.
+- Home and Listings read it through `callerListingContext → resolveActor`, and the
+  session through `applicationRole → resolveActor`. That is one source.
+
+**`FORTMARK_MLS_OFFICE_ID`:**
+- It is read only in `lib/brokerage/service.ts` (`fortmarkOfficeConfig`), plus a
+  presence-only log in `migrate.mjs`.
+- Server-only: the module imports `server-only`, and the name is not
+  `NEXT_PUBLIC_`.
+- It is validated against `MLS_OFFICE_ID`. No request parameter can change it.
+- If it is absent, the dashboard does not crash:
+  - FortMark scopes return "not configured";
+  - the sync returns `not_configured`;
+  - resolution classifies a real FortMark agent as `office_mismatch`. This is
+    recoverable with **Check again** once the variable is set.
+- Recommended value: `FTMK01`. It is not a credential.
+
+**Bridge token requirements:**
+- It must be a Production-specific dashboard token. Do not reuse the Preview or MCP
+  tokens.
+- It must be able to read **Property, Member and Office**. The Preview dashboard
+  credential was proven to read all three on 2026-09-23.
+- A Property-only token would give general search and FortMark listings, but every
+  identity would resolve `unavailable`. That is **not acceptable for this release:
+  require all three.**
+
+**Token preflight.** The operator runs this in their own shell. The token and the
+licence are held in memory only and sent only in the Authorization header or the
+filter; nothing is echoed.
+
+```bash
+read -rs BRIDGE_TOKEN            # paste the Production dashboard token
+B='https://api.bridgedataoutput.com/api/v2/OData/miamire'
+H="Authorization: Bearer $BRIDGE_TOKEN"
+# 1. Property — expect 200
+curl -s -o /dev/null -w 'property %{http_code}\n' -H "$H" \
+  "$B/Property?\$top=1&\$select=ListingKey&\$filter=StandardStatus%20eq%20%27Active%27"
+# 2. Office — expect 200 and FortMark, LLC / Active
+curl -s -H "$H" "$B/Office?\$top=1&\$select=OfficeMlsId,OfficeName,OfficeStatus&\$filter=OfficeMlsId%20eq%20%27FTMK01%27" \
+  | python3 -c 'import sys,json;v=json.load(sys.stdin).get("value",[]);print("office",[(r["OfficeMlsId"],r["OfficeName"],r["OfficeStatus"]) for r in v])'
+# 3. Member — digits only, never echoed. Expect exactly one Active member in FTMK01.
+read -rs LIC
+curl -s -H "$H" "$B/Member?\$top=10&\$select=MemberStatus,OfficeMlsId&\$filter=MemberStateLicense%20eq%20%27$LIC%27%20or%20MemberStateLicense%20eq%20%27SL$LIC%27" \
+  | python3 -c 'import sys,json;v=json.load(sys.stdin).get("value",[]);print("member count",len(v),[(r["MemberStatus"],r["OfficeMlsId"]) for r in v])'
+unset BRIDGE_TOKEN LIC H
+```
+
+- Pass criteria: `property 200`; office `('FTMK01', 'FortMark, LLC', 'Active')`;
+  member count 1, with `('Active', 'FTMK01')`.
+- Any 401 or 403, or an empty member result: **stop**, and do not add the token.
+
+## R9. Identity behaviour in the promoted code
+
+- **Member fields selected:** exactly `MemberKey`, `MemberMlsId`, `OfficeMlsId`,
+  `MemberStatus`, `MemberStateLicense` (`MEMBER_FIELDS`), with `$top=10`. There is no
+  email, phone or address.
+- **Office fields:** `OfficeKey`, `OfficeMlsId`, `OfficeName`, `OfficePhone`,
+  `OfficeStatus`.
+- **Authorisation:**
+  - `GET` and `POST {}` act on the caller.
+  - `POST {userId}` is honoured for admin and broker only (403 otherwise). The target
+    must be an existing `dashboard_users` row (404 otherwise). The body is strict
+    (only a uuid `userId`).
+  - The actor, role and target all come from the session. No member key, office or
+    brokerage is accepted from the browser.
+- **Conflict:** a `linked` result whose member key is already linked to another user
+  is stored as `conflict`, with no second link and no transfer; a broker reviews it.
+  - **Finding F1 (P2):** this is enforced in the service (check, then upsert), not by
+    a database constraint. Two accounts resolving the same member at the same
+    instant could both link.
+  - Exposure at launch is nil: there is one user.
+  - Follow-up: a partial unique index on `(member_key) WHERE status = 'linked'` in a
+    later migration. It is deliberately not added to the certified 0010.
+- **Office mismatch:**
+  - The member key is stored, but My Listings requires `linked`, so it stays off.
+  - Dashboard access is untouched.
+  - The brokerage sync reads only the *configured* office, never the member's, so
+    another office can never be written into FortMark's record.
+- **Bridge outage:**
+  - The roster call has a 6 s deadline and is caught, and the result is stored as
+    `unavailable`.
+  - The profile and onboarding routes save first, then call `matchLicenceAfterSave`,
+    which never throws.
+  - Authentication, contacts, transactions and Home metrics make no Member or Office
+    calls.
+- **When resolution runs:**
+  - after a profile or onboarding save that changes the licence;
+  - on `GET /api/profile/mls` when the link is missing or stale;
+  - on **Check again** (`POST`).
+  - There is no background job, and no resolution per page load.
+- **Finding F3 (P3, operational):**
+  - In Stage A2 (MLS off), the first Profile view stores `unavailable`, which is
+    correct.
+  - `GET` re-resolves only a *stale* link, so after B2 the operator presses **Check
+    again** once. This is smoke step 7.
+  - The same applies after an outage that coincided with a check.
+- **Licence change:** the stored licence no longer matches, so the link reads `stale`
+  and is not used. The save re-resolves at once. A cleared licence deletes the link.
+- **Audit:** `mls_identity_resolved` records `{status, candidateCount}`;
+  `brokerage_mls_synced` records `{brokerageKey, changedFields, created}`. Neither
+  records a licence, member key or payload.
+
+## R10. Brokerage
+
+- **Auto-creation:** the first sync upserts on the unique `brokerage_key` with:
+  - `display_name` = the MLS `OfficeName`;
+  - `mls_office_id`, `_key`, `_name`, `_phone` (E.164 when parseable) and
+    `mls_synced_at`.
+  - Operator fields (licence, address, website, preferred phone) are NULL.
+- **Later syncs:** `ON CONFLICT … SET` writes **only** the MLS columns, so the name
+  and operator fields are never overwritten.
+  - An operator save writes only operator columns; any MLS field in a PUT is a 400.
+- **Triggers:**
+  - `GET /api/brokerage` when a sync is due (missing, wrong office, or more than 24 h
+    old);
+  - after the first `linked` resolution;
+  - **Refresh from MLS** (admin and broker).
+- **Settings UI:** the MLS section is read-only for everyone ("synced from MLS").
+  Admins and brokers edit legal and business fields only. Agents, members and
+  coordinators get no edit controls.
+- **Owner input:**
+  - The brokerage licence, legal address, website and preferred phone are central
+    FortMark settings, entered once by an admin.
+  - They **do not block** MLS identity or listings.
+  - Recommended timing: the same session, right after B2 smoke. This must happen
+    before the team is invited, because agents see the brokerage page.
+  - The MLS phone is shown with a source label until a preferred phone is stored.
+- **Finding F4 (ordering):**
+  - Deploy A's brokerage form still lets an operator *type* an MLS office id, and
+    `brokerageMlsOfficeId` falls back to the stored id when the env var is absent.
+  - **Do not fill Settings › Brokerage before A2.** After A2 the form cannot carry
+    the id, and with `FORTMARK_MLS_OFFICE_ID` set, configuration wins and the sync
+    overwrites the column.
+
+## R11. Listings, Home, Team, Search
+
+- **My Listings:**
+  - Filter: `DISPLAYABLE and (ListAgentKey eq K or CoListAgentKey eq K)`, where `K`
+    is the stored MemberKey. There is no name matching.
+  - `miamire` has exactly these two agent roles (there is no second or third
+    co-listing field), so "co-listing" means `CoListAgentKey` only.
+  - Rows are marked `agentRole` primary or co_listing.
+  - Without a link: 409 `mls_identity_not_linked`. A linked agent with no listings
+    sees a real zero.
+- **Compliance:**
+  - The member-scoped search and `getMyListingSummary` go through the same
+    `DISPLAYABLE` clause and the same `toListing` normaliser as every other path.
+    The withheld address gives no parcel and no coordinates, and non-display records
+    are dropped.
+  - There is no separate agent query path. The agent keys are selected server-side
+    and never emitted, and the product-key test passed.
+- **FortMark Listings:** matched by office id on `ListOfficeMlsId` or
+  `CoListOfficeMlsId`. Without an id it returns "not configured", never the whole
+  MLS.
+- **MLS Search:** feed-wide, independent of the member link and the office. ⌘K is
+  feed-wide and uses the same normaliser.
+- **Default scope:**
+  - privileged with an office configured → FortMark;
+  - linked → My;
+  - otherwise → MLS.
+  - An admin who is also linked still opens on FortMark, and all three scopes stay
+    selectable. An explicit `?office=` always wins.
+- **Home:**
+  - `isPrivileged` (admin, broker, transaction coordinator) → the FortMark summary.
+  - Everyone else → their own listings, or "MLS identity not connected" with the
+    reason.
+  - The Production admin therefore gets **FortMark listings**, not a personal book.
+- **Team:** `status` and `mlsState` are added for privileged viewers only. There is
+  no member key and no roster data, and the MLS never creates Team users.
+- **Onboarding:** licence → save → resolution. No brokerage, office or MLS agent id
+  is asked for, and a Bridge outage never blocks completion.
+
+## R12. Environment matrix (Production scope, names only)
+
+| Variable | State now | Target | Stage |
+|---|---|---|---|
+| `CONTACTS_DATABASE_ENABLED`, `TRANSACTIONS_DATABASE_ENABLED` | set | unchanged (`1`) | — |
+| `PROFILE_DATABASE_ENABLED`, `PROFESSIONAL_PROFILE_UI_ENABLED`, `PROFILE_IMAGE_UPLOAD_ENABLED` | set | unchanged | — |
+| `FORTMARK_MLS_OFFICE_ID` | absent | `FTMK01` (Production) | **A2 recommended** (inert while MLS is off; it removes the office-mismatch hazard in B2). B2 is acceptable only if it lands in the same redeploy as the Bridge vars. |
+| `BRIDGE_API_TOKEN` | absent | Production secret, **Sensitive**, Production only | B2, after the preflight |
+| `BRIDGE_DATASET` | absent | `miamire` | B2 |
+| `MLS_LISTINGS_ENABLED` | absent | exactly `1` | B2 |
+| `BRIDGE_BASE_URL` | absent | absent | — |
+| `SAMPLE_LISTINGS_ENABLED`, `SAMPLE_DASHBOARD_ENABLED` | absent | absent | — |
+| `AI_PROVIDER` and every other AI variable | as is | **unchanged**; no AI key | — |
+
+## R13. Rollout
+
+**Stage A2: identity code with MLS off**
+1. Reconfirm: health `c4e304b`, 10 bookkeeping rows, counts as in §R2.
+2. **Backup branch** from `br-bitter-cake-av7pmzth`, named
+   `pre-agent-identity-promotion-<YYYYMMDDTHHMMZ>-from-production-fortmark-professional-profiles`.
+   Record its id and LSN. Never restore without human approval.
+3. The operator runs `npm run db:migrate` from a clean `dadadeb` checkout, as for 0009
+   (fingerprint `23deffc7e4e5`, else STOP).
+   - Expect `10 -> 11, 1 new` and "Core V1 MLS member link table present"; exit 0.
+   - Then check: 11 rows, table present, brokerage columns 4/4.
+4. Old-app check: health still `c4e304b` ok, and Profile loads.
+5. (Recommended) set `FORTMARK_MLS_OFFICE_ID=FTMK01` in Production.
+6. Fast-forward `claude/fortmark-dashboard-build-v39u96` from `c4e304b` to `dadadeb`.
+   The build logs "migrations skipped".
+7. A2 smoke:
+   - health: revision `dadadeb`, listings `not_configured`;
+   - Profile, Team and user menu show **Admin**;
+   - the Profile MLS status says MLS unavailable, with no error page;
+   - Brokerage shows its read-only MLS section, not synced;
+   - contacts and transactions load; Home shows no listing errors;
+   - runtime error logs are clean.
+8. The A2 deployment becomes the preferred rollback target.
+
+**Stage B2: MLS on, same runtime**
+1. Token preflight (§R8), with all three checks passing.
+2. Add `BRIDGE_API_TOKEN`, `BRIDGE_DATASET=miamire`, `MLS_LISTINGS_ENABLED=1` (and
+   `FORTMARK_MLS_OFFICE_ID` if it was not set in A2).
+3. Redeploy the A2 deployment (same commit) so the env binds.
+4. Run the smoke in §R15.
+
+## R14. Rollback
+
+- **Application:**
+  - Use instant rollback to an *existing* deployment: A2 (MLS off), or
+    `dpl_C1LNWdNA8CEdYTRtoXyXrrghNnH1` (`c4e304b`). Both are compatible with 0010.
+  - Don't rebuild old revisions once Bridge vars exist. Never rebuild `b4c04d0` after
+    the Bridge Production variables exist.
+- **MLS:** instant rollback to the A2 deployment, whose env was bound with MLS off.
+  Alternatively, remove `MLS_LISTINGS_ENABLED` and redeploy. Identity rows stay; the
+  links read `unavailable` or stay as they are, and nothing else is affected.
+- **Database:**
+  - 0010 stays. No drops during an incident.
+  - A restore from the backup branch needs explicit human approval and would lose
+    post-migration writes (links, audit events, brokerage row).
+
+## R15. Production smoke (owner session, no fixtures, no fixed counts)
+
+1. **Health:** `dadadeb`, listings `mls`.
+2. **Sign in.**
+3. **Role badge:** Admin.
+4. **Team:** Admin, with the MLS column.
+5. **Profile:** the licence is shown as self-reported; the value is not logged.
+6. **Brokerage:** the MLS section is populated automatically (`FTMK01`, "FortMark,
+   LLC", synced time) and read-only. Legal fields are editable.
+7. **Check again:** press it on Profile.
+8. **Member linked:** the state is Connected · FortMark, LLC.
+9. **My Listings:**
+   - the count is dynamic;
+   - "You · Listing agent" or "You · Co-listing agent" is shown on several cards;
+   - every card is FortMark's.
+10. **FortMark Listings:** only `FTMK01`, with a dynamic active count, and My
+    Listings ⊆ FortMark.
+11. **General MLS:** a Fort Lauderdale active search returns results from many
+    offices.
+12. **Home:** shows **FortMark listings** (not My listings), and the count equals the
+    FortMark total.
+13. **⌘K:** an MLS number opens the listing detail.
+14. **Detail and media:** attribution, photos, and the withheld-address rule.
+15. **Network:** 0 browser requests to Bridge, and no member key in any response.
+16. **Logs:** runtime errors are clean.
+    - Allowed: `[mls-identity]` lines with an error name only.
+    - Not allowed: any licence, key or token.
+
+There are no business mutations beyond the MLS sync and link. The optional central
+brokerage legal fields can be entered afterwards.
+
+## R16. Tests carried into promotion
+
+- **Offline** (on `dadadeb`): the full `npm test` passes.
+  - profile 1212, MLS 225, MLS identity 112, brokerage 98, team 30, and every other
+    suite;
+  - typecheck clean.
+- **Migration:** `npm run test:migrate` 23/23.
+- **Live on `308e549`:**
+  - agent-identity agent 8/8 and admin 10/10;
+  - brokerage editor 10/10 and empty-readonly 7/7;
+  - mls-live 12 passed and 3 skipped (the skips are input-driven);
+  - zero-data sweep 8/8.
+- **Live on `dadadeb` (`dpl_9RLQnRqP4aA9dJAdkWStbp6LzNvX`):** see §R16a.
+- Office mismatch, ambiguous and unavailable are certified offline (stub roster).
+
+### R16a. Regression on `dadadeb` (Preview `dpl_9RLQnRqP4aA9dJAdkWStbp6LzNvX`, certification user as `member`)
+
+- **Combined run** (`zero-data-sweep` plus `mls-live`, 2.8 min): 15 passed, 3 skipped,
+  **2 failed**. Both failures were render timeouts: the page never produced its
+  content within the 30 s and 60 s waits.
+  - zero-data "each unbacked route says what is missing": 30.6 s against its usual
+    8 s;
+  - mls-live "rendered": 59.2 s.
+  - Every API-level assertion in the run passed, including the role-aware
+    FortMark/Home count check.
+- **Isolated re-runs:**
+  - `zero-data-sweep`: **8/8**;
+  - mls-live "rendered": **passed twice** (27.7 s and 28.8 s).
+- **Classification:** the known page-load stall, which has been seen in every phase
+  since Stage 1 and in both `308e549` runs. It is not caused by this delta; the only
+  runtime change is one copy string.
+- It is not a promotion blocker. Production smoke step 16 watches for client-side
+  errors, and a stalled page there is a stop-and-look, not a retry-until-green. Findings
+
+| Id | Severity | Finding | Disposition |
+|---|---|---|---|
+| F1 | P2 | Member conflict is enforced in the service, not by a DB constraint (race window) | Follow-up migration (a partial unique index); not a blocker with one user |
+| F2 | P3 | `PATCH /api/profile` still accepts legacy `mlsAgentId` / `mlsOrganization` (no UI) | Follow-up: tighten the input schema |
+| F3 | P3 | An `unavailable` link is not auto-retried; it needs Check again | Smoke step 7; documented |
+| F4 | ordering | Deploy A's brokerage form can store a typed office id; the fallback reads it when the env var is absent | Don't use Settings › Brokerage before A2; set `FORTMARK_MLS_OFFICE_ID` |
+| — | ordering | `dadadeb` requires 0010 | Migrate before the fast-forward |
+
+**Production blockers: NONE.** The only external dependency is the Production
+Bridge token passing the preflight.
+
+## R18. Human checklist (minimal)
+
+1. Obtain a **Production dashboard Bridge token** that can read Property, Member and
+   Office, and run the §R8 preflight.
+2. Authorise execution, then:
+   - create the backup branch;
+   - run 0010 with the canonical runner (operator-run, as for 0009).
+3. After B2: enter FortMark's **brokerage licence, legal office address**, and
+   optionally the website and preferred phone, once, in Settings › Brokerage.
+
+**Not needed:** any agent MLS id, any per-agent office or brokerage, any Clerk
+change, any SQL identity insert.
+
+**AI:** unchanged (provider `openai`, model `gpt-5.5`, no credential, actions
+disabled). Identity works with AI off.
+
+**O1:** frozen. Nothing from Opportunity is mixed into 0010.
