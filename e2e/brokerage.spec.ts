@@ -5,18 +5,18 @@
  * Role is not something this runner can choose: it is set in the Preview
  * database between runs, and each run states which phase it certifies.
  *
- *   BROKERAGE_PHASE=empty-readonly  role member, no identity row
- *   BROKERAGE_PHASE=editor          role admin or broker; configures the
- *                                   Preview identity through the UI, runs the
- *                                   validation, injection and office-id matrix,
- *                                   and leaves the seed exactly as specified
+ *   BROKERAGE_PHASE=empty-readonly  role member, no identity row: the system
+ *                                   creates FortMark's record from the MLS
+ *   BROKERAGE_PHASE=editor          role admin or broker; operator fields,
+ *                                   validation and injection; the MLS office is
+ *                                   system-managed and cannot be typed
  *   BROKERAGE_PHASE=readonly        role agent, member or transaction
  *                                   coordinator, identity present (plus a
  *                                   foreign-brokerage row inserted by SQL)
  *
  * The seed is the only record this spec leaves behind: display name
- * "FortMark, LLC", licence state FL, MLS office id FTMK01, everything else
- * null. Nothing is invented.
+ * "FortMark, LLC", licence state FL (operator fields), the MLS section synced
+ * from FTMK01 by the system, everything else null. Nothing is invented.
  */
 import { expect, test, type Page } from "@playwright/test";
 import { apiFor, freshToken, signInCertificationUser } from "./session";
@@ -47,7 +47,6 @@ const SEED = {
   postalCode: null,
   officePhone: null,
   website: null,
-  mlsOfficeId: "FTMK01",
 };
 const FOREIGN_NAME = "SYSVERIFY Foreign Brokerage";
 
@@ -116,7 +115,7 @@ test("GET answers the caller's own brokerage, privately, with no ids", async () 
   const r = await call("/dashboard/api/brokerage");
   expect(r.status).toBe(200);
   const keys = Object.keys(r.body).sort().join(",");
-  expect(keys).toBe("canEdit,identity,mlsOffice");
+  expect(keys).toBe("canEdit,identity,officeConfigured");
   const identity = r.body.identity as Identity | null;
   if (identity) {
     expect(identity).not.toHaveProperty("id");
@@ -148,31 +147,29 @@ test("general MLS search does not depend on brokerage identity", async () => {
 test.describe("empty, read-only", () => {
   test.skip(PHASE !== "empty-readonly", "phase");
 
-  test("no record, and a non-editor may not create one", async () => {
+  // With FORTMARK_MLS_OFFICE_ID configured the system creates FortMark's record
+  // from the MLS Office record on first read — nobody has to configure it.
+  test("the system creates FortMark's record from the MLS; a non-editor cannot write", async () => {
     const r = await call("/dashboard/api/brokerage");
-    expect(r.body.identity).toBeNull();
-    const w = await put(SEED);
-    expect(w.status).toBe(403);
-    expect((await call("/dashboard/api/brokerage")).body.identity).toBeNull();
+    const identity = r.body.identity as Identity & Json;
+    expect(identity.displayName).toBe("FortMark, LLC");
+    expect(identity.mlsOfficeId).toBe("FTMK01");
+    expect(identity.mlsOfficeName).toBe("FortMark, LLC");
+    expect(identity.licenseNumber).toBeNull();
+    expect(identity.addressLine1).toBeNull();
+    expect((await put(SEED)).status).toBe(403);
   });
 
-  test("FortMark listings say not configured rather than query another office", async () => {
-    const scoped = await call("/dashboard/api/listings?office=fortmark");
-    expect(scoped.status).toBe(409);
-    expect(scoped.body.error).toBe("fortmark_office_not_configured");
-    const featured = await call("/dashboard/api/listings/featured");
-    expect(featured.status).toBe(200);
-    expect(featured.body.office).toBe("not_configured");
-    expect(featured.body.listing).toBeNull();
-    expect(featured.body.fortmarkActiveCount).toBeNull();
-    await openHomeCard();
-    await expect(page.getByRole("main")).toContainText("FortMark's MLS office is not configured.");
+  test("FortMark listings follow system configuration, with no record needed", async () => {
+    const scoped = await call("/dashboard/api/listings?office=fortmark&status=active");
+    expect(scoped.status).toBe(200);
+    expect(Number(scoped.body.total)).toBeGreaterThan(0);
   });
 
-  test("Settings says the information is not available, with no controls", async () => {
-    await openBrokerage(/Brokerage information is not available\./);
+  test("Settings is a read view with the synced MLS section, no controls", async () => {
+    await openBrokerage(/synced from MLS/i);
     const main = page.getByRole("main");
-    await expect(main.getByRole("button", { name: /configure brokerage|edit brokerage/i })).toHaveCount(0);
+    await expect(main.getByRole("button", { name: /configure brokerage|edit brokerage|refresh from mls/i })).toHaveCount(0);
     await expect(main.locator("input, select")).toHaveCount(0);
   });
 });
@@ -192,7 +189,6 @@ test.describe("editor", () => {
       await expect(page.getByLabel("Brokerage name")).toBeFocused();
       await page.getByLabel("Brokerage name").fill(SEED.displayName);
       await page.getByLabel("Licence state").selectOption("FL");
-      await page.getByLabel("MLS office id").fill("FTMK01");
       await page.getByRole("button", { name: "Save" }).click();
       await expect(page.getByRole("status")).toContainText("Brokerage details saved.");
       // Focus returns to the control that now opens the editor.
@@ -213,13 +209,16 @@ test.describe("editor", () => {
     await expect(main).toContainText("FTMK01");
     await expect(main).not.toContainText(/\b(verified|in good standing|expired)\b/i);
     const r = await call("/dashboard/api/brokerage");
-    const mls = r.body.mlsOffice as { name: string | null; phone: string | null } | null;
-    if (mls?.phone) {
-      // No stored phone: the MLS's is shown, labelled, and never saved.
+    const identity = r.body.identity as Identity & Json;
+    // The MLS section is synced from the Office record; with no stored office
+    // phone the MLS's is shown, labelled, and never saved as FortMark's.
+    expect(identity.mlsOfficeName).toBe("FortMark, LLC");
+    await expect(main).toContainText(/synced from MLS/i);
+    if (identity.mlsOfficePhone && !identity.officePhone) {
       await expect(main).toContainText("From the MLS");
-      expect((r.body.identity as Identity).officePhone).toBeNull();
     }
-    console.log(`[brokerage] MLS supplement name=${Boolean(mls?.name)} phone=${Boolean(mls?.phone)}`);
+    expect(identity.officePhone).toBeNull();
+    console.log(`[brokerage] MLS section name=${Boolean(identity.mlsOfficeName)} phone=${Boolean(identity.mlsOfficePhone)}`);
   });
 
   test("validation refuses bad values field by field", async () => {
@@ -230,7 +229,7 @@ test.describe("editor", () => {
       [{ licenseState: "ZZ" }, "licenseState"],
       [{ postalCode: "3330" }, "postalCode"],
       [{ officePhone: "123" }, "officePhone"],
-      [{ mlsOfficeId: "FTMK01' or 1 eq 1" }, "mlsOfficeId"],
+      [{ mlsOfficeId: "ZZZZ99" }, "_form"],
       [{ displayName: "" }, "displayName"],
     ];
     for (const [change, field] of cases) {
@@ -255,7 +254,7 @@ test.describe("editor", () => {
     const describedBy = (await website.getAttribute("aria-describedby")) ?? "";
     expect(describedBy).toContain("brokerage-website-error");
     await expect(page.locator("#brokerage-website-error")).toContainText("http:// or https://");
-    for (const label of ["Brokerage name", "Brokerage licence number", "Licence state", "Address line 1", "City", "State", "ZIP", "Office phone", "MLS office id"]) {
+    for (const label of ["Brokerage name", "Brokerage licence number", "Licence state", "Address line 1", "City", "State", "ZIP", "Office phone"]) {
       await expect(page.getByLabel(label, { exact: true }), label).toHaveCount(1);
     }
     for (const width of [390, 430, 1440]) {
@@ -269,52 +268,18 @@ test.describe("editor", () => {
     expect((r.body.identity as Identity).website).toBeNull();
   });
 
-  test("a wrong office id finds no FortMark listings; general search is unaffected", async () => {
-    try {
-      expect((await put({ ...SEED, mlsOfficeId: "ZZZZ99" })).status).toBe(200);
-      const scoped = await call("/dashboard/api/listings?office=fortmark");
-      expect(scoped.status).toBe(200);
-      expect(Number(scoped.body.total)).toBe(0);
-      const featured = await call("/dashboard/api/listings/featured");
-      expect(featured.body.office).toBe("configured");
-      expect(featured.body.fortmarkActiveCount).toBe(0);
-      expect(featured.body.listing).toBeNull();
-      const general = await call("/dashboard/api/listings?city=Fort%20Lauderdale&status=active&pageSize=12");
-      expect(Number(general.body.total)).toBeGreaterThan(100);
-      expect((general.body.items as Json[]).every((l) => l.isFortmark === false)).toBe(true);
-    } finally {
-      expect((await put(SEED)).status).toBe(200);
-    }
-  });
-
-  test("a missing office id is 'not configured', never another office", async () => {
-    try {
-      expect((await put({ ...SEED, mlsOfficeId: null })).status).toBe(200);
-      const scoped = await call("/dashboard/api/listings?office=fortmark");
-      expect(scoped.status).toBe(409);
-      expect(scoped.body.error).toBe("fortmark_office_not_configured");
-      const featured = await call("/dashboard/api/listings/featured");
-      expect(featured.body.office).toBe("not_configured");
-      await openHomeCard();
-      await expect(page.getByRole("main")).toContainText("FortMark's MLS office is not configured.");
-      const general = await call("/dashboard/api/listings?city=Fort%20Lauderdale&status=active&pageSize=12");
-      expect(Number(general.body.total)).toBeGreaterThan(100);
-    } finally {
-      expect((await put(SEED)).status).toBe(200);
-    }
-  });
-
-  test("with FTMK01 restored, FortMark's own listings are back", async () => {
+  test("the MLS office cannot be typed; FortMark listings follow system configuration", async () => {
+    expect((await put({ ...SEED, mlsOfficeId: "ZZZZ99" })).status).toBe(400);
     const scoped = await call("/dashboard/api/listings?office=fortmark&status=active");
     expect(scoped.status).toBe(200);
     const total = Number(scoped.body.total);
     expect(total).toBeGreaterThan(0);
     expect((scoped.body.items as Json[]).every((l) => l.isFortmark === true)).toBe(true);
-    const featured = await call("/dashboard/api/listings/featured");
-    expect(featured.body.office).toBe("configured");
-    expect(featured.body.fortmarkActiveCount).toBe(total);
-    console.log(`[brokerage] FortMark active listings with FTMK01: ${total}`);
-    const identity = (await call("/dashboard/api/brokerage")).body.identity as Identity;
+    console.log(`[brokerage] FortMark active listings (system office): ${total}`);
+    const general = await call("/dashboard/api/listings?city=Fort%20Lauderdale&status=active&pageSize=12");
+    expect(Number(general.body.total)).toBeGreaterThan(100);
+    const identity = (await call("/dashboard/api/brokerage")).body.identity as Identity & Json;
+    expect(identity.mlsOfficeId).toBe("FTMK01");
     for (const [key, value] of Object.entries(SEED)) expect(identity[key], key).toBe(value);
   });
 

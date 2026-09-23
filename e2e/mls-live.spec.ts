@@ -225,11 +225,25 @@ test("FortMark listings are exactly FTMK01's, and Home's count agrees", async ()
     expect(l.status).toBe("active");
   }
   expect(rows.filter((l) => (l.listingOffice as Json).mlsId === FORTMARK).length).toBeGreaterThan(0);
+  // Home is role-aware: privileged viewers see FortMark's book, everyone else
+  // their own (see docs/MLS_AGENT_IDENTITY.md › Scopes and defaults).
   const f = await timed("featured", "/dashboard/api/listings/featured");
-  expect(f.body.fortmarkActiveCount).toBe(Number(r.body.total));
-  const featured = f.body.listing as Item;
-  expect(featured.isFortmark).toBe(true);
-  expect(featured.listPrice).toBe(Math.max(...rows.map((l) => l.listPrice)));
+  if (f.body.scope === "fortmark") {
+    expect(f.body.fortmarkActiveCount).toBe(Number(r.body.total));
+    const featured = f.body.listing as Item;
+    expect(featured.isFortmark).toBe(true);
+    expect(featured.listPrice).toBe(Math.max(...rows.map((l) => l.listPrice)));
+  } else {
+    expect(f.body.scope).toBe("mine");
+    expect(f.body).not.toHaveProperty("fortmarkActiveCount");
+    if (f.body.identity === "linked") {
+      const mine = await timed("mine", "/dashboard/api/listings?office=mine&status=active&pageSize=48");
+      expect(f.body.activeCount).toBe(Number(mine.body.total));
+      expect(Number(mine.body.total)).toBeLessThanOrEqual(Number(r.body.total));
+    } else {
+      expect(f.body.listing ?? null).toBeNull();
+    }
+  }
 });
 
 // --- Display compliance --------------------------------------------------------
@@ -361,10 +375,19 @@ test("rendered: Listings — MLS search and FortMark listings, detail, deep link
   }
   await page.setViewportSize({ width: 1440, height: 900 });
 
-  // Home: FortMark listing card.
+  // Home: the listing card follows the role (FortMark's book for privileged
+  // viewers, the agent's own book otherwise).
+  const home = await timed("featured", "/dashboard/api/listings/featured");
   await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
-  await expect(main).toContainText(/FortMark listings/, { timeout: 60_000 });
-  await expect(main).toContainText(new RegExp(`${fmCount}\\s+active listing`));
+  if (home.body.scope === "fortmark") {
+    await expect(main).toContainText(/FortMark listings/, { timeout: 60_000 });
+    await expect(main).toContainText(new RegExp(`${fmCount}\\s+active listing`));
+  } else {
+    await expect(main).toContainText(/My listings/, { timeout: 60_000 });
+    if (home.body.identity === "linked" && Number(home.body.activeCount) > 0) {
+      await expect(main).toContainText(new RegExp(`${home.body.activeCount}\\s+active listing`));
+    }
+  }
   await expect(main).not.toContainText(/MLS not connected|once the MLS feed is connected/i);
 
   // ⌘K: MLS number → listing → detail.

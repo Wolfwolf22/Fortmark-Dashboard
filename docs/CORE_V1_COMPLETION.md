@@ -1,12 +1,16 @@
 # FortMark Dashboard — Core V1 Completion
 
 **Phase:** Core product completion — dashboard first, AI second.
-**Date:** 2026-09-22 → 2026-09-23 · **Branch:** `claude/dashboard-status-yir55p` · **Preview:** `2d80e68` → `c4e304b`
+**Date:** 2026-09-22 → 2026-09-23 · **Branch:** `claude/dashboard-status-yir55p` · **Preview:** `2d80e68` → `308e549`
 
-**Status: CORE V1 = COMPLETE IN PREVIEW** (2026-09-23, after the brokerage identity
-domain, §9). Not promoted: the next phase is the Core V1 Production promotion audit.
-**Production impact:** none. Production still serves `b4c04d0` (Stage 1); nothing
-in this phase touched Production configuration, data or deployments.
+**Status: CORE V1 = COMPLETE IN PREVIEW, redefined** (2026-09-23). Core V1 now
+includes automatic agent MLS identity: professional licence → MLS member →
+FortMark office → My Listings (§11). It is certified live on Preview.
+
+**Not Production-ready until re-audited.** Production was paused at Deploy A
+(`c4e304b`, migrations 0000–0009, MLS off); Deploy B was not started. Migration
+`0010` and everything in §11 exist on Preview only. The next step is to re-run
+the Core V1 Production promotion audit with §11 in scope.
 
 ---
 
@@ -175,20 +179,23 @@ Truthful settings · Read-only AI as a secondary layer.
 | Capability | State | Backing source | Production? | Remaining |
 |---|---|---|---|---|
 | Auth | COMPLETE | Clerk + allowlist | Yes | — |
-| Profile + licence | COMPLETE | profile tables | Yes (licence rule pending promotion) | Promote |
+| Profile + licence | COMPLETE | profile tables | Yes (Deploy A) | — |
+| Role display | COMPLETE (Preview) | `dashboard_users.role` only (§11) | No — Deploy A still shows the Clerk-derived label | Promote |
+| Agent MLS identity | COMPLETE (Preview, live-certified) | `mls_member_links` (0010) + Bridge `Member`/`Office` | No | Re-audit; migration 0010; Production credential |
+| My listings | COMPLETE (Preview, live-certified) | Bridge, by stored `MemberKey` (listing or co-listing agent) | No | Same |
 | Real team | COMPLETE | users + profiles | No (Preview) | Promote; invites/roles later |
 | Home daily brief | COMPLETE | metrics service + FortMark MLS summary | Partly (MLS card Preview) | Promote |
 | Contacts | COMPLETE | `contacts` | Yes | — |
 | Transactions | COMPLETE | `transactions` | Yes | — |
 | Unified search | COMPLETE | search service (contacts, transactions, MLS) | Partly | Promote |
 | Live MLS listings | COMPLETE (Preview, live-certified 2026-09-23) | Bridge `miamire` | No | Production credential + promotion audit |
-| FortMark listings | COMPLETE (Preview) | Bridge; office id from brokerage identity (`FTMK01`) | No | Same |
+| FortMark listings | COMPLETE (Preview) | Bridge; office id from `FORTMARK_MLS_OFFICE_ID` (`FTMK01` in Preview) | No | Same |
 | Listing detail / media | COMPLETE (Preview) | Bridge `Property.Media` | No | Same |
 | Comparables | CERTIFIED — advanced (Preview) | Bridge closed sales | No | Same |
 | Truthful settings | COMPLETE (Preview) | profile + team + `brokerage_identities` | Partly (profile only) | Owner input: brokerage licence #, office address, website |
 | Read-only AI | SECONDARY | OpenAI `gpt-5.5` | Disabled | Production key (frozen) |
-| Brokerage identity | COMPLETE (Preview) | `brokerage_identities` (0009) | No | Promotion audit; owner input above |
-| Migration runner | COMPLETE | `migrate-core.mjs` | Used by Preview builds (0009 applied 9 → 10) | Use for the next Production migration |
+| Brokerage identity | COMPLETE (Preview); MLS section system-managed since §11 | `brokerage_identities` (0009 + 0010 columns) | Table only (Deploy A) | Re-audit; owner input above |
+| Migration runner | COMPLETE | `migrate-core.mjs` | 0009 applied to Production by the operator (9 → 10); 0010 on Preview only (10 → 11) | Use for 0010 in Production |
 
 See `docs/MLS_LIVE_CERTIFICATION.md` for the live evidence.
 
@@ -199,6 +206,11 @@ See `docs/MLS_LIVE_CERTIFICATION.md` for the live evidence.
 ## 9. Brokerage identity — built (Core V1 final domain)
 
 See `docs/BROKERAGE_IDENTITY.md` for the full model.
+
+> **Revised in §11.** The MLS office id is no longer operator-typed. It is server
+> configuration (`FORTMARK_MLS_OFFICE_ID`), and the MLS section of the record is
+> synced from the `Office` resource. The matrix below is the history of the
+> `942e5b8` model; `e2e/brokerage.spec.ts` now certifies the system-managed one.
 
 - **Schema:** migration `0009_steep_warstar`, additive only. It creates
   `brokerage_identities` with one row per brokerage key (a unique index) and
@@ -272,8 +284,82 @@ AI and Messages.
 
 ## 10. Core V1 verdict
 
-**CORE V1 = COMPLETE IN PREVIEW.** Every Core V1 capability in §8 is COMPLETE or
-certified on Preview, and AI is a secondary layer. What remains is:
+**CORE V1 = COMPLETE IN PREVIEW** (including §11). Every Core V1 capability in §8 is
+COMPLETE or certified on Preview, and AI is a secondary layer. **Not
+Production-ready until re-audited.** What remains is:
 - owner input: the brokerage licence number, authoritative office address, and website
   if wanted;
-- the Core V1 Production promotion audit.
+- the Core V1 Production promotion audit, re-run with automatic agent MLS identity
+  in scope (migration 0010, `FORTMARK_MLS_OFFICE_ID`, the role fix, Deploy B).
+
+## 11. Agent MLS identity and role correction (2026-09-23)
+
+FortMark Dashboard is FortMark-only, not a multi-brokerage CRM. See
+`docs/MLS_AGENT_IDENTITY.md` for the model and `docs/BROKERAGE_IDENTITY.md` for the
+revised brokerage record.
+
+### Role display (bug)
+
+- **Symptom:** a Production admin was shown as "Member".
+- **Root cause:** `getSession()` derived the displayed role from the Clerk org role
+  or `publicMetadata.fortmarkRole`, falling back to "Member". Authorisation already
+  used `dashboard_users.role`, so the badge and the permissions could disagree.
+- **Fix:** every surface (session, Profile, Team) now labels
+  `dashboard_users.role` through one table (`ROLE_DISPLAY`). Clerk is only a
+  fallback when no dashboard user row exists.
+
+### What was built
+
+- **Migration `0010_flaky_toad`** (additive):
+  - the `mls_member_links` table, with a status CHECK;
+  - four system-managed MLS columns on `brokerage_identities`.
+- **Resolution:**
+  - licence → `Member` (by `MemberStateLicense`, with and without the `SL`/`BK`
+    prefix) → office check against `FORTMARK_MLS_OFFICE_ID`;
+  - the result is stored as `linked`, `office_mismatch`, `not_found`, `ambiguous`,
+    `conflict` or `unavailable`;
+  - it runs after a profile or onboarding save that changes the licence, on a stale
+    Profile read, or on explicit refresh;
+  - the save always persists first.
+- **Scopes:**
+  - My listings (stored `MemberKey`, as listing or co-listing agent);
+  - FortMark listings (office);
+  - MLS search (whole feed);
+  - the defaults and the Home card follow the role.
+- **Onboarding and Profile:** they ask only for the professional licence. No MLS id,
+  office or brokerage is asked for anywhere.
+- **Team:** privileged viewers see each member's MLS connection state.
+
+### Live certification (Preview `308e549`, deployment `dpl_3z3BifQnv6vQChnAq47EBQ34Skd4`)
+
+Setup:
+- The Preview database was migrated 10 → 11 atomically by the build.
+- The certification user was switched between roles in the Preview database.
+- A real FortMark member licence was supplied on the command line only. It is not
+  recorded here or anywhere in the repository.
+
+| Spec / phase | Result | What it proved |
+|---|---|---|
+| `agent-identity` · agent | 8/8 | Role shows Agent. The licence, typed with `SL`, linked to "FortMark, LLC". My listings: 5 active (1 primary, 4 co-listing), all FortMark, no member keys in the payload, a subset of FortMark's 6. Home and the Listings default open on My listings. A wrong licence → `not_found` → My listings 409, never "0"; another state → `not_found`; cleared → `no_license`; restored → `linked`. An agent cannot refresh another user or sync the brokerage. |
+| `agent-identity` · admin | 10/10 | Role shows Admin (Profile and Team). `memberMlsId` is visible to admin only. Brokerage MLS section synced (`FTMK01`, "FortMark, LLC"); a PUT carrying `mlsOfficeId` → 400; manual sync 200. A second account with the same licence → `conflict`, and the first keeps its link. An unknown target → 404. Team shows "Connected". |
+| `brokerage` · editor | 10/10 | Operator fields only; the MLS office cannot be typed. |
+| `brokerage` · empty-readonly (member, record deleted) | 7/7 | The system recreated the record from the MLS `Office` record, with no operator action. |
+| `mls-live` | 12 passed, 3 skipped (input-driven) | Search, filters, detail, compliance and bundle checks unchanged. The FortMark and Home assertions were made role-aware. |
+| `zero-data-sweep` | 8/8 | No regressions. |
+
+Certified offline only (stub roster, `npm run test:mls-identity`):
+- `office_mismatch`, `ambiguous` and `unavailable`. No live FortMark licence produces
+  them.
+- A Bridge outage during resolution.
+
+**Cleanup (Preview):**
+- The synthetic conflict account and its rows were deleted.
+- The certification user's MLS link and licence were cleared. Its role is back to
+  `member`.
+- No Preview profile holds a real licence.
+- The system-created FortMark brokerage record is kept, because it is system-managed.
+
+### Production impact
+
+None. Production is unchanged since Deploy A. It has no 0010, no
+`FORTMARK_MLS_OFFICE_ID`, no Bridge credential, and MLS is off.

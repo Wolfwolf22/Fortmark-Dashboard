@@ -103,7 +103,7 @@ export default function FeaturedListingWidget() {
           availability="not_configured"
           detail={
             data.office === "not_configured"
-              ? "FortMark's MLS office is not configured. A broker or admin can set it in Settings › Brokerage."
+              ? "FortMark's MLS office is not configured for this environment."
               : "FortMark's MLS office could not be determined right now."
           }
         />
