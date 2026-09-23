@@ -1039,3 +1039,78 @@ change, any SQL identity insert.
 disabled). Identity works with AI off.
 
 **O1:** frozen. Nothing from Opportunity is mixed into 0010.
+
+---
+
+# STAGE A2 EXECUTION — agent identity code, MLS off (2026-09-23)
+
+**Reconfirmation (18:33Z / 18:5xZ):**
+- health `c4e304b` ok; 10 migrations; `mls_member_links` absent;
+- users 1 (`admin`), profiles 1, images 1, brokerage 0, contacts 0, transactions 0,
+  PreparedActions 0;
+- audit 76 → 87. Every new event is `user_synced_from_clerk` from the owner's
+  sign-ins.
+
+**Safety branches:**
+- `br-tiny-unit-avsngi1d`: `pre-agent-identity-promotion-20260923T1833Z-…`,
+  LSN `0/1F5B5F8`. This is the pre-0010 restore point.
+- `br-mute-union-avbf43km`: an earlier copy at 17:12Z, `0/1F31728`.
+- Neither has been modified, and neither may be restored without human approval.
+
+**Migration method:**
+- The runner process could not be started from the cloud session without the
+  Production connection string passing through tool output. The Vercel variable is
+  write-only, and the Neon connection-string tool returns it as plain text.
+- Per the owner's instruction, 0010 was applied through the Neon SQL
+  transaction action. That transaction reproduces `runMigrations` exactly:
+  1. `pg_advisory_xact_lock(7214050913)`, the runner's lock key;
+  2. a guard that aborts unless the state is 10 bookkeeping rows, last `created_at`
+     `1790131131105`, last hash `f4c19419…` (Production's unique 0009 row), and the
+     links table absent;
+  3. the 7 statements produced by drizzle's own `readMigrationFiles`, verbatim.
+     `assertTransactionSafe` passed on all 11 migrations;
+  4. drizzle's bookkeeping insert: hash `43217604…6cc8`, `created_at` `1790138386822`.
+     That is byte-identical to the row the canonical runner wrote for 0010 on
+     Preview.
+- Everything ran as one transaction and committed.
+
+**Verification:**
+- 11 bookkeeping rows.
+- Column, constraint and index fingerprints of `mls_member_links` and
+  `brokerage_identities` are identical to certified Preview (`78ed9b6e…`,
+  `0f01136c…`, `8d75b0f8…`), with 208 public columns on both.
+- Links 0, brokerage 0, every other count unchanged.
+- The old app `c4e304b` on 0010: health ok, 200s only, and no error or warning log
+  lines.
+
+**Configuration:** `FORTMARK_MLS_OFFICE_ID=FTMK01` (Production only, env id
+`SXhMjMSDr62ndfxU`).
+- Production now has 31 variables. There are no `BRIDGE_*`, `MLS_LISTINGS_ENABLED` or
+  `SAMPLE_*` variables, and `AI_PROVIDER` is unchanged.
+
+**Deploy A2:** `claude/fortmark-dashboard-build-v39u96` was fast-forwarded
+`c4e304b → dadadeb`. That produced a fresh Production build,
+**`dpl_6PtaBiMaihNhomQ5Us6xgWv5iDWg`**, READY and aliased to
+`fortmark-dashboard.vercel.app`.
+- Build log:
+  - fingerprint `23deffc7e4e5`;
+  - `FORTMARK_MLS_OFFICE_ID present=true`;
+  - `BRIDGE_API_TOKEN present=false`;
+  - migrations skipped.
+- The build log's "-> sample data" label is the migrator's classification wording
+  only. `SAMPLE_LISTINGS_ENABLED` is absent, and health reports listings
+  `not_configured`.
+- Health:
+  `{"ok":true,"revision":"dadadeb","sources":{"transactions":"db","contacts":"db","listings":"not_configured","homeMetrics":"real-only","assistant":{"provider":"openai","model":"gpt-5.5","status":"no_credential"},"actions":"disabled"}}`.
+- Post-deploy: no error or warning log lines. Database counts are unchanged
+  (links 0, brokerage 0).
+- A local build of `dadadeb` had 95 client chunks. None contained a Bridge host, a
+  secret variable name, `MemberKey`, `ListAgentKey`/`CoListAgentKey`, `member_key` or
+  `FORTMARK_MLS_OFFICE_ID`.
+
+**Rollback targets:**
+- A2 `dpl_6PtaBiMaihNhomQ5Us6xgWv5iDWg`, once the signed-in smoke passes;
+- `dpl_C1LNWdNA8CEdYTRtoXyXrrghNnH1` (`c4e304b`), compatible with 0010.
+- 0010 stays in place under any rollback.
+
+B2 has not started.
