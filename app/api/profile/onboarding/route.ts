@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { decideAccess, isConfigFailure } from "@/lib/auth/dashboard-access";
 import { professionalProfileUiEnabled } from "@/lib/flags";
+import { matchLicenceAfterSave } from "@/lib/mls-identity/after-save";
 import { completeOnboarding, saveOnboardingStep } from "@/lib/profile/service";
 import {
   ONBOARDING_DEFERRAL_COOKIE,
@@ -134,8 +135,10 @@ export async function POST(request: NextRequest) {
 
   const result = await saveOnboardingStep(caller.clerkUserId, payload.step, values);
   if (!result.ok) return failure(result);
+  // Licence saved first; the MLS match is enrichment and never blocks the step.
+  const mlsState = await matchLicenceAfterSave(caller.clerkUserId);
   return NextResponse.json(
-    { ok: true, completion: result.completion, onboardingStep: result.onboardingStep },
+    { ok: true, completion: result.completion, onboardingStep: result.onboardingStep, mlsState },
     { headers: NO_STORE }
   );
 }

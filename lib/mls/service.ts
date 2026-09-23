@@ -21,7 +21,7 @@ import type {
 } from "../data/types.ts";
 import { bridgeRequest, MAX_TOP } from "./bridge.ts";
 import type { BridgeConfig } from "./config.ts";
-import { EMBEDDED_MEDIA_FIELD, MEDIA_FIELDS, OFFICE_FIELDS, PROPERTY_FIELDS, selectClause } from "./fields.ts";
+import { EMBEDDED_MEDIA_FIELD, MEDIA_FIELDS, PROPERTY_FIELDS, selectClause } from "./fields.ts";
 import {
   INCOME_PROPERTY_TYPES,
   LAND_PROPERTY_TYPES,
@@ -82,6 +82,23 @@ export function officeFilter(officeId: string): string {
   return `(${eq("ListOfficeMlsId", officeId)} or ${eq("CoListOfficeMlsId", officeId)})`;
 }
 
+/**
+ * My Listings: the agent is the listing agent or the co-listing agent, by
+ * stable MLS member key. `miamire` exposes exactly these two agent roles on a
+ * listing (no second/third co-list fields — verified live 2026-09-23).
+ */
+export function memberFilter(memberKey: string): string {
+  return `(${eq("ListAgentKey", memberKey)} or ${eq("CoListAgentKey", memberKey)})`;
+}
+
+/** Thrown when My Listings is asked for without a linked MLS member. */
+export class MemberNotLinkedError extends Error {
+  constructor() {
+    super("The caller has no linked MLS member identity.");
+    this.name = "MemberNotLinkedError";
+  }
+}
+
 /** Thrown when an office-scoped query is asked for with no office configured. */
 export class OfficeNotConfiguredError extends Error {
   constructor() {
@@ -140,7 +157,11 @@ function queryFilter(query: string | undefined): string | undefined {
   return `contains(UnparsedAddress,'${escapeODataString(q)}')`;
 }
 
-export function buildSearchFilter(q: ListingSearchQuery, officeId?: string | null): string {
+export function buildSearchFilter(
+  q: ListingSearchQuery,
+  officeId?: string | null,
+  memberKey?: string | null
+): string {
   const minPrice = num(q.minPrice);
   const maxPrice = num(q.maxPrice);
   const minBeds = num(q.minBeds);
@@ -148,12 +169,17 @@ export function buildSearchFilter(q: ListingSearchQuery, officeId?: string | nul
   // (a commercial sale is still our listing), so the sales-only default
   // applies to the MLS-wide search only.
   const officeScoped = q.office === "fortmark";
-  // Never widen an office-scoped search to the whole MLS for want of an id.
+  const mine = q.office === "mine";
+  // Never widen a scoped search to the whole MLS for want of an id.
   if (officeScoped && !officeId) throw new OfficeNotConfiguredError();
-  const types = officeScoped && !(q.propertyType && q.propertyType.length > 0) ? [] : typeFilters(q.propertyType);
+  if (mine && !memberKey) throw new MemberNotLinkedError();
+  // The agent's own book, like FortMark's, spans every property type.
+  const scoped = officeScoped || mine;
+  const types = scoped && !(q.propertyType && q.propertyType.length > 0) ? [] : typeFilters(q.propertyType);
   return andFilters([
     DISPLAYABLE,
     officeScoped ? officeFilter(officeId as string) : undefined,
+    mine ? memberFilter(memberKey as string) : undefined,
     ...types,
     statusFilter(q.status),
     anyOf("City", q.city ?? []),
@@ -192,7 +218,7 @@ export async function searchListings(
     config,
     "Property",
     {
-      $filter: buildSearchFilter(query, ctx.brokerageOfficeId),
+      $filter: buildSearchFilter(query, ctx.brokerageOfficeId, ctx.memberKey),
       $select: WITH_MEDIA,
       $orderby: order.orderby,
       $top: pageSize,
@@ -331,6 +357,34 @@ export async function getFortmarkListingSummary(
   };
 }
 
+/**
+ * The signed-in agent's active book (listing or co-listing agent) in one
+ * request: count plus highest-priced listing, for Home.
+ */
+export async function getMyListingSummary(
+  config: BridgeConfig,
+  memberKey: string,
+  ctx: ListingContext = {},
+  signal?: AbortSignal
+): Promise<FortmarkListingSummary> {
+  const result = await bridgeRequest<ResoRecord>(
+    config,
+    "Property",
+    {
+      $filter: andFilters([DISPLAYABLE, memberFilter(memberKey), eq("StandardStatus", "Active")]),
+      $select: WITH_MEDIA,
+      $orderby: "ListPrice desc",
+      $top: 1,
+      $count: true,
+    },
+    signal
+  );
+  const record = result.value[0];
+  const listing = record ? toListing(record, [], { ...ctx, memberKey }) : null;
+  if (listing) listing.photos = listing.photos.slice(0, 1);
+  return { activeCount: result.count ?? result.value.length, featured: listing };
+}
+
 /** The Home widget's listing: FortMark's highest-priced active listing. */
 export async function getFeaturedListing(
   config: BridgeConfig,
@@ -340,32 +394,6 @@ export async function getFeaturedListing(
   return (await getFortmarkListingSummary(config, officeId, signal)).featured;
 }
 
-/**
- * What the MLS says about an office, read from one of that office's current
- * displayable listings (IDX feeds carry office fields on listings). Null when
- * the office has no listing in the feed right now — which says nothing about
- * the office, so callers show nothing rather than "no phone".
- */
-export async function getMlsOffice(
-  config: BridgeConfig,
-  officeId: string,
-  signal?: AbortSignal
-): Promise<{ name: string | null; phone: string | null } | null> {
-  const result = await bridgeRequest<ResoRecord>(
-    config,
-    "Property",
-    {
-      $filter: andFilters([DISPLAYABLE, eq("ListOfficeMlsId", officeId)]),
-      $select: selectClause(OFFICE_FIELDS),
-      $top: 1,
-    },
-    signal
-  );
-  const r = result.value[0];
-  if (!r) return null;
-  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
-  return { name: text(r.ListOfficeName), phone: text(r.ListOfficePhone) };
-}
 
 export interface ComparablesQuery {
   /** Closed within this many months. */

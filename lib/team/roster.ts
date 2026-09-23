@@ -24,6 +24,8 @@
  */
 import { resolveImageUrl, publicContactEmail } from "../profile/display.ts";
 import type { DbRole } from "../auth/actor.ts";
+import { ROLE_DISPLAY } from "../profile/roles.ts";
+import { linkMatchesLicense, normalizeLicense, type MlsIdentityState } from "../mls-identity/rules.ts";
 
 export type AccountStatus = "active" | "pending_profile" | "suspended";
 
@@ -49,6 +51,8 @@ export interface RosterSourceRow {
     activeImageUrl: string | null;
     clerkImageUrl: string | null;
   } | null;
+  /** The stored MLS member link, when one exists. */
+  mls?: { status: string; licenseNumber: string | null; licenseState: string | null } | null;
 }
 
 export interface RosterEntry {
@@ -67,6 +71,8 @@ export interface RosterEntry {
   isSelf: boolean;
   /** Present only for privileged viewers. */
   status?: AccountStatus;
+  /** MLS identity state — privileged viewers only. Never a member key. */
+  mlsState?: MlsIdentityState;
 }
 
 export interface RosterViewer {
@@ -74,13 +80,8 @@ export interface RosterViewer {
   privileged: boolean;
 }
 
-export const ROLE_LABEL: Record<DbRole, string> = {
-  admin: "Admin",
-  broker: "Broker",
-  transaction_coordinator: "Transaction coordinator",
-  agent: "Agent",
-  member: "Member",
-};
+/** Kept as the roster's name for the shared table. */
+export const ROLE_LABEL: Record<DbRole, string> = ROLE_DISPLAY;
 
 /** Senior roles first, then by name. Stable, so the table does not reshuffle. */
 const ROLE_ORDER: Record<DbRole, number> = {
@@ -120,8 +121,22 @@ export function toRosterEntry(row: RosterSourceRow, viewer: RosterViewer): Roste
     imageUrl: resolveImageUrl(row.image, { name: "", role: "", imageUrl: null }),
     isSelf: row.userId === viewer.userId,
   };
-  if (viewer.privileged) entry.status = row.status;
+  if (viewer.privileged) {
+    entry.status = row.status;
+    entry.mlsState = mlsStateFor(row);
+  }
   return entry;
+}
+
+/** The MLS identity state a roster row represents (same rules as Profile). */
+export function mlsStateFor(row: RosterSourceRow): MlsIdentityState {
+  const licence = {
+    licenseNumber: row.profile?.licenseNumber ?? null,
+    licenseState: row.profile?.licenseState ?? null,
+  };
+  if (!normalizeLicense(licence.licenseNumber)) return "no_license";
+  if (!row.mls || !linkMatchesLicense(row.mls, licence)) return "stale";
+  return row.mls.status as MlsIdentityState;
 }
 
 export function rosterFor(rows: readonly RosterSourceRow[], viewer: RosterViewer): RosterEntry[] {

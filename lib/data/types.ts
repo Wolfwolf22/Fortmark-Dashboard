@@ -105,6 +105,11 @@ export interface Listing {
    * listing office to be attributed wherever a listing is shown.
    */
   listingOffice?: { name?: string; mlsId?: string };
+  /**
+   * The signed-in agent's role on this listing, when the listing was read for
+   * My Listings: `primary` (listing agent) or `co_listing`. Absent elsewhere.
+   */
+  agentRole?: "primary" | "co_listing";
   /** True when FortMark is the listing (or co-listing) office, by MLS office id. */
   isFortmark?: boolean;
   /**
@@ -123,8 +128,12 @@ export interface Listing {
 }
 
 export interface ListingFilters {
-  /** "fortmark" restricts the search to FortMark's own listings (by MLS office id). */
-  office?: "fortmark";
+  /**
+   * "fortmark" restricts the search to FortMark's own listings (by MLS office
+   * id); "mine" to the signed-in agent's listings and co-listings (by MLS
+   * member key). Absent means the whole MLS.
+   */
+  office?: "fortmark" | "mine";
   status?: ListingStatus[];
   propertyType?: PropertyType[];
   city?: string[];

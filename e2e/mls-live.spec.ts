@@ -26,7 +26,7 @@ const PRODUCT_KEYS = new Set([
   "id", "mlsNumber", "folioNumber", "address", "city", "zip", "neighborhood", "status", "propertyType",
   "listPrice", "closedPrice", "beds", "baths", "sqft", "lotSqft", "yearBuilt", "listedDate", "closedDate",
   "expiresDate", "daysOnMarket", "agentId", "listingAgent", "photos", "description", "priceHistory",
-  "featured", "source", "coordinates", "listingOffice", "isFortmark", "addressWithheld",
+  "featured", "source", "coordinates", "listingOffice", "isFortmark", "addressWithheld", "agentRole",
 ]);
 const PRIVATE = (process.env.MLS_PRIVATE_LISTINGS ?? "")
   .split(",")
@@ -304,8 +304,9 @@ test("rendered: Listings — MLS search and FortMark listings, detail, deep link
     }
   });
 
-  // MLS search (default: active).
-  await page.goto("/dashboard/listings", { waitUntil: "domcontentloaded", timeout: 60_000 });
+  // MLS search (default: active). Explicit: the scope a screen opens with
+  // now depends on the caller's role and MLS identity.
+  await page.goto("/dashboard/listings?office=all", { waitUntil: "domcontentloaded", timeout: 60_000 });
   const main = page.getByRole("main");
   await expect(main).toContainText(/\d[\d,]* listings/, { timeout: 60_000 });
   const mlsCountText = (await main.innerText()).match(/([\d,]+) listings/)?.[1] ?? "";

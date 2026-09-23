@@ -47,10 +47,10 @@ check("member may not edit", !canEditBrokerage("member"));
 check("editor roles are exactly admin and broker", BROKERAGE_EDITOR_ROLES.join(",") === "admin,broker");
 
 // --- Minimal valid record (the Preview seed shape) ---------------------------------
-const seed = ok({ displayName: "FortMark, LLC", licenseState: "fl", mlsOfficeId: "ftmk01" });
+const seed = ok({ displayName: "FortMark, LLC", licenseState: "fl" });
 check("seed shape is valid", seed !== null);
 check("licence state is upper-cased", seed?.licenseState === "FL");
-check("MLS office id is upper-cased", seed?.mlsOfficeId === "FTMK01");
+check("the MLS office id is not an operator field", seed !== null && !("mlsOfficeId" in seed));
 check("unset fields are null, not invented", seed !== null &&
   [seed.licenseNumber, seed.addressLine1, seed.addressLine2, seed.city, seed.state, seed.postalCode, seed.officePhone, seed.website]
     .every((v) => v === null));
@@ -105,11 +105,11 @@ for (const bad of [
 }
 
 // --- MLS office id -------------------------------------------------------------------
-check("MLS office id accepted", ok({ displayName: "FortMark", mlsOfficeId: "FTMK01" })?.mlsOfficeId === "FTMK01");
-check("OData injection in MLS office id refused", "mlsOfficeId" in errs({ displayName: "FortMark", mlsOfficeId: "FTMK01' or 1 eq 1" }));
-check("MLS office id with space refused", "mlsOfficeId" in errs({ displayName: "FortMark", mlsOfficeId: "FT MK" }));
-check("one-character MLS office id refused", "mlsOfficeId" in errs({ displayName: "FortMark", mlsOfficeId: "F" }));
-check("clearing the MLS office id is allowed (not configured)", ok({ displayName: "FortMark", mlsOfficeId: "" })?.mlsOfficeId === null);
+// System-managed now: an operator cannot type, change or clear it.
+for (const key of ["mlsOfficeId", "mlsOfficeName", "mlsOfficePhone", "mlsOfficeKey", "mlsSyncedAt"]) {
+  check(`system-managed field refused from a save: ${key}`,
+    errs({ displayName: "FortMark", [key]: "FTMK01" })._form === "Only brokerage details can be saved here.");
+}
 
 // --- Only brokerage fields; the tenant never comes from the body --------------------------
 for (const key of ["brokerageKey", "brokerage_key", "id", "role", "userId", "createdByUserId", "updatedByUserId", "updatedAt", "createdAt"]) {
@@ -124,7 +124,7 @@ const before: BrokerageValues = seed!;
 const after: BrokerageValues = { ...before, officePhone: "+19545550100", website: "https://fortmark.example/" };
 check("changed fields names only the changed ones", changedFields(before, after).join(",") === "officePhone,website");
 check("no change is an empty list", changedFields(before, before).length === 0);
-check("first save lists every set field", changedFields(null, before).join(",") === "displayName,licenseState,mlsOfficeId");
+check("first save lists every set field", changedFields(null, before).join(",") === "displayName,licenseState");
 
 // --- What the browser receives --------------------------------------------------------------
 const view = toBrokerageView({
@@ -136,8 +136,9 @@ const view = toBrokerageView({
   updatedAt: new Date("2026-09-23T00:00:00Z"),
 } as BrokerageValues & { updatedAt: Date });
 const viewKeys = Object.keys(view).sort().join(",");
-check("view carries exactly the brokerage fields and updatedAt",
-  viewKeys === [...BROKERAGE_FIELDS, "updatedAt"].sort().join(","));
+check("view carries the operator fields, the synced MLS section and updatedAt",
+  viewKeys === [...BROKERAGE_FIELDS, "mlsOfficeId", "mlsOfficeName", "mlsOfficePhone", "mlsSyncedAt", "updatedAt"].sort().join(","));
+check("view never carries the MLS office key", !("mlsOfficeKey" in view));
 check("view never carries the tenant key, row id or user ids",
   !("brokerageKey" in view) && !("id" in view) && !("createdByUserId" in view) && !("updatedByUserId" in view));
 
@@ -172,7 +173,14 @@ check("migration 0009 creates the unique index", /CREATE UNIQUE INDEX "brokerage
 
 // --- Static: no hard-coded office; general search independent ----------------------------------
 const listingsRoute = readFileSync("app/api/listings/route.ts", "utf8");
-check("listings route reads the office id from brokerage identity", /brokerageMlsOfficeId\(caller\.clerkUserId\)/.test(listingsRoute));
+check("listings route resolves office and identity from the session", /callerListingContext\(caller\.clerkUserId\)/.test(listingsRoute));
+const svc = readFileSync("lib/brokerage/service.ts", "utf8");
+check("FortMark's office id is system configuration", /FORTMARK_MLS_OFFICE_ID/.test(svc) && /export function fortmarkOfficeConfig/.test(svc));
+check("the operator save never writes MLS columns",
+  !/mlsOffice(Id|Key|Name|Phone)\s*:/.test(svc.slice(svc.indexOf("export async function saveBrokerage"), svc.indexOf("// --- System sync"))));
+check("the office sync never writes operator-owned fields",
+  !/licenseNumber|addressLine1|website|officePhone:/.test(svc.slice(svc.indexOf("const mls = {"), svc.indexOf("try {", svc.indexOf("const mls = {")))));
+check("the office sync creates a record only with the MLS's own office name", /if \(!before && !office\.name\) return/.test(svc));
 check("FortMark scope with no office id is refused, not widened", listingsRoute.includes("fortmark_office_not_configured"));
 for (const f of ["lib/mls/service.ts", "lib/mls/normalize.ts", "lib/mls/config.ts", "app/api/listings/route.ts", "app/api/listings/featured/route.ts", "app/api/listings/[id]/route.ts"]) {
   check(`no hard-coded FortMark office id in ${f}`, !readFileSync(f, "utf8").includes("FTMK01"));

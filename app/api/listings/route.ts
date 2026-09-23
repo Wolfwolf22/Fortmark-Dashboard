@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
-import { brokerageMlsOfficeId } from "@/lib/brokerage/service";
+import { callerListingContext } from "@/lib/mls-identity/listing-context";
 import { searchSampleListings } from "@/lib/data/sample-listings";
 import { sampleListingsEnabled } from "@/lib/mls/config";
 import { failureResponse, mlsConfig, notConfigured, NO_STORE } from "@/lib/mls/http";
@@ -37,20 +37,32 @@ export async function GET(request: NextRequest) {
     return notConfigured();
   }
 
-  // The brokerage's MLS office id, from brokerage identity. General search
-  // works without it (rows are simply not flagged as FortMark's); the
-  // FortMark scope refuses rather than widening to the whole MLS.
-  const office = await brokerageMlsOfficeId(caller.clerkUserId);
-  const officeId = office.ok ? office.officeId : null;
+  // Who is asking, from the session: FortMark's office (system configuration)
+  // and the caller's linked MLS member. General search needs neither; the
+  // scoped views refuse rather than widening to the whole MLS.
+  const ctx = await callerListingContext(caller.clerkUserId);
+  const officeId = ctx.officeId;
   if (query.office === "fortmark" && !officeId) {
     return NextResponse.json(
-      { error: office.ok ? "fortmark_office_not_configured" : "fortmark_office_unavailable" },
-      { status: office.ok ? 409 : 503, headers: NO_STORE }
+      { error: ctx.officeKnown ? "fortmark_office_not_configured" : "fortmark_office_unavailable" },
+      { status: ctx.officeKnown ? 409 : 503, headers: NO_STORE }
     );
   }
+  // My Listings needs a linked MLS member. Anything else is not "zero
+  // listings" — it is "we do not know who you are in the MLS", said as such.
+  if (query.office === "mine" && !ctx.identity.ok) {
+    return NextResponse.json(
+      { error: "mls_identity_not_linked", identity: ctx.identity.state },
+      { status: 409, headers: NO_STORE }
+    );
+  }
+  const memberKey = ctx.identity.ok ? ctx.identity.memberKey : null;
 
   try {
-    const page = await searchListings(config.config, query, request.signal, { brokerageOfficeId: officeId });
+    const page = await searchListings(config.config, query, request.signal, {
+      brokerageOfficeId: officeId,
+      memberKey,
+    });
     return NextResponse.json(page, { headers: NO_STORE });
   } catch (error) {
     return failureResponse(error);

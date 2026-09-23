@@ -11,7 +11,7 @@ import "server-only";
  * here, next to the query.
  */
 import { eq } from "drizzle-orm";
-import { dashboardUsers, professionalProfiles, profileImages } from "../db/schema.ts";
+import { dashboardUsers, mlsMemberLinks, professionalProfiles, profileImages } from "../db/schema.ts";
 import { isPrivileged, resolveActor, type ActorFailure, type DbRole } from "../auth/actor.ts";
 import { profileDatabaseEnabled, type EnvLike } from "../flags.ts";
 import { rosterFor, type AccountStatus, type RosterEntry } from "./roster.ts";
@@ -47,10 +47,14 @@ export async function listTeam(clerkUserId: string, env: EnvLike = process.env):
       activeImageUrl: profileImages.activeImageUrl,
       clerkImageUrl: profileImages.clerkImageUrl,
       imageId: profileImages.id,
+      mlsStatus: mlsMemberLinks.status,
+      mlsLicenseNumber: mlsMemberLinks.licenseNumber,
+      mlsLicenseState: mlsMemberLinks.licenseState,
     })
     .from(dashboardUsers)
     .leftJoin(professionalProfiles, eq(professionalProfiles.userId, dashboardUsers.id))
-    .leftJoin(profileImages, eq(profileImages.userId, dashboardUsers.id));
+    .leftJoin(profileImages, eq(profileImages.userId, dashboardUsers.id))
+    .leftJoin(mlsMemberLinks, eq(mlsMemberLinks.userId, dashboardUsers.id));
 
   const items = rosterFor(
     rows.map((r) => ({
@@ -70,6 +74,9 @@ export async function listTeam(clerkUserId: string, env: EnvLike = process.env):
             licenseNumber: r.licenseNumber,
             businessEmail: r.businessEmail,
           }
+        : null,
+      mls: r.mlsStatus
+        ? { status: r.mlsStatus, licenseNumber: r.mlsLicenseNumber, licenseState: r.mlsLicenseState }
         : null,
       image: r.imageId
         ? {

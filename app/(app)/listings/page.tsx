@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ListingsError, searchListings } from "@/lib/data/adapters/listings";
+import { getListingScopeInfo, ListingsError, searchListings } from "@/lib/data/adapters/listings";
 import { useQuery } from "@/lib/data/hooks";
 import type { ListingSortKey, SortDirection } from "@/lib/data/types";
 import { cn } from "@/lib/utils";
@@ -45,7 +45,13 @@ function failureCopy(error: Error): { title: string; description: string } {
       return {
         title: "FortMark's MLS office is not configured.",
         description:
-          "FortMark's own listings are found by its MLS office id. A broker or admin can set it in Settings › Brokerage. MLS search still works.",
+          "FortMark's own listings are found by its MLS office, which is set in the system configuration. MLS search still works.",
+      };
+    case "mls_identity_not_linked":
+      return {
+        title: "MLS identity not connected.",
+        description:
+          "My Listings is found by your MLS membership, matched from the professional licence on your profile. Check your licence in Settings › Profile, or ask your broker. MLS search still works.",
       };
     case "fortmark_office_unavailable":
       return {
@@ -75,29 +81,53 @@ function failureCopy(error: Error): { title: string; description: string } {
   }
 }
 
-type ListingScope = "mls" | "fortmark";
+type ListingScope = "mine" | "fortmark" | "mls";
 
 const SCOPE_OPTIONS: { value: ListingScope; label: string }[] = [
-  { value: "mls", label: "MLS search" },
+  { value: "mine", label: "My listings" },
   { value: "fortmark", label: "FortMark listings" },
+  { value: "mls", label: "MLS search" },
 ];
+
+/** `?office=` value for a scope; MLS search is explicit so a default never overrides it. */
+const OFFICE_PARAM: Record<ListingScope, string> = { mine: "mine", fortmark: "fortmark", mls: "all" };
+
+function scopeFromParam(v: string | null): ListingScope | null {
+  if (v === "mine" || v === "fortmark") return v;
+  if (v === "all") return "mls";
+  return null;
+}
 
 export default function ListingsPage() {
   const [filterState, setFilterState] = useState<ListingFilterState>(
     DEFAULT_LISTING_FILTER_STATE
   );
-  // FortMark's own book, by MLS office id, or the whole MLS. Addressable as
-  // `?office=fortmark` so Home can link straight to it.
-  const [scope, setScope] = useState<ListingScope>("mls");
+  // The agent's own book (listing + co-listing agent), FortMark's office
+  // book, or the whole MLS. Addressable as `?office=mine|fortmark|all` so Home
+  // can link straight to one. With no parameter the server picks the default
+  // by role and MLS identity: brokers/admins → FortMark, a linked agent →
+  // theirs, anyone else → MLS search. `null` until decided, so the first
+  // request is never for the wrong scope.
+  const [scope, setScope] = useState<ListingScope | null>(null);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("office") === "fortmark") setScope("fortmark");
+    const fromUrl = scopeFromParam(new URLSearchParams(window.location.search).get("office"));
+    if (fromUrl) {
+      setScope(fromUrl);
+      return;
+    }
+    let cancelled = false;
+    getListingScopeInfo().then((info) => {
+      if (!cancelled) setScope(info?.defaultScope ?? "mls");
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
   const changeScope = (next: ListingScope) => {
     setScope(next);
     setPage(1);
     const url = new URL(window.location.href);
-    if (next === "fortmark") url.searchParams.set("office", "fortmark");
-    else url.searchParams.delete("office");
+    url.searchParams.set("office", OFFICE_PARAM[next]);
     window.history.replaceState(null, "", url);
   };
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -119,9 +149,11 @@ export default function ListingsPage() {
   // query rather than applied to a page already in hand.
   const { data, loading, error, refetch } = useQuery(
     () =>
-      searchListings({
+      scope === null
+        ? new Promise<never>(() => {})
+        : searchListings({
         ...toListingFilters(filterState, debouncedQuery),
-        office: scope === "fortmark" ? "fortmark" : undefined,
+        office: scope === "fortmark" || scope === "mine" ? scope : undefined,
         page,
         pageSize: LISTINGS_PAGE_SIZE,
         sortKey: view === "table" ? sortKey : "listedDate",
@@ -177,7 +209,7 @@ export default function ListingsPage() {
     <div className="space-y-4">
       <Segmented<ListingScope>
         options={SCOPE_OPTIONS}
-        value={scope}
+        value={scope ?? "mls"}
         onChange={changeScope}
         ariaLabel="Listing scope"
       />
@@ -228,8 +260,12 @@ export default function ListingsPage() {
         <Card>
           <EmptyState
             icon={SearchX}
-            title="No listings match these filters."
-            description="Clear one or two and try again."
+            title={scope === "mine" ? "You have no MLS listings matching these filters." : "No listings match these filters."}
+            description={
+              scope === "mine"
+                ? "Your MLS identity is connected; the MLS shows no listing where you are the listing or co-listing agent for these filters."
+                : "Clear one or two and try again."
+            }
             action={
               <Button variant="outline" size="sm" onClick={clearFilters}>
                 Clear filters

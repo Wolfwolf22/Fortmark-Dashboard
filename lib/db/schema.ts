@@ -12,6 +12,7 @@ import {
   type AnyPgColumn,
   bigint,
   boolean,
+  check,
   date,
   index,
   integer,
@@ -279,6 +280,8 @@ export const RELEASE_1_AUDIT_EVENTS = [
   // Core V1 — brokerage identity. Field NAMES only in metadata, never values.
   "brokerage_identity_created",
   "brokerage_identity_updated",
+  "brokerage_mls_synced",
+  "mls_identity_resolved",
 ] as const;
 
 export type AuditEventType = (typeof RELEASE_1_AUDIT_EVENTS)[number];
@@ -785,15 +788,18 @@ export type AiPreparedActionRow = typeof aiPreparedActions.$inferSelect;
 // bound to the same `brokerage_key` every other domain already scopes by — not
 // a second organisation system.
 //
-// Every value here is FortMark-owned and operator-provided. Nothing is
-// populated from the MLS: the feed may SUPPLEMENT the display (its office
-// phone, as a labelled fallback) but can never overwrite this row. The licence
-// is stored, never "verified" — no licensing authority is integrated.
+// One central FortMark record per `brokerage_key` — never per user. Two kinds
+// of field live here (migration 0010 split them):
 //
-// `mls_office_id` is operational configuration: it is how FortMark's own
-// listings are recognised in the MLS (listing or co-listing office). While it
-// is null the FortMark-specific listing views say the office is not
-// configured; general MLS search does not depend on it.
+//   OPERATOR-OWNED  display name, brokerage licence, legal office address,
+//                   website, preferred office phone. An admin or broker edits
+//                   these; the MLS never overwrites them. The licence is
+//                   stored, never "verified" — no licensing authority exists
+//                   here.
+//   SYSTEM-MANAGED  `mls_office_id` and the `mls_office_*` columns. Written
+//                   only by the MLS sync from the Office record of the
+//                   configured FortMark office (`FORTMARK_MLS_OFFICE_ID`).
+//                   Nobody types them.
 // ===========================================================================
 export const brokerageIdentities = pgTable(
   "brokerage_identities",
@@ -814,8 +820,14 @@ export const brokerageIdentities = pgTable(
     officePhone: text("office_phone"),
     /** http(s) only. */
     website: text("website"),
-    /** The MLS office id FortMark lists under (miamire: FTMK01). */
+    /** The MLS office id FortMark lists under (miamire: FTMK01). System-managed. */
     mlsOfficeId: text("mls_office_id"),
+    /** Office record fields as the MLS states them. System-managed (0010). */
+    mlsOfficeKey: text("mls_office_key"),
+    mlsOfficeName: text("mls_office_name"),
+    mlsOfficePhone: text("mls_office_phone"),
+    /** When the Office record was last read successfully. */
+    mlsSyncedAt: timestamp("mls_synced_at", { withTimezone: true }),
     createdByUserId: uuid("created_by_user_id").references(() => dashboardUsers.id, {
       onDelete: "set null",
     }),
@@ -829,3 +841,70 @@ export const brokerageIdentities = pgTable(
 );
 
 export type BrokerageIdentityRow = typeof brokerageIdentities.$inferSelect;
+
+// ===========================================================================
+// MLS member link — migration 0010.
+//
+// Which MLS member a dashboard user is, resolved by the SERVER from the
+// professional licence on their profile (Member.MemberStateLicense). One row
+// per user. The licence is the human-entered anchor; `member_key` is the
+// stable identifier every later query uses, so the licence is matched once,
+// not on every page load.
+//
+// `license_number` / `license_state` record what was resolved. When the
+// profile's licence no longer equals them the link is stale and nothing may
+// use it until it is resolved again.
+//
+// Status is one of MLS_LINK_STATUSES (checked by the database):
+//   linked           exactly one active member, in FortMark's MLS office
+//   office_mismatch  exactly one member, but another office — broker review
+//   not_found        no active member holds this licence in this MLS
+//   ambiguous        more than one active member — never guessed
+//   conflict         the member is already linked to another dashboard user
+//   unavailable      the MLS could not be asked; nothing is concluded
+//
+// Not a licence verification: "not_found" means the MLS does not show it, not
+// that the licence is invalid. Never creates dashboard users.
+// ===========================================================================
+export const MLS_LINK_STATUSES = [
+  "linked",
+  "office_mismatch",
+  "not_found",
+  "ambiguous",
+  "conflict",
+  "unavailable",
+] as const;
+
+export const mlsMemberLinks = pgTable(
+  "mls_member_links",
+  {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => dashboardUsers.id, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    /** The licence this row was resolved from (normalised). */
+    licenseNumber: text("license_number"),
+    licenseState: text("license_state"),
+    /** Member.MemberKey — the stable key listing queries use. */
+    memberKey: text("member_key"),
+    /** Member.MemberMlsId — shown to brokers, matched on listings as a fallback. */
+    memberMlsId: text("member_mls_id"),
+    /** Member.OfficeMlsId at resolution time. */
+    officeMlsId: text("office_mls_id"),
+    /** How many active members held the licence (0, 1, or more). */
+    candidateCount: integer("candidate_count").notNull().default(0),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
+    linkedAt: timestamp("linked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("mls_member_links_member_key_idx").on(t.memberKey),
+    check(
+      "mls_member_links_status_check",
+      sql`${t.status} in ('linked','office_mismatch','not_found','ambiguous','conflict','unavailable')`
+    ),
+  ]
+);
+
+export type MlsMemberLinkRow = typeof mlsMemberLinks.$inferSelect;

@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/table";
 import { getTeamRoster, TeamError } from "@/lib/data/adapters/team";
 import type { RosterEntry } from "@/lib/team/roster";
+import { MLS_STATE_LABEL } from "@/lib/mls-identity/rules";
 import { useQuery } from "@/lib/data/hooks";
 import { SubsystemNotConnected, unavailableSubsystem } from "@/components/common/subsystem-state";
 import { SampleDataNotice } from "@/components/listings/sample-data-notice";
@@ -122,6 +123,7 @@ function TeamRosterCard({ items, viewerPrivileged }: { items: RosterEntry[]; vie
               <TableHead>Role</TableHead>
               <TableHead>Licence</TableHead>
               {viewerPrivileged && <TableHead>Status</TableHead>}
+              {viewerPrivileged && <TableHead>MLS</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -159,6 +161,15 @@ function TeamRosterCard({ items, viewerPrivileged }: { items: RosterEntry[]; vie
                           {STATUS_LABEL[member.status]}
                         </Badge>
                       )}
+                    </TableCell>
+                  )}
+                  {viewerPrivileged && (
+                    <TableCell className="text-[13px]">
+                      {member.mlsState ? (
+                        <span className={member.mlsState === "linked" ? "text-foreground" : "text-muted-foreground"}>
+                          {MLS_STATE_LABEL[member.mlsState]}
+                        </span>
+                      ) : null}
                     </TableCell>
                   )}
                 </TableRow>

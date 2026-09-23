@@ -3,9 +3,16 @@
  * browser (types, validation messages).
  *
  * The domain answers one question: which licensed brokerage does this
- * dashboard represent? Every stored value is FortMark-owned and
- * operator-provided. The MLS may supplement the DISPLAY (its office phone, as
- * a labelled fallback) but never writes here.
+ * dashboard represent? FortMark only — one central record, never per user.
+ *
+ * Two kinds of field (see the schema):
+ *   OPERATOR-OWNED  name, brokerage licence, legal address, website, preferred
+ *                   phone. Admin/broker edit them here; the MLS never writes
+ *                   them.
+ *   SYSTEM-MANAGED  the MLS office id and the MLS office name/phone. Written
+ *                   only by the MLS sync (`FORTMARK_MLS_OFFICE_ID` → Office
+ *                   record). They are NOT inputs: a body carrying
+ *                   `mlsOfficeId` is refused like any other unknown key.
  *
  * Validation is shape only. A brokerage licence number is stored as the
  * operator typed it (normalised), never "verified": there is no licensing
@@ -53,7 +60,6 @@ export const brokerageInputSchema = z
     postalCode: z.string().max(20).nullish(),
     officePhone: z.string().max(40).nullish(),
     website: z.string().max(400).nullish(),
-    mlsOfficeId: z.string().max(40).nullish(),
   })
   .strict();
 
@@ -70,7 +76,6 @@ export interface BrokerageValues {
   postalCode: string | null;
   officePhone: string | null;
   website: string | null;
-  mlsOfficeId: string | null;
 }
 
 export const BROKERAGE_FIELDS: readonly BrokerageField[] = [
@@ -84,12 +89,12 @@ export const BROKERAGE_FIELDS: readonly BrokerageField[] = [
   "postalCode",
   "officePhone",
   "website",
-  "mlsOfficeId",
 ];
 
 const US_STATE = new Set<string>(LICENSE_STATES);
 const POSTAL = /^\d{5}(?:-\d{4})?$/;
-const MLS_OFFICE = /^[A-Z0-9]{2,20}$/;
+/** Shape of an MLS office id (system configuration, validated at read). */
+export const MLS_OFFICE_ID = /^[A-Z0-9]{2,20}$/;
 
 /**
  * An http(s) website, or null. A bare domain gains `https://`. Anything with
@@ -163,11 +168,6 @@ export function parseBrokerageInput(raw: unknown): BrokerageParse {
   const site = toWebsite(input.website);
   if (!site.ok) errors.website = "Enter a web address starting with http:// or https://.";
 
-  const mlsOfficeId = cleanText(input.mlsOfficeId)?.toUpperCase() ?? null;
-  if (mlsOfficeId && !MLS_OFFICE.test(mlsOfficeId)) {
-    errors.mlsOfficeId = "Use the MLS office id exactly as the MLS issues it (letters and digits).";
-  }
-
   if (Object.keys(errors).length > 0) return { ok: false, fieldErrors: errors };
   return {
     ok: true,
@@ -182,7 +182,6 @@ export function parseBrokerageInput(raw: unknown): BrokerageParse {
       postalCode,
       officePhone,
       website: site.ok ? site.value : null,
-      mlsOfficeId,
     },
   };
 }
@@ -194,32 +193,43 @@ export function changedFields(before: BrokerageValues | null, after: BrokerageVa
 
 // --- Output ------------------------------------------------------------------
 
-/** What the browser receives. No row id, tenant key or user ids. */
-export interface BrokerageView extends BrokerageValues {
-  updatedAt: string;
+/** The system-managed MLS section, as last synced from the Office record. */
+export interface BrokerageMlsView {
+  mlsOfficeId: string | null;
+  mlsOfficeName: string | null;
+  mlsOfficePhone: string | null;
+  mlsSyncedAt: string | null;
 }
 
-export interface MlsOfficeView {
-  name: string | null;
-  phone: string | null;
+/** What the browser receives. No row id, tenant key, office key or user ids. */
+export interface BrokerageView extends BrokerageValues, BrokerageMlsView {
+  updatedAt: string;
 }
 
 export interface BrokerageResponse {
   identity: BrokerageView | null;
   canEdit: boolean;
-  /**
-   * The MLS's own description of the configured office, when the MLS is
-   * connected and the office currently has a listing in the feed. Display
-   * supplement only; never stored.
-   */
-  mlsOffice: MlsOfficeView | null;
+  /** Whether the system knows which MLS office is FortMark's. */
+  officeConfigured: boolean;
 }
 
-export function toBrokerageView(row: BrokerageValues & { updatedAt: Date | string }): BrokerageView {
+type BrokerageRowLike = BrokerageValues & {
+  updatedAt: Date | string;
+  mlsOfficeId?: string | null;
+  mlsOfficeName?: string | null;
+  mlsOfficePhone?: string | null;
+  mlsSyncedAt?: Date | string | null;
+};
+
+export function toBrokerageView(row: BrokerageRowLike): BrokerageView {
   const values = Object.fromEntries(BROKERAGE_FIELDS.map((f) => [f, row[f] ?? null])) as unknown as BrokerageValues;
   return {
     ...values,
     displayName: row.displayName,
+    mlsOfficeId: row.mlsOfficeId ?? null,
+    mlsOfficeName: row.mlsOfficeName ?? null,
+    mlsOfficePhone: row.mlsOfficePhone ?? null,
+    mlsSyncedAt: row.mlsSyncedAt ? new Date(row.mlsSyncedAt).toISOString() : null,
     updatedAt: new Date(row.updatedAt).toISOString(),
   };
 }

@@ -114,11 +114,13 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
   {
     id: "mls",
     step: 5,
-    title: "Your MLS identity",
-    // Says what actually happens. The previous wording promised a verification
-    // ahead of connecting listings that nothing in this application performs.
-    description: "Record the MLS agent ID you already hold. FortMark stores it as provided.",
-    fields: ["mlsAgentId", "mlsOrganization"],
+    title: "Your MLS connection",
+    // Informational. FortMark matches the professional licence from the
+    // credentials step to the MLS member roster itself; the agent is never
+    // asked for an MLS id, an office or a brokerage. Saving the licence is
+    // never blocked by the MLS being unavailable.
+    description: "FortMark connects your MLS membership from your professional licence.",
+    fields: [],
     skippable: true,
   },
   {

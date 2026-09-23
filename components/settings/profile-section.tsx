@@ -38,7 +38,7 @@ import { ProfileEditor } from "@/components/profile/profile-editor";
 import type { ProfileDetail } from "@/lib/profile/display";
 import { accountUrl, apiPath, ROUTES } from "@/lib/routes";
 import { titleLabel } from "@/lib/profile/titles";
-import { mlsBoardLabel, mlsStatusLabel } from "@/lib/profile/mls";
+import { MlsIdentityStatus } from "@/components/profile/mls-identity-status";
 import { formatPhoneDisplay } from "@/lib/profile/links";
 
 /** One read-only field, styled to match the Input height it replaces. */
@@ -265,7 +265,8 @@ function ProfileRecord({
 }) {
   const licence =
     [profile?.licenseState, profile?.licenseNumber].filter(Boolean).join(" ") || null;
-  const mlsId = profile?.mlsAgentId ?? null;
+  // Re-read the MLS status whenever the licence it is matched from changes.
+  const mlsRefreshKey = licence ?? "";
 
   return (
     <div className="space-y-5">
@@ -300,10 +301,9 @@ function ProfileRecord({
         <Detail label="Location" value={profile?.locationDisplay ?? null} />
         <Detail label="Phone" value={formatPhoneDisplay(profile?.phoneE164)} />
         <Detail label="Alternative email" value={profile?.businessEmail ?? null} />
-        <Detail label="Licence" value={licence} />
+        <Detail label="Professional licence (self-reported)" value={licence} />
         <Detail label="NRDS ID" value={profile?.nrdsNumber ?? null} />
-        <Detail label="MLS agent ID" value={mlsId} />
-        <Detail label="MLS or board" value={mlsBoardLabel(profile?.mlsOrganization)} />
+        <MlsIdentityStatus refreshKey={mlsRefreshKey} />
       </dl>
 
       {profile?.biography && (
@@ -315,16 +315,6 @@ function ProfileRecord({
             {profile.biography}
           </dd>
         </div>
-      )}
-
-      {mlsId && (
-        <p className="text-[12px] text-muted-foreground">
-          MLS identity is self-reported —{" "}
-          <span className="font-medium text-foreground">
-            {mlsStatusLabel(profile?.mlsVerificationStatus ?? "unverified")}
-          </span>
-          .
-        </p>
       )}
 
       <Button className="h-10 w-full min-w-0 px-3 text-[13px] sm:w-auto" onClick={onEdit}>

@@ -8,6 +8,11 @@
  * controls standing in for permissions they do not have. The server decides
  * who may edit — `canEdit` only chooses what to render.
  *
+ * FortMark-only: one central record, and nobody chooses a brokerage. The MLS
+ * section (office id, name, phone) is SYSTEM-MANAGED — synced from the
+ * configured FortMark office's Office record — and is never a form field.
+ * Admin/broker edit only operator-owned fields.
+ *
  * Two things are deliberately NOT claimed:
  *   - licence status. The licence number is shown as entered; there is no
  *     licensing-authority check behind it, so nothing says verified or active.
@@ -32,6 +37,7 @@ import {
   BrokerageError,
   getBrokerageState,
   saveBrokerageIdentity,
+  syncBrokerageFromMls,
   type BrokerageFieldErrors,
 } from "@/lib/data/adapters/brokerage";
 import type {
@@ -95,7 +101,26 @@ function BrokerageIdentityCard({ initial }: { initial: BrokerageResponse }) {
     }
   }, [mode]);
 
-  const { identity, canEdit, mlsOffice } = state;
+  const { identity, canEdit, officeConfigured } = state;
+  const [syncing, setSyncing] = React.useState(false);
+
+  async function refreshFromMls() {
+    setSyncing(true);
+    setNotice(null);
+    try {
+      const result = await syncBrokerageFromMls();
+      if (result.identity) setState((s) => ({ ...s, identity: result.identity }));
+      setNotice(
+        result.ok
+          ? "MLS office details refreshed."
+          : result.status === "not_configured"
+            ? "FortMark's MLS office is not configured in the system."
+            : "The MLS could not be reached. Try again shortly."
+      );
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   function close(saved?: BrokerageResponse) {
     if (saved) {
@@ -137,13 +162,18 @@ function BrokerageIdentityCard({ initial }: { initial: BrokerageResponse }) {
         {mode === "edit" && canEdit ? (
           <BrokerageEditor identity={identity} onSaved={(s) => close(s)} onCancel={() => close()} />
         ) : identity ? (
-          <BrokerageDetails identity={identity} mlsOffice={mlsOffice} />
+          <BrokerageDetails
+            identity={identity}
+            officeConfigured={officeConfigured}
+            onRefresh={canEdit ? refreshFromMls : undefined}
+            refreshing={syncing}
+          />
         ) : canEdit ? (
           <div className="space-y-3">
             <p className="text-sm font-semibold text-foreground">Brokerage profile has not been configured.</p>
             <p className="text-sm text-muted-foreground">
-              Add the brokerage&apos;s name, licence, office and MLS office id. FortMark&apos;s own listings
-              on Home and Listings appear once the MLS office id is set.
+              Add FortMark&apos;s legal name, brokerage licence and office. The MLS office is connected by
+              the system and needs no entry here.
             </p>
             <Button
               ref={editButton}
@@ -221,13 +251,18 @@ function displayPhone(v: string | null): string | null {
 
 function BrokerageDetails({
   identity,
-  mlsOffice,
+  officeConfigured,
+  onRefresh,
+  refreshing,
 }: {
   identity: BrokerageView;
-  mlsOffice: BrokerageResponse["mlsOffice"];
+  officeConfigured: boolean;
+  onRefresh?: () => void;
+  refreshing: boolean;
 }) {
   const storedPhone = displayPhone(identity.officePhone);
-  const mlsPhone = !storedPhone ? displayPhone(mlsOffice?.phone ?? null) : null;
+  const mlsPhone = !storedPhone ? displayPhone(identity.mlsOfficePhone) : null;
+  const synced = identity.mlsSyncedAt ? new Date(identity.mlsSyncedAt) : null;
   const updated = new Date(identity.updatedAt);
 
   return (
@@ -244,13 +279,17 @@ function BrokerageDetails({
         <Row label="Licence state" value={identity.licenseState} />
       </Group>
       <Group title="Office">
-        <Row label="Office address" value={officeAddress(identity)} />
+        <Row
+          label="Office address"
+          value={officeAddress(identity)}
+          source={officeAddress(identity) ? "FortMark record" : undefined}
+        />
       </Group>
       <Group title="Contact">
         <Row
           label="Office phone"
           value={storedPhone ?? mlsPhone}
-          source={mlsPhone ? "From the MLS" : undefined}
+          source={mlsPhone ? "From the MLS" : storedPhone ? "FortMark record" : undefined}
           hint={mlsPhone ? "Shown from the MLS because no office phone has been entered." : undefined}
         />
         <Row
@@ -269,17 +308,35 @@ function BrokerageDetails({
           }
         />
       </Group>
-      <Group title="MLS">
+      <Group title="MLS office · synced from MLS">
         <Row
-          label="MLS office id"
-          value={identity.mlsOfficeId}
+          label="MLS office"
+          value={
+            identity.mlsOfficeId
+              ? [identity.mlsOfficeName, identity.mlsOfficeId].filter(Boolean).join(" · ")
+              : null
+          }
           hint={
             identity.mlsOfficeId
-              ? "FortMark listings on Home and Listings are this office's listings."
-              : "Not configured. FortMark listings stay empty until it is set."
+              ? "System-managed. FortMark listings are this office's listings; agents are matched to it from their licence."
+              : officeConfigured
+                ? "Waiting for the first sync from the MLS."
+                : "FortMark's MLS office is not configured in the system."
           }
         />
-        {mlsOffice?.name && <Row label="Office name in the MLS" value={mlsOffice.name} source="From the MLS" />}
+        <Row label="MLS office phone" value={displayPhone(identity.mlsOfficePhone)} />
+        {synced && !Number.isNaN(synced.getTime()) && (
+          <p className="text-[12px] text-muted-foreground sm:col-span-2">
+            Last synced {synced.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+          </p>
+        )}
+        {onRefresh && (
+          <div className="sm:col-span-2">
+            <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
+              {refreshing ? "Refreshing…" : "Refresh from MLS"}
+            </Button>
+          </div>
+        )}
       </Group>
       {!Number.isNaN(updated.getTime()) && (
         <p className="text-[12px] text-muted-foreground">
@@ -305,7 +362,6 @@ const EMPTY: FormState = {
   postalCode: "",
   officePhone: "",
   website: "",
-  mlsOfficeId: "",
 };
 
 function toForm(identity: BrokerageView | null): FormState {
@@ -321,7 +377,6 @@ function toForm(identity: BrokerageView | null): FormState {
     postalCode: identity.postalCode ?? "",
     officePhone: displayPhone(identity.officePhone) ?? "",
     website: identity.website ?? "",
-    mlsOfficeId: identity.mlsOfficeId ?? "",
   };
 }
 
@@ -338,7 +393,6 @@ function toValues(form: FormState): BrokerageValues {
     postalCode: v(form.postalCode),
     officePhone: v(form.officePhone),
     website: v(form.website),
-    mlsOfficeId: v(form.mlsOfficeId),
   };
 }
 
@@ -353,7 +407,6 @@ const FIELD_ORDER: BrokerageField[] = [
   "postalCode",
   "officePhone",
   "website",
-  "mlsOfficeId",
 ];
 
 const fieldId = (f: BrokerageField) => `brokerage-${f}`;
@@ -508,14 +561,9 @@ function BrokerageEditor({
         {field("officePhone", "Office phone", { type: "tel", autoComplete: "tel", maxLength: 20 })}
         {field("website", "Website", { type: "url", inputMode: "url", placeholder: "https://", maxLength: 400 })}
       </fieldset>
-      <fieldset className="grid min-w-0 gap-4 sm:grid-cols-2">
-        <legend className="mb-3 text-sm font-semibold text-foreground">MLS</legend>
-        {field("mlsOfficeId", "MLS office id", {
-          autoComplete: "off",
-          maxLength: 20,
-          hint: "As the MLS issues it. FortMark listings on Home and Listings are this office's listings.",
-        })}
-      </fieldset>
+      <p className="text-[12px] text-muted-foreground">
+        The MLS office is system-managed and synced from the MLS; it is not edited here.
+      </p>
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={saving}>
           {saving ? "Saving…" : "Save"}

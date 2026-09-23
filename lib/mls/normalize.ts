@@ -205,6 +205,11 @@ export interface ListingContext {
    * means no row is flagged — never a guess.
    */
   brokerageOfficeId?: string | null;
+  /**
+   * The signed-in agent's MLS member key (My Listings). When set, the listing
+   * records the agent's role on it; nothing is flagged when absent.
+   */
+  memberKey?: string | null;
 }
 
 export function toListing(r: ResoRecord, photos: string[] = [], ctx: ListingContext = {}): Listing | null {
@@ -270,7 +275,16 @@ export function toListing(r: ResoRecord, photos: string[] = [], ctx: ListingCont
         (officeMlsId === ctx.brokerageOfficeId || coOfficeMlsId === ctx.brokerageOfficeId)
     ),
     ...(addressWithheld ? { addressWithheld: true } : {}),
+    ...agentRoleFor(r, ctx.memberKey),
   };
+}
+
+/** The caller's role on a listing, by stable member key. Never by name. */
+function agentRoleFor(r: ResoRecord, memberKey: string | null | undefined): { agentRole?: "primary" | "co_listing" } {
+  if (!memberKey) return {};
+  if (str(r.ListAgentKey) === memberKey) return { agentRole: "primary" };
+  if (str(r.CoListAgentKey) === memberKey) return { agentRole: "co_listing" };
+  return {};
 }
 
 /**

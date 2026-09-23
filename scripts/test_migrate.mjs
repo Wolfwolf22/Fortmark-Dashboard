@@ -207,6 +207,17 @@ try {
       dup = true;
     }
     check("a second identity for one brokerage key is refused", dup);
+    const l = await query("fresh", "select to_regclass('public.mls_member_links') t");
+    check("0010 creates mls_member_links", Boolean(l[0].t));
+    await query("fresh", "insert into dashboard_users (clerk_user_id, primary_email, status, role) values ('user_testmigrate0001', 'm@x.test', 'active', 'agent')");
+    await query("fresh", "insert into mls_member_links (user_id, status) select id, 'linked' from dashboard_users where clerk_user_id = 'user_testmigrate0001'");
+    let badStatus = "";
+    try {
+      await query("fresh", "update mls_member_links set status = 'verified_by_magic'");
+    } catch (e) {
+      badStatus = String(e?.message ?? e);
+    }
+    check("an unknown MLS link status is refused by the database", /mls_member_links_status_check/.test(badStatus));
 
     // 2. Idempotent.
     const again = await runMigrations(url);

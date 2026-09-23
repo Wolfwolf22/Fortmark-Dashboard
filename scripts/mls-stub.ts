@@ -22,13 +22,21 @@ export interface RecordedRequest {
   bearerValue: string | null;
 }
 
+/** Rows per resource. Member and Office are optional roster fixtures. */
+export interface StubRows {
+  Property: Row[];
+  Media: Row[];
+  Member?: Row[];
+  Office?: Row[];
+}
+
 export type StubMode = "ok" | "unauthorized" | "bad_request" | "rate_limited" | "hang";
 
 export interface Stub {
   baseUrl: string;
   requests: RecordedRequest[];
   mode: StubMode;
-  rows: { Property: Row[]; Media: Row[] };
+  rows: StubRows;
   close(): Promise<void>;
 }
 
@@ -148,7 +156,7 @@ function fieldSet(rows: Row[]): Set<string> {
 
 // --- server ------------------------------------------------------------------
 
-export async function startStub(rows: { Property: Row[]; Media: Row[] }): Promise<Stub> {
+export async function startStub(rows: StubRows): Promise<Stub> {
   const requests: RecordedRequest[] = [];
   const stub: Stub = { baseUrl: "", requests, mode: "ok", rows, close: async () => {} };
 
@@ -175,7 +183,10 @@ export async function startStub(rows: { Property: Row[]; Media: Row[] }): Promis
     if (stub.mode === "rate_limited") return json(429, { error: { code: 429, message: "Too Many Requests" } });
     if (stub.mode === "bad_request") return json(400, { error: { code: 400, message: "Bad Request" } });
 
-    const source = resource === "Media" ? stub.rows.Media : resource === "Property" ? stub.rows.Property : null;
+    const source =
+      resource === "Media" || resource === "Property" || resource === "Member" || resource === "Office"
+        ? (stub.rows[resource] ?? null)
+        : null;
     if (!source) return json(404, { error: { code: 404, message: "Not found" } });
     const fields = fieldSet(source);
 

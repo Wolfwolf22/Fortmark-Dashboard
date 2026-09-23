@@ -1,5 +1,7 @@
 "use client";
 
+import { MlsIdentityStatus } from "@/components/profile/mls-identity-status";
+
 /**
  * The profile onboarding wizard.
  *
@@ -313,7 +315,7 @@ export function OnboardingWizard({
           </p>
         )}
 
-        {current.id === "mls" && <MlsStatusPanel mls={mls} />}
+        {current.id === "mls" && <MlsConnectionPanel />}
 
         {current.id === "review" && (
           <ReviewSummary values={stored} accountEmail={accountEmail} />
@@ -461,38 +463,16 @@ function ReviewSummary({
  * `verified` is rendered only if the database says so. No client state, and no
  * user action on this screen, can produce it.
  */
-function MlsStatusPanel({ mls }: { mls?: MlsIdentity }) {
-  const status = mls?.mlsVerificationStatus ?? "unverified";
-  const verified = status === "verified";
-  const board = mlsBoardLabel(mls?.mlsOrganization);
-
+function MlsConnectionPanel() {
   return (
     <div className="rounded-panel border border-border bg-foreground/[0.03] p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span
-          className={cn(
-            "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold",
-            verified
-              ? "bg-foreground/10 text-foreground"
-              : "border border-border text-foreground/70"
-          )}
-        >
-          {mlsStatusLabel(status)}
-        </span>
-        {mls?.mlsAgentId && (
-          <span className="text-[12px] text-foreground/70">
-            {mls.mlsAgentId}
-            {board ? ` · ${board}` : ""}
-          </span>
-        )}
-      </div>
+      <dl>
+        <MlsIdentityStatus />
+      </dl>
       <p className="mt-2 text-[12px] leading-snug text-foreground/70">
-        FortMark stores your MLS agent ID exactly as you enter it. It is not
-        checked against your MLS or board, so it stays marked{" "}
-        <span className="font-medium text-foreground">Not verified</span> until a
-        verified connection exists. Recording it now means your listings can be
-        matched to you when that connection is built — nothing is claimed on
-        your behalf in the meantime.
+        FortMark matches the licence number from your credentials to the MLS member roster and
+        confirms it belongs to FortMark&apos;s MLS office. You don&apos;t enter an MLS id or a
+        brokerage. If the MLS is unavailable you can still finish; FortMark checks again later.
       </p>
     </div>
   );

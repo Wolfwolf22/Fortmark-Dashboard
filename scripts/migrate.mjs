@@ -127,6 +127,12 @@ const RELEASE_F2B_TABLES = ["ai_prepared_actions"];
  */
 const CORE_V1_BROKERAGE_TABLES = ["brokerage_identities"];
 
+/**
+ * Core V1 agent MLS identity (migration 0010): the per-user MLS member link.
+ * My Listings reads it, so a build whose migration did not land fails here.
+ */
+const CORE_V1_MLS_IDENTITY_TABLES = ["mls_member_links"];
+
 const force = process.argv.includes("--force");
 
 /**
@@ -302,6 +308,10 @@ if (url && url !== "[SENSITIVE]") {
       `[migrate] listings MLS_LISTINGS_ENABLED=${flag} BRIDGE_API_TOKEN present=${token} ` +
         `BRIDGE_DATASET present=${dataset} -> ${flag === "on" && token && dataset ? "MLS" : flag === "on" ? "UNAVAILABLE (503)" : "sample data"}`
     );
+    // Presence only. FortMark's MLS office (FortMark listings, agent office check).
+    console.log(
+      `[migrate] brokerage FORTMARK_MLS_OFFICE_ID present=${Boolean(process.env.FORTMARK_MLS_OFFICE_ID?.trim())}`
+    );
     if (flag === "on" && (!token || !dataset)) {
       console.log(
         `[migrate] WARNING: listings are switched to the MLS but ${!token ? "BRIDGE_API_TOKEN" : "BRIDGE_DATASET"} is absent — ` +
@@ -437,6 +447,12 @@ try {
     bail(`MISSING Core V1 brokerage identity table: ${missingBrokerage.join(", ")}`);
   }
   console.log("[migrate] Core V1 brokerage identity table present");
+
+  const missingIdentity = CORE_V1_MLS_IDENTITY_TABLES.filter((t) => !present.includes(t));
+  if (missingIdentity.length > 0) {
+    bail(`MISSING Core V1 MLS identity table: ${missingIdentity.join(", ")}`);
+  }
+  console.log("[migrate] Core V1 MLS member link table present");
 
   // Column-level verification. Names only — never a value.
   const colRows = await sql`

@@ -60,10 +60,8 @@ const TEXT_FIELDS: readonly ProfileFieldKey[] = [
 const PRESENCE_FIELDS: readonly ProfileFieldKey[] = [
   "professionalTitle",
   "locationDisplay",
-  // Same keys the onboarding MLS step writes, so Edit Profile shows and saves
-  // exactly what the wizard stored rather than a second, drifting copy.
-  "mlsAgentId",
-  "mlsOrganization",
+  // No MLS agent id or board here: FortMark resolves the MLS membership from
+  // the professional licence (see Settings › Profile › MLS). Nobody types it.
   "businessEmail",
   "whatsappPhoneE164",
   "linkedinUrl",

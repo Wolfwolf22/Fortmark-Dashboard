@@ -1,3 +1,4 @@
+import { matchLicenceAfterSave } from "@/lib/mls-identity/after-save";
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
@@ -132,6 +133,11 @@ export async function PATCH(request: NextRequest) {
 
   const record = await getOwnProfile(caller.clerkUserId);
 
+  // The licence is the MLS identity anchor. Saved first, matched second: an
+  // MLS outage never fails the save, it only leaves the identity pending.
+  const mlsState = await matchLicenceAfterSave(caller.clerkUserId);
+
+
   // The identity strip in the top bar is rendered by the LAYOUT, which is
   // shared across every page. Without this the display name and avatar there
   // keep whatever the layout rendered on first load, so a save appears to
@@ -145,6 +151,7 @@ export async function PATCH(request: NextRequest) {
       profile: record ? toProfileDetail(record.profile) : null,
       completion: result.completion,
       licenseReset: result.licenseReset,
+      mlsState,
     },
     { headers: NO_STORE }
   );

@@ -9,7 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { LISTING_STATUS_PILL, StatusPill } from "@/components/ui/status-pill";
 import { WidgetCard } from "@/components/widgets/widget-card";
 import { getAgent } from "@/lib/data/adapters/agents";
-import { getFortmarkListingSummary, ListingsError, type FortmarkOfficeState } from "@/lib/data/adapters/listings";
+import { getFortmarkListingSummary, ListingsError, type HomeListingSummary } from "@/lib/data/adapters/listings";
+import { MLS_STATE_DETAIL, type MlsIdentityState } from "@/lib/mls-identity/rules";
 import { useQuery } from "@/lib/data/hooks";
 import type { Agent, Listing } from "@/lib/data/types";
 import { formatCurrency, initials } from "@/lib/utils";
@@ -31,20 +32,20 @@ import { ListingImage } from "@/components/listings/listing-image";
  *
  * What it must never do is imply a fact: no invented property, and never
  * "0 listings", which would assert something false about the market.
+ *
+ * Role-aware (decided server-side): brokers and admins see FortMark's active
+ * book; an agent sees their own listings and co-listings ("My listings"). An
+ * agent whose MLS identity is not linked is told that — not shown zero.
  */
 export default function FeaturedListingWidget() {
-  const { data, loading, error } = useQuery<{
-    listing: Listing | undefined;
-    agent: Agent | undefined;
-    activeCount: number | undefined;
-    office: FortmarkOfficeState | undefined;
-  }>(async () => {
-    const { listing, activeCount, office } = await getFortmarkListingSummary();
+  const { data, loading, error } = useQuery<HomeListingSummary & { agent: Agent | undefined }>(async () => {
+    const summary = await getFortmarkListingSummary();
     // The sample roster only applies to sample rows; an MLS row states its
     // own agent on the record.
-    const agent = listing?.agentId ? await getAgent(listing.agentId) : undefined;
-    return { listing, agent, activeCount, office };
+    const agent = summary.listing?.agentId ? await getAgent(summary.listing.agentId) : undefined;
+    return { ...summary, agent };
   }, []);
+  const mine = data?.scope === "mine";
 
   // FortMark's own active count, straight from the MLS office id. Only a live
   // feed can state it; it is never derived from sample rows.
@@ -63,7 +64,15 @@ export default function FeaturedListingWidget() {
   return (
     <WidgetCard
       icon={Building2}
-      title={!unconfigured && (connected || liveCount !== undefined || data?.office) ? "FortMark listings" : "MLS"}
+      title={
+        unconfigured
+          ? "MLS"
+          : mine
+            ? "My listings"
+            : connected || liveCount !== undefined || data?.office
+              ? "FortMark listings"
+              : "MLS"
+      }
       preset={null}
       expandable={false}
       contentClassName="flex flex-col"
@@ -79,7 +88,14 @@ export default function FeaturedListingWidget() {
         </p>
       ) : loading || !data ? (
         <FeaturedSkeleton />
-      ) : data.office === "not_configured" || data.office === "unavailable" ? (
+      ) : mine && data.identity !== "linked" ? (
+        // An agent's book is found by their MLS member identity. Without it
+        // there is no honest count — say so, and say why.
+        <UnavailableBody
+          availability="not_configured"
+          detail={`MLS identity not connected. ${MLS_STATE_DETAIL[(data.identity ?? "unavailable") as MlsIdentityState] ?? ""}`.trim()}
+        />
+      ) : !mine && (data.office === "not_configured" || data.office === "unavailable") ? (
         // FortMark's book is defined by the brokerage's MLS office id. Without
         // it there is nothing that is FortMark's to show — never another
         // office's listing in its place.
@@ -90,6 +106,13 @@ export default function FeaturedListingWidget() {
               ? "FortMark's MLS office is not configured. A broker or admin can set it in Settings › Brokerage."
               : "FortMark's MLS office could not be determined right now."
           }
+        />
+      ) : !data.listing && mine ? (
+        // Identity linked and the MLS answered: zero is a real fact here.
+        <EmptyState
+          icon={Building2}
+          title="You have no active MLS listings"
+          description="The MLS shows no active listing where you are the listing or co-listing agent."
         />
       ) : !data.listing ? (
         <EmptyState
@@ -112,12 +135,15 @@ export default function FeaturedListingWidget() {
             <p className="text-[13px] text-muted-foreground">
               <span className="font-semibold tabular text-foreground">{liveCount}</span>{" "}
               active {liveCount === 1 ? "listing" : "listings"} ·{" "}
-              <Link href="/listings?office=fortmark" className="underline underline-offset-4 hover:text-foreground">
+              <Link
+                href={mine ? "/listings?office=mine" : "/listings?office=fortmark"}
+                className="underline underline-offset-4 hover:text-foreground"
+              >
                 View all
               </Link>
             </p>
           )}
-          <FeaturedBody listing={data.listing} agent={data.agent} />
+          {data.listing && <FeaturedBody listing={data.listing} agent={data.agent} />}
         </div>
       )}
     </WidgetCard>
@@ -183,7 +209,11 @@ function FeaturedBody({
                 </AvatarFallback>
               </Avatar>
               <span className="text-micro">
-                {(listing.listingAgent ?? agent)!.name} · Listing agent
+                {listing.agentRole === "co_listing"
+                  ? "You · Co-listing agent"
+                  : listing.agentRole === "primary"
+                    ? "You · Listing agent"
+                    : `${(listing.listingAgent ?? agent)!.name} · Listing agent`}
                 {listing.listingOffice?.name && <> · {listing.listingOffice.name}</>}
               </span>
             </span>

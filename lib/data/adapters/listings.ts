@@ -112,33 +112,71 @@ export async function getListing(id: string): Promise<Listing | undefined> {
 }
 
 /**
- * FortMark's own active book for Home: the featured listing (FortMark's
- * highest-priced active listing, by MLS office id) and the active count.
- * `activeCount` is undefined for the sample set — generated rows are not
- * FortMark's listings and are never counted as such.
+ * Home's listing card, by role (decided server-side):
+ *   `fortmark`  broker/admin/coordinator — FortMark's active book by office id
+ *   `mine`      an agent — their own listings and co-listings by MLS member
+ * `activeCount` is undefined for the sample set, and when the scope cannot be
+ * resolved (office not configured, MLS identity not linked) — never zero.
  */
 export type FortmarkOfficeState = "configured" | "not_configured" | "unavailable";
 
-export async function getFortmarkListingSummary(): Promise<{
+export interface HomeListingSummary {
+  scope: "fortmark" | "mine" | undefined;
   listing: Listing | undefined;
   activeCount: number | undefined;
-  /** Whether the brokerage's MLS office id is set in brokerage identity. */
+  /** FortMark scope: whether FortMark's MLS office is configured. */
   office: FortmarkOfficeState | undefined;
-}> {
+  /** Mine scope: the caller's MLS identity state (`linked` when usable). */
+  identity: string | undefined;
+}
+
+export async function getFortmarkListingSummary(): Promise<HomeListingSummary> {
   if ((await availableSource()) === "sample") {
     await delay(120);
-    return { listing: getSampleFeaturedListing(), activeCount: undefined, office: undefined };
+    return { scope: undefined, listing: getSampleFeaturedListing(), activeCount: undefined, office: undefined, identity: undefined };
   }
   const body = await request<{
+    scope?: "fortmark" | "mine";
     listing: Listing | null;
+    activeCount?: number | null;
     fortmarkActiveCount?: number | null;
     office?: FortmarkOfficeState;
+    identity?: string;
   }>("/api/listings/featured");
+  const count = typeof body.activeCount === "number" ? body.activeCount : body.fortmarkActiveCount;
   return {
+    scope: body.scope ?? "fortmark",
     listing: body.listing ?? undefined,
-    activeCount: typeof body.fortmarkActiveCount === "number" ? body.fortmarkActiveCount : undefined,
+    activeCount: typeof count === "number" ? count : undefined,
     office: body.office,
+    identity: body.identity,
   };
+}
+
+/** Which scope the Listings screen opens with, and whether My Listings works. */
+export interface ListingScopeInfo {
+  defaultScope: "mine" | "fortmark" | "mls";
+  myListings: string;
+  fortmarkOffice: FortmarkOfficeState;
+}
+
+export async function getListingScopeInfo(): Promise<ListingScopeInfo | null> {
+  try {
+    const body = await request<{
+      source: ListingAvailability;
+      defaultScope?: ListingScopeInfo["defaultScope"];
+      myListings?: string;
+      fortmarkOffice?: FortmarkOfficeState;
+    }>("/api/listings/source");
+    if (body.source !== "mls" || !body.defaultScope) return null;
+    return {
+      defaultScope: body.defaultScope,
+      myListings: body.myListings ?? "unavailable",
+      fortmarkOffice: body.fortmarkOffice ?? "unavailable",
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** The featured card on Home. */

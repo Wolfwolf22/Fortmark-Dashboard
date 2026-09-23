@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
-import { brokerageMlsOfficeId } from "@/lib/brokerage/service";
+import { callerListingContext } from "@/lib/mls-identity/listing-context";
 import { getSampleListing } from "@/lib/data/sample-listings";
 import { sampleListingsEnabled } from "@/lib/mls/config";
 import { failureResponse, mlsConfig, notConfigured, NO_STORE } from "@/lib/mls/http";
@@ -41,9 +41,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   }
 
   try {
-    const office = await brokerageMlsOfficeId(caller.clerkUserId);
+    const ctx = await callerListingContext(caller.clerkUserId);
     const listing = await getListing(config.config, id, request.signal, {
-      brokerageOfficeId: office.ok ? office.officeId : null,
+      brokerageOfficeId: ctx.officeId,
+      memberKey: ctx.identity.ok ? ctx.identity.memberKey : null,
     });
     if (!listing) {
       return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });

@@ -1718,8 +1718,10 @@ const ALLOWED_ENV = {
   // Review alone is informational now. Step 5 (MLS) persists as of Release B —
   // it previously discarded whatever the user typed into it.
   check("the review step persists nothing", step(6).fields.length === 0);
-  check("the MLS step persists its identity fields",
-    step(5).fields.includes("mlsAgentId") && step(5).fields.includes("mlsOrganization"));
+  // Agent MLS identity (Core V1): the MLS membership is resolved by the
+  // server from the professional licence. The step asks for nothing.
+  check("the MLS step asks for no MLS identifier or board",
+    step(5).fields.length === 0);
   check("the MLS step cannot write a verification status",
     !step(5).fields.some((f) => String(f).toLowerCase().includes("verif")));
   check("the review step cannot be skipped", step(6).skippable === false);
@@ -1761,9 +1763,8 @@ const ALLOWED_ENV = {
       mlsVerificationStatus: "verified",
     });
     const mlsKeys = Object.keys(mlsOut);
-    check("the MLS step keeps its agent id", mlsOut.mlsAgentId === "30-12345");
-    check("the MLS step canonicalises the board",
-      mlsOut.mlsOrganization === "miami_realtors");
+    check("the MLS step writes no self-reported agent id", !mlsKeys.includes("mlsAgentId"));
+    check("the MLS step writes no board", !mlsKeys.includes("mlsOrganization"));
     check("the MLS step strips a licence number", !mlsKeys.includes("licenseNumber"));
     // The invariant that matters most on this step: no request shape can set
     // the verification status, because it is not in the schema at all.
@@ -1988,13 +1989,13 @@ const ALLOWED_ENV = {
   // The step now stores an identity, so "claims nothing" is asserted on the
   // meaning rather than the absence of the word: it must state plainly that
   // nothing is verified, and must not promise a verification that will happen.
-  check("the MLS panel says the identity is not verified",
-    /Not verified/.test(wizard));
+  check("the MLS panel shows the server-resolved status, not a typed id",
+    wizard.includes("<MlsIdentityStatus") && !wizard.includes("mlsAgentId"));
   check("the MLS panel does not promise future verification",
     !/will be verified/i.test(wizard));
-  check("the MLS panel says FortMark does not check the identity",
+  check("the MLS panel says the agent never enters an MLS id or brokerage",
     // `\s+` because JSX wraps this sentence across source lines.
-    /not\s+checked\s+against\s+your\s+MLS\s+or\s+board/i.test(wizard));
+    /You\s+don&apos;t\s+enter\s+an\s+MLS\s+id\s+or\s+a\s+brokerage/i.test(wizard));
 
   // Route guards ------------------------------------------------------------
   check("the wizard route requires the UI flag",
@@ -3624,11 +3625,11 @@ const ALLOWED_ENV = {
 
   // --- STEP 4: MLS identity ------------------------------------------------
   const mlsStep = stepByNumber(5)!;
-  check("the MLS step persists a real identity", mlsStep.fields.length > 0);
+  check("the MLS step is informational (identity is resolved, not typed)", mlsStep.fields.length === 0);
   check("MLS fields are part of the shared update contract",
     mlsStep.fields.every((f) => Object.keys(profileUpdateSchema.shape).includes(String(f))));
-  check("MLS identity persists through the step normaliser",
-    normalizeStep(mlsStep, { mlsAgentId: "3012345" }).mlsAgentId === "3012345");
+  check("a typed MLS id is not accepted by the MLS step",
+    normalizeStep(mlsStep, { mlsAgentId: "3012345" }).mlsAgentId === undefined);
   check("an MLS agent id is uppercased for stable comparison",
     toMlsAgentId("bk-1234a") === "BK-1234A");
   check("whitespace inside an MLS id is removed", toMlsAgentId(" 301 2345 ") === "3012345");
@@ -3702,8 +3703,8 @@ const ALLOWED_ENV = {
   }
 
   // Edit Profile receives the same values the wizard wrote.
-  check("the editor renders the MLS fields",
-    editorSrc.includes('"mlsAgentId"') && editorSrc.includes('"mlsOrganization"'));
+  check("the editor no longer asks for an MLS id or board",
+    !editorSrc.includes('"mlsAgentId"') && !editorSrc.includes('"mlsOrganization"'));
   check("MLS values reach the wizard from the server",
     shellSrc.includes("mlsAgentId: p?.mlsAgentId ?? null"));
   check("MLS fields are marked self-reported",
@@ -3803,7 +3804,7 @@ const ALLOWED_ENV = {
     check("the record omits empty fields rather than listing blanks",
       /if \(!value\) return null;/.test(section));
     check("the record renders catalogue labels, not stored keys",
-      section.includes("titleLabel(") && section.includes("mlsBoardLabel("));
+      section.includes("titleLabel("));
 
     // A read-only value with no spaces — the account email — must not be
     // able to widen the page: certification measured Settings 33px wider
@@ -3811,8 +3812,8 @@ const ALLOWED_ENV = {
     // the email and the email could not wrap.
     check("a read-only field can shrink below its value and the value can wrap anywhere",
       /function ReadOnlyField[\s\S]{0,600}className="min-w-0 space-y-2"[\s\S]{0,300}\[overflow-wrap:anywhere\]/.test(section));
-    check("the record still says MLS is unverified",
-      section.includes("mlsStatusLabel("));
+    check("the record shows the resolved MLS identity status",
+      section.includes("<MlsIdentityStatus"));
 
     // Both entry points ask for edit mode, so the buttons do what they say.
     check("the Home card's edit button opens edit mode",

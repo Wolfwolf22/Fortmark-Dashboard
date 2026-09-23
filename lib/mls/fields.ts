@@ -53,6 +53,13 @@ export const PROPERTY_FIELDS: readonly string[] = [
   "ListOfficeName",
   "ListOfficeMlsId",
   "CoListOfficeMlsId",
+  // Agent association for My Listings (verified 2026-09-23 against the live
+  // field catalogue and FortMark's own listings: primary + one co-listing
+  // agent; this MLS has no second/third co-list fields). Read server-side to
+  // derive the caller's role on a listing; never sent to the browser.
+  "ListAgentKey",
+  "CoListAgentKey",
+  "CoListAgentMlsId",
   "SubdivisionName",
   "MLSAreaMajor",
   "PhotosCount",
@@ -70,13 +77,6 @@ export const PROPERTY_FIELDS: readonly string[] = [
  * are shown.
  */
 export const EMBEDDED_MEDIA_FIELD = "Media";
-
-/**
- * Office-level fields for the brokerage's own office record (verified in
- * `miamire` 2026-09-22/23). Read only to SUPPLEMENT Settings › Brokerage with
- * what the MLS itself says — never stored as FortMark's identity.
- */
-export const OFFICE_FIELDS: readonly string[] = ["ListOfficeMlsId", "ListOfficeName", "ListOfficePhone"];
 
 /**
  * Present in the dataset but deliberately NOT selected: agent direct contact

@@ -57,6 +57,11 @@ function ListingCard({ listing }: { listing: Listing }) {
             {listing.city}
             {listing.neighborhood && <> · {listing.neighborhood}</>}
           </p>
+          {listing.agentRole && (
+            <p className="text-[12px] font-medium text-muted-foreground">
+              {listing.agentRole === "co_listing" ? "You · Co-listing agent" : "You · Listing agent"}
+            </p>
+          )}
           <div className="mt-auto space-y-0.5 pt-2">
             <p className="text-micro tabular">{specLine(listing)}</p>
             {listing.daysOnMarket !== undefined && (

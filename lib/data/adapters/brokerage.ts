@@ -52,7 +52,7 @@ export async function getBrokerageState(): Promise<BrokerageState> {
   if (!response.ok) throw new BrokerageError(response.status);
   if (body.source === "sample") return { source: "sample", profile: await getBrokerage() };
   if (isResponse(body)) {
-    return { source: "db", identity: body.identity, canEdit: body.canEdit, mlsOffice: body.mlsOffice ?? null };
+    return { source: "db", identity: body.identity, canEdit: body.canEdit, officeConfigured: body.officeConfigured === true };
   }
   throw new BrokerageError(response.status);
 }
@@ -66,7 +66,7 @@ export async function saveBrokerageIdentity(values: BrokerageValues): Promise<Sa
   });
   const body = await readJson(response);
   if (response.ok && isResponse(body)) {
-    return { ok: true, state: { identity: body.identity, canEdit: body.canEdit, mlsOffice: body.mlsOffice ?? null } };
+    return { ok: true, state: { identity: body.identity, canEdit: body.canEdit, officeConfigured: body.officeConfigured === true } };
   }
   if (response.status === 400 && body.fieldErrors && typeof body.fieldErrors === "object") {
     return { ok: false, status: 400, fieldErrors: body.fieldErrors as BrokerageFieldErrors };
@@ -76,4 +76,15 @@ export async function saveBrokerageIdentity(values: BrokerageValues): Promise<Sa
       ? "Only a broker or admin can change the brokerage's details."
       : "The brokerage details could not be saved. Try again.";
   return { ok: false, status: response.status, fieldErrors: { _form: message } };
+}
+
+/** Refresh FortMark's MLS office section now (admin/broker). */
+export async function syncBrokerageFromMls(): Promise<{ ok: boolean; identity: BrokerageResponse["identity"] | null; status: string }> {
+  const response = await fetch(apiPath("/api/brokerage/sync"), { method: "POST", headers: { Accept: "application/json" } });
+  const body = await readJson(response);
+  return {
+    ok: response.ok,
+    identity: (body.identity as BrokerageResponse["identity"]) ?? null,
+    status: typeof body.sync === "string" ? body.sync : String(response.status),
+  };
 }
