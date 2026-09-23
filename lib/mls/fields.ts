@@ -72,6 +72,13 @@ export const PROPERTY_FIELDS: readonly string[] = [
 export const EMBEDDED_MEDIA_FIELD = "Media";
 
 /**
+ * Office-level fields for the brokerage's own office record (verified in
+ * `miamire` 2026-09-22/23). Read only to SUPPLEMENT Settings › Brokerage with
+ * what the MLS itself says — never stored as FortMark's identity.
+ */
+export const OFFICE_FIELDS: readonly string[] = ["ListOfficeMlsId", "ListOfficeName", "ListOfficePhone"];
+
+/**
  * Present in the dataset but deliberately NOT selected: agent direct contact
  * details. The dashboard attributes the listing office and agent name; it does
  * not republish an agent's personal phone or email from the feed.

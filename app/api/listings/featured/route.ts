@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
+import { brokerageMlsOfficeId } from "@/lib/brokerage/service";
 import { getSampleFeaturedListing } from "@/lib/data/sample-listings";
 import { sampleListingsEnabled } from "@/lib/mls/config";
 import { failureResponse, mlsConfig, notConfigured, NO_STORE } from "@/lib/mls/http";
@@ -25,9 +26,19 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const summary = await getFortmarkListingSummary(config.config, request.signal);
+    // FortMark's book is defined by the brokerage's configured MLS office id.
+    // Without one there is no FortMark listing to show — and never another
+    // office's in its place.
+    const office = await brokerageMlsOfficeId(caller.clerkUserId);
+    if (!office.ok || !office.officeId) {
+      return NextResponse.json(
+        { listing: null, fortmarkActiveCount: null, office: office.ok ? "not_configured" : "unavailable" },
+        { headers: NO_STORE }
+      );
+    }
+    const summary = await getFortmarkListingSummary(config.config, office.officeId, request.signal);
     return NextResponse.json(
-      { listing: summary.featured, fortmarkActiveCount: summary.activeCount },
+      { listing: summary.featured, fortmarkActiveCount: summary.activeCount, office: "configured" },
       { headers: NO_STORE }
     );
   } catch (error) {

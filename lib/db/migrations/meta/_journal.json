@@ -64,6 +64,13 @@
       "when": 1790092212914,
       "tag": "0008_loud_warstar",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790131131105,
+      "tag": "0009_steep_warstar",
+      "breakpoints": true
     }
   ]
 }

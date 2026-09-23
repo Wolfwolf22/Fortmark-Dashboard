@@ -41,6 +41,17 @@ function failureCopy(error: Error): { title: string; description: string } {
         description:
           "This deployment has no MLS credential, so there are no listings to show. An administrator needs to connect one.",
       };
+    case "fortmark_office_not_configured":
+      return {
+        title: "FortMark's MLS office is not configured.",
+        description:
+          "FortMark's own listings are found by its MLS office id. A broker or admin can set it in Settings › Brokerage. MLS search still works.",
+      };
+    case "fortmark_office_unavailable":
+      return {
+        title: "FortMark's MLS office could not be determined.",
+        description: "Retry in a moment. MLS search still works.",
+      };
     case "mls_rejected_query":
       return {
         title: "The MLS rejected this search.",

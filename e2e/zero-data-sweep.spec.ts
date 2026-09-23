@@ -167,7 +167,7 @@ test("each unbacked route says what is missing", async () => {
   }
 });
 
-test("settings shows the real account and refuses the generated brokerage", async () => {
+test("settings shows the real account and brokerage, never generated ones", async () => {
   test.setTimeout(300_000);
   // The real half stays: this is the signed-in identity, from Clerk.
   for (let load = 0; load < 3; load += 1) {
@@ -183,7 +183,9 @@ test("settings shows the real account and refuses the generated brokerage", asyn
   for (const [tab, sentence] of [
     // Team is real now: the roster of actual dashboard users, never generated.
     ["team", /Licence details are self-reported by each member/i],
-    ["brokerage", /Brokerage details are not configured/i],
+    // Brokerage is real now: the stored, operator-provided identity, or its
+    // truthful empty state. Never the generated office.
+    ["brokerage", /Brokerage licence \(operator-provided\)|Brokerage profile has not been configured|Brokerage information is not available/i],
     ["integrations", /Integrations are not configured/i],
   ] as const) {
     // Each section is client-rendered, so a refused script chunk leaves the
@@ -199,7 +201,8 @@ test("settings shows the real account and refuses the generated brokerage", asyn
         console.log(`[zero] settings/${tab} did not hydrate on load ${load + 1}`);
       }
     }
-    console.log(`[zero] settings/${tab} states its absence`);
+    await expect(page.getByRole("main")).not.toContainText(/generated for development/i);
+    console.log(`[zero] settings/${tab} is truthful`);
   }
 });
 

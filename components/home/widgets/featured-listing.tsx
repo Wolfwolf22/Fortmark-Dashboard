@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { LISTING_STATUS_PILL, StatusPill } from "@/components/ui/status-pill";
 import { WidgetCard } from "@/components/widgets/widget-card";
 import { getAgent } from "@/lib/data/adapters/agents";
-import { getFortmarkListingSummary, ListingsError } from "@/lib/data/adapters/listings";
+import { getFortmarkListingSummary, ListingsError, type FortmarkOfficeState } from "@/lib/data/adapters/listings";
 import { useQuery } from "@/lib/data/hooks";
 import type { Agent, Listing } from "@/lib/data/types";
 import { formatCurrency, initials } from "@/lib/utils";
@@ -37,12 +37,13 @@ export default function FeaturedListingWidget() {
     listing: Listing | undefined;
     agent: Agent | undefined;
     activeCount: number | undefined;
+    office: FortmarkOfficeState | undefined;
   }>(async () => {
-    const { listing, activeCount } = await getFortmarkListingSummary();
+    const { listing, activeCount, office } = await getFortmarkListingSummary();
     // The sample roster only applies to sample rows; an MLS row states its
     // own agent on the record.
     const agent = listing?.agentId ? await getAgent(listing.agentId) : undefined;
-    return { listing, agent, activeCount };
+    return { listing, agent, activeCount, office };
   }, []);
 
   // FortMark's own active count, straight from the MLS office id. Only a live
@@ -62,7 +63,7 @@ export default function FeaturedListingWidget() {
   return (
     <WidgetCard
       icon={Building2}
-      title={!unconfigured && (connected || liveCount !== undefined) ? "FortMark listings" : "MLS"}
+      title={!unconfigured && (connected || liveCount !== undefined || data?.office) ? "FortMark listings" : "MLS"}
       preset={null}
       expandable={false}
       contentClassName="flex flex-col"
@@ -78,6 +79,18 @@ export default function FeaturedListingWidget() {
         </p>
       ) : loading || !data ? (
         <FeaturedSkeleton />
+      ) : data.office === "not_configured" || data.office === "unavailable" ? (
+        // FortMark's book is defined by the brokerage's MLS office id. Without
+        // it there is nothing that is FortMark's to show — never another
+        // office's listing in its place.
+        <UnavailableBody
+          availability="not_configured"
+          detail={
+            data.office === "not_configured"
+              ? "FortMark's MLS office is not configured. A broker or admin can set it in Settings › Brokerage."
+              : "FortMark's MLS office could not be determined right now."
+          }
+        />
       ) : !data.listing ? (
         <EmptyState
           icon={Building2}

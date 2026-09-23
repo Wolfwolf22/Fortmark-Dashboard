@@ -24,7 +24,6 @@ import {
   sampleListingsEnabled,
 } from "../lib/mls/config.ts";
 import { EMBEDDED_MEDIA_FIELD, PROPERTY_FIELDS, UNVERIFIED_PROPERTY_FIELDS } from "../lib/mls/fields.ts";
-import { FORTMARK_LIST_OFFICE_MLS_ID } from "../lib/mls/brokerage.ts";
 import {
   WITHHELD_ADDRESS,
   toListing,
@@ -45,11 +44,16 @@ import {
   getFortmarkListingSummary,
   getListing,
   MAX_PAGE_SIZE,
+  OfficeNotConfiguredError,
   searchListings,
 } from "../lib/mls/service.ts";
 import { sortListings } from "../lib/data/listing-sort.ts";
 import type { ListingSearchQuery } from "../lib/data/types.ts";
 import { startStub, type Row } from "./mls-stub.ts";
+
+/** FortMark's office id in these fixtures. In the app it comes from brokerage identity. */
+const FORTMARK = "FTMK01";
+const OWN = { brokerageOfficeId: FORTMARK };
 
 let passed = 0;
 const failures: string[] = [];
@@ -299,8 +303,8 @@ check("paging is clamped", clampPaging(0, 0).page === 1 && clampPaging(0, 0).pag
 
 // --- The service, against the stub -----------------------------------------
 const PROPS: Row[] = [
-  { ...FULL, ListOfficeName: "FortMark, LLC", ListOfficeMlsId: FORTMARK_LIST_OFFICE_MLS_ID, ListingKey: "k1", ListingId: "A10000001", StandardStatus: "Active", ClosePrice: undefined, CloseDate: undefined, ListPrice: 900000, BedroomsTotal: 3, ListingContractDate: "2026-09-01", ModificationTimestamp: "2026-09-10T00:00:00Z", UnparsedAddress: "1 Rio Vista Blvd, Fort Lauderdale, FL 33301", City: "Fort Lauderdale", PropertySubType: "Single Family Residence" },
-  { ...FULL, ListOfficeName: "FortMark, LLC", ListOfficeMlsId: FORTMARK_LIST_OFFICE_MLS_ID, Media: [{ MediaURL: "https://cdn.example/k2-embedded-2.jpg", Order: 2, MediaCategory: "Photo" }, { MediaURL: "https://cdn.example/k2-embedded-1.jpg", Order: 1, MediaCategory: "Photo" }], ListingKey: "k2", ListingId: "A10000002", StandardStatus: "Active", ClosePrice: undefined, CloseDate: undefined, ListPrice: 2400000, BedroomsTotal: 5, ListingContractDate: "2026-08-20", ModificationTimestamp: "2026-09-09T00:00:00Z", UnparsedAddress: "2 Bayview Dr, Fort Lauderdale, FL 33305", City: "Fort Lauderdale", PropertySubType: "Single Family Residence" },
+  { ...FULL, ListOfficeName: "FortMark, LLC", ListOfficeMlsId: FORTMARK, ListingKey: "k1", ListingId: "A10000001", StandardStatus: "Active", ClosePrice: undefined, CloseDate: undefined, ListPrice: 900000, BedroomsTotal: 3, ListingContractDate: "2026-09-01", ModificationTimestamp: "2026-09-10T00:00:00Z", UnparsedAddress: "1 Rio Vista Blvd, Fort Lauderdale, FL 33301", City: "Fort Lauderdale", PropertySubType: "Single Family Residence" },
+  { ...FULL, ListOfficeName: "FortMark, LLC", ListOfficeMlsId: FORTMARK, Media: [{ MediaURL: "https://cdn.example/k2-embedded-2.jpg", Order: 2, MediaCategory: "Photo" }, { MediaURL: "https://cdn.example/k2-embedded-1.jpg", Order: 1, MediaCategory: "Photo" }], ListingKey: "k2", ListingId: "A10000002", StandardStatus: "Active", ClosePrice: undefined, CloseDate: undefined, ListPrice: 2400000, BedroomsTotal: 5, ListingContractDate: "2026-08-20", ModificationTimestamp: "2026-09-09T00:00:00Z", UnparsedAddress: "2 Bayview Dr, Fort Lauderdale, FL 33305", City: "Fort Lauderdale", PropertySubType: "Single Family Residence" },
   { ...FULL, ListingKey: "k3", ListingId: "A10000003", StandardStatus: "Active", ClosePrice: undefined, CloseDate: undefined, ListPrice: 650000, BedroomsTotal: 2, ListingContractDate: "2026-07-01", ModificationTimestamp: "2026-09-08T00:00:00Z", UnparsedAddress: "3 Ocean Ave #4, Hollywood, FL 33019", City: "Hollywood", PropertySubType: "Condominium" },
   { ...FULL, ListingKey: "k4", ListingId: "A10000004", StandardStatus: "Closed", ClosePrice: 1200000, CloseDate: "2026-08-15", ListPrice: 1250000, BedroomsTotal: 4, ListingContractDate: "2026-05-01", ModificationTimestamp: "2026-08-16T00:00:00Z", UnparsedAddress: "4 Rio Vista Blvd, Fort Lauderdale, FL 33301", City: "Fort Lauderdale", PropertySubType: "Single Family Residence" },
   { ...FULL, ListingKey: "k5", ListingId: "A10000005", StandardStatus: "Closed", ClosePrice: 980000, CloseDate: "2025-01-15", ListPrice: 999000, BedroomsTotal: 3, ListingContractDate: "2024-11-01", ModificationTimestamp: "2025-01-16T00:00:00Z", UnparsedAddress: "5 Old Sale St, Fort Lauderdale, FL 33301", City: "Fort Lauderdale", PropertySubType: "Single Family Residence" },
@@ -388,30 +392,30 @@ try {
 
   // Featured.
   {
-    const f = await getFeaturedListing(cfg);
+    const f = await getFeaturedListing(cfg, FORTMARK);
     check("featured is the highest-priced active sale", f?.mlsNumber === "A10000002");
     check("featured carries only its first photo", f?.photos.length === 1);
   }
 
   // FortMark's own book, embedded photos and IDX display rules.
 {
-  const K7 = { ...FULL, ListingKey: "k7", ListingId: "A10000007", StandardStatus: "Active", PropertyType: "Commercial Sale", CoListOfficeMlsId: FORTMARK_LIST_OFFICE_MLS_ID, ClosePrice: undefined, CloseDate: undefined, ListPrice: 3100000, BedroomsTotal: 0, ListingContractDate: "2026-06-01", ModificationTimestamp: "2026-09-01T00:00:00Z", UnparsedAddress: "7 Commerce Way, Miami, FL 33130", City: "Miami", PropertySubType: "Office" };
+  const K7 = { ...FULL, ListingKey: "k7", ListingId: "A10000007", StandardStatus: "Active", PropertyType: "Commercial Sale", CoListOfficeMlsId: FORTMARK, ClosePrice: undefined, CloseDate: undefined, ListPrice: 3100000, BedroomsTotal: 0, ListingContractDate: "2026-06-01", ModificationTimestamp: "2026-09-01T00:00:00Z", UnparsedAddress: "7 Commerce Way, Miami, FL 33130", City: "Miami", PropertySubType: "Office" };
   const K8 = { ...FULL, ListingKey: "k8", ListingId: "A10000008", StandardStatus: "Active", InternetAddressDisplayYN: false, ClosePrice: undefined, CloseDate: undefined, ListPrice: 700000, BedroomsTotal: 3, ListingContractDate: "2026-05-01", ModificationTimestamp: "2026-05-02T00:00:00Z", UnparsedAddress: "8 Private Ln, Fort Lauderdale, FL 33301", City: "Fort Lauderdale", PropertySubType: "Single Family Residence" };
-  const K9 = { ...FULL, ListingKey: "k9", ListingId: "A10000009", StandardStatus: "Active", InternetEntireListingDisplayYN: false, ListOfficeMlsId: FORTMARK_LIST_OFFICE_MLS_ID, ClosePrice: undefined, CloseDate: undefined, ListPrice: 9900000, ListingContractDate: "2026-05-01", ModificationTimestamp: "2026-05-03T00:00:00Z", City: "Miami", PropertySubType: "Single Family Residence" };
+  const K9 = { ...FULL, ListingKey: "k9", ListingId: "A10000009", StandardStatus: "Active", InternetEntireListingDisplayYN: false, ListOfficeMlsId: FORTMARK, ClosePrice: undefined, CloseDate: undefined, ListPrice: 9900000, ListingContractDate: "2026-05-01", ModificationTimestamp: "2026-05-03T00:00:00Z", City: "Miami", PropertySubType: "Single Family Residence" };
   const book = await startStub({ Property: [...PROPS, K7, K8, K9], Media: MEDIA });
   const bookCfg = { baseUrl: book.baseUrl, dataset: "miamire", token: "t" };
   try {
-    const own = await searchListings(bookCfg, base({ office: "fortmark", pageSize: 20 }));
+    const own = await searchListings(bookCfg, base({ office: "fortmark", pageSize: 20 }), undefined, OWN);
     const ids = own.items.map((l) => l.mlsNumber).sort().join(",");
     check("FortMark scope filters by office id, listing or co-listing", ids === "A10000001,A10000002,A10000007");
     check("FortMark scope includes every property type", own.items.some((l) => l.mlsNumber === "A10000007"));
     check("every FortMark-scoped row is flagged isFortmark", own.items.every((l) => l.isFortmark === true));
     const ownReq = book.requests.at(-1)!;
     check("office filter is an id match, never a name match",
-      (ownReq.params.get("$filter") ?? "").includes(`ListOfficeMlsId eq '${FORTMARK_LIST_OFFICE_MLS_ID}'`) &&
-      (ownReq.params.get("$filter") ?? "").includes(`CoListOfficeMlsId eq '${FORTMARK_LIST_OFFICE_MLS_ID}'`) &&
+      (ownReq.params.get("$filter") ?? "").includes(`ListOfficeMlsId eq '${FORTMARK}'`) &&
+      (ownReq.params.get("$filter") ?? "").includes(`CoListOfficeMlsId eq '${FORTMARK}'`) &&
       !(ownReq.params.get("$filter") ?? "").includes("ListOfficeName"));
-    const wide = await searchListings(bookCfg, base({ pageSize: 20 }));
+    const wide = await searchListings(bookCfg, base({ pageSize: 20 }), undefined, OWN);
     check("MLS-wide rows from other offices are not flagged FortMark",
       wide.items.filter((l) => !["A10000001", "A10000002"].includes(l.mlsNumber)).every((l) => l.isFortmark === false));
     check("a results page carries one thumbnail per row", wide.items.every((l) => l.photos.length <= 1));
@@ -422,17 +426,33 @@ try {
     check("a withheld address drops coordinates and folio", withheld?.coordinates === undefined && withheld?.folioNumber === undefined);
 
     const n = book.requests.length;
-    const detail = await getListing(bookCfg, "k2");
+    const detail = await getListing(bookCfg, "k2", undefined, OWN);
     check("detail photos come from the record's embedded media, in order",
       detail?.photos.join(",") === "https://cdn.example/k2-embedded-1.jpg,https://cdn.example/k2-embedded-2.jpg");
     check("embedded media means no Media resource request", !book.requests.slice(n).some((r) => r.resource === "Media"));
-    check("listing office is attributed", detail?.listingOffice?.name === "FortMark, LLC" && detail?.listingOffice?.mlsId === FORTMARK_LIST_OFFICE_MLS_ID);
+    check("listing office is attributed", detail?.listingOffice?.name === "FortMark, LLC" && detail?.listingOffice?.mlsId === FORTMARK);
     check("an excluded listing is not found by id", (await getListing(bookCfg, "k9")) === null);
 
-    const summary = await getFortmarkListingSummary(bookCfg);
+    const summary = await getFortmarkListingSummary(bookCfg, FORTMARK);
     check("FortMark summary counts active FortMark listings server-side", summary.activeCount === 3);
     check("FortMark featured is FortMark's highest-priced active displayable listing", summary.featured?.mlsNumber === "A10000007");
     check("FortMark featured never comes from another office", summary.featured?.isFortmark === true);
+
+    // The office id comes from brokerage identity. A wrong one finds nothing of
+    // FortMark's; a missing one is refused, never widened to another office.
+    const wrong = await searchListings(bookCfg, base({ office: "fortmark", pageSize: 20 }), undefined, { brokerageOfficeId: "ZZZZ99" });
+    check("a wrong office id returns no FortMark listings", wrong.total === 0 && wrong.items.length === 0);
+    const wrongSummary = await getFortmarkListingSummary(bookCfg, "ZZZZ99");
+    check("a wrong office id gives a zero summary and no featured row", wrongSummary.activeCount === 0 && wrongSummary.featured === null);
+    const before = book.requests.length;
+    check("FortMark scope with no office id is refused before any request",
+      await searchListings(bookCfg, base({ office: "fortmark" }), undefined, {}).then(() => false, (e) => e instanceof OfficeNotConfiguredError) &&
+        book.requests.length === before);
+    const general = await searchListings(bookCfg, base({ pageSize: 20 }));
+    check("general MLS search works with no brokerage office configured", general.total === wide.total && general.items.length === wide.items.length);
+    check("with no office configured nothing is flagged FortMark", general.items.every((l) => l.isFortmark === false));
+    const plain = await getListing(bookCfg, "k2");
+    check("detail works with no office configured, unflagged", plain?.mlsNumber === "A10000002" && plain.isFortmark === false);
   } finally {
     await book.close();
   }
@@ -440,7 +460,7 @@ try {
 {
   const none = await startStub({ Property: [{ ...FULL, ListingKey: "z1", ListingId: "A19999999", StandardStatus: "Active" }], Media: [] });
   try {
-    const summary = await getFortmarkListingSummary({ baseUrl: none.baseUrl, dataset: "miamire", token: "t" });
+    const summary = await getFortmarkListingSummary({ baseUrl: none.baseUrl, dataset: "miamire", token: "t" }, FORTMARK);
     check("no FortMark listings is a zero count and no featured row, not another office's listing",
       summary.activeCount === 0 && summary.featured === null);
   } finally {

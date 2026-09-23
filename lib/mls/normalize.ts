@@ -15,8 +15,6 @@
 import type { Listing, ListingStatus, PriceEvent, PropertyType } from "../data/types.ts";
 
 /** A raw RESO Property record, as Bridge returns it. */
-import { FORTMARK_LIST_OFFICE_MLS_ID } from "./brokerage.ts";
-
 export type ResoRecord = Record<string, unknown>;
 
 /** A raw RESO Media record. */
@@ -199,7 +197,17 @@ export function embeddedPhotoUrls(r: ResoRecord): string[] | undefined {
   return toPhotoUrls(media as ResoMedia[]);
 }
 
-export function toListing(r: ResoRecord, photos: string[] = []): Listing | null {
+/** Per-request context the normaliser cannot know on its own. */
+export interface ListingContext {
+  /**
+   * The caller's brokerage MLS office id, from brokerage identity. A row is
+   * the brokerage's own when its listing or co-listing office matches. Absent
+   * means no row is flagged — never a guess.
+   */
+  brokerageOfficeId?: string | null;
+}
+
+export function toListing(r: ResoRecord, photos: string[] = [], ctx: ListingContext = {}): Listing | null {
   const id = str(r.ListingKey);
   const mlsNumber = str(r.ListingId);
   if (!id || !mlsNumber) return null;
@@ -257,7 +265,10 @@ export function toListing(r: ResoRecord, photos: string[] = []): Listing | null 
     source: "mls",
     coordinates: lat !== undefined && lng !== undefined ? { lat, lng } : undefined,
     listingOffice: officeName || officeMlsId ? { name: officeName, mlsId: officeMlsId } : undefined,
-    isFortmark: officeMlsId === FORTMARK_LIST_OFFICE_MLS_ID || coOfficeMlsId === FORTMARK_LIST_OFFICE_MLS_ID,
+    isFortmark: Boolean(
+      ctx.brokerageOfficeId &&
+        (officeMlsId === ctx.brokerageOfficeId || coOfficeMlsId === ctx.brokerageOfficeId)
+    ),
     ...(addressWithheld ? { addressWithheld: true } : {}),
   };
 }

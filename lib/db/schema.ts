@@ -276,6 +276,9 @@ export const RELEASE_1_AUDIT_EVENTS = [
   "contact_created",
   "contact_updated",
   "contact_stage_changed",
+  // Core V1 — brokerage identity. Field NAMES only in metadata, never values.
+  "brokerage_identity_created",
+  "brokerage_identity_updated",
 ] as const;
 
 export type AuditEventType = (typeof RELEASE_1_AUDIT_EVENTS)[number];
@@ -773,3 +776,56 @@ export const aiPreparedActions = pgTable(
 );
 
 export type AiPreparedActionRow = typeof aiPreparedActions.$inferSelect;
+
+// ===========================================================================
+// Brokerage identity (Core V1) — migration 0009.
+//
+// What licensed brokerage this dashboard represents. One row per tenant,
+// enforced by the database (`brokerage_identities_brokerage_key_key`), and
+// bound to the same `brokerage_key` every other domain already scopes by — not
+// a second organisation system.
+//
+// Every value here is FortMark-owned and operator-provided. Nothing is
+// populated from the MLS: the feed may SUPPLEMENT the display (its office
+// phone, as a labelled fallback) but can never overwrite this row. The licence
+// is stored, never "verified" — no licensing authority is integrated.
+//
+// `mls_office_id` is operational configuration: it is how FortMark's own
+// listings are recognised in the MLS (listing or co-listing office). While it
+// is null the FortMark-specific listing views say the office is not
+// configured; general MLS search does not depend on it.
+// ===========================================================================
+export const brokerageIdentities = pgTable(
+  "brokerage_identities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brokerageKey: text("brokerage_key").notNull(),
+    /** Legal / display name, e.g. "FortMark, LLC". */
+    displayName: text("display_name").notNull(),
+    /** Brokerage (not agent) licence. Operator-provided; never verified here. */
+    licenseNumber: text("license_number"),
+    licenseState: text("license_state"),
+    addressLine1: text("address_line1"),
+    addressLine2: text("address_line2"),
+    city: text("city"),
+    state: text("state"),
+    postalCode: text("postal_code"),
+    /** E.164. */
+    officePhone: text("office_phone"),
+    /** http(s) only. */
+    website: text("website"),
+    /** The MLS office id FortMark lists under (miamire: FTMK01). */
+    mlsOfficeId: text("mls_office_id"),
+    createdByUserId: uuid("created_by_user_id").references(() => dashboardUsers.id, {
+      onDelete: "set null",
+    }),
+    updatedByUserId: uuid("updated_by_user_id").references(() => dashboardUsers.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("brokerage_identities_brokerage_key_key").on(t.brokerageKey)]
+);
+
+export type BrokerageIdentityRow = typeof brokerageIdentities.$inferSelect;

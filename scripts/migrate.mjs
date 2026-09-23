@@ -120,6 +120,13 @@ const RELEASE_D_TABLES = ["contacts", "contact_opportunities", "contact_activiti
  */
 const RELEASE_F2B_TABLES = ["ai_prepared_actions"];
 
+/**
+ * Core V1 brokerage identity (migration 0009). One additive table, one row per
+ * brokerage key. Listings reads FortMark's MLS office id from it, so a build
+ * whose migration did not land must fail here rather than on the first read.
+ */
+const CORE_V1_BROKERAGE_TABLES = ["brokerage_identities"];
+
 const force = process.argv.includes("--force");
 
 /**
@@ -424,6 +431,12 @@ try {
     bail(`MISSING Release F2-B action tables: ${missingF2B.join(", ")}`);
   }
   console.log("[migrate] Release F2-B prepared-action table present");
+
+  const missingBrokerage = CORE_V1_BROKERAGE_TABLES.filter((t) => !present.includes(t));
+  if (missingBrokerage.length > 0) {
+    bail(`MISSING Core V1 brokerage identity table: ${missingBrokerage.join(", ")}`);
+  }
+  console.log("[migrate] Core V1 brokerage identity table present");
 
   // Column-level verification. Names only — never a value.
   const colRows = await sql`

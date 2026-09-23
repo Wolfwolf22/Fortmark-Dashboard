@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
+import { brokerageMlsOfficeId } from "@/lib/brokerage/service";
 import { searchSampleListings } from "@/lib/data/sample-listings";
 import { sampleListingsEnabled } from "@/lib/mls/config";
 import { failureResponse, mlsConfig, notConfigured, NO_STORE } from "@/lib/mls/http";
@@ -36,8 +37,20 @@ export async function GET(request: NextRequest) {
     return notConfigured();
   }
 
+  // The brokerage's MLS office id, from brokerage identity. General search
+  // works without it (rows are simply not flagged as FortMark's); the
+  // FortMark scope refuses rather than widening to the whole MLS.
+  const office = await brokerageMlsOfficeId(caller.clerkUserId);
+  const officeId = office.ok ? office.officeId : null;
+  if (query.office === "fortmark" && !officeId) {
+    return NextResponse.json(
+      { error: office.ok ? "fortmark_office_not_configured" : "fortmark_office_unavailable" },
+      { status: office.ok ? 409 : 503, headers: NO_STORE }
+    );
+  }
+
   try {
-    const page = await searchListings(config.config, query, request.signal);
+    const page = await searchListings(config.config, query, request.signal, { brokerageOfficeId: officeId });
     return NextResponse.json(page, { headers: NO_STORE });
   } catch (error) {
     return failureResponse(error);

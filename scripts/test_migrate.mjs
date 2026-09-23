@@ -198,6 +198,15 @@ try {
       rows.every((row, i) => row.hash === expectedHash(realJournal.entries[i].tag) && Number(row.created_at) === realJournal.entries[i].when));
     const t = await query("fresh", "select to_regclass('public.contacts') c, to_regclass('public.transactions') t, to_regclass('public.ai_prepared_actions') a");
     check("schema objects exist after apply", Boolean(t[0].c && t[0].t && t[0].a));
+    const b = await query("fresh", "select to_regclass('public.brokerage_identities') b, to_regclass('public.brokerage_identities_brokerage_key_key') u");
+    check("0009 creates brokerage_identities with its unique brokerage key", Boolean(b[0].b && b[0].u));
+    let dup = false;
+    try {
+      await query("fresh", "insert into brokerage_identities (brokerage_key, display_name) values ('k', 'A'), ('k', 'B')");
+    } catch {
+      dup = true;
+    }
+    check("a second identity for one brokerage key is refused", dup);
 
     // 2. Idempotent.
     const again = await runMigrations(url);

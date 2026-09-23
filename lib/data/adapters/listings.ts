@@ -117,20 +117,27 @@ export async function getListing(id: string): Promise<Listing | undefined> {
  * `activeCount` is undefined for the sample set — generated rows are not
  * FortMark's listings and are never counted as such.
  */
+export type FortmarkOfficeState = "configured" | "not_configured" | "unavailable";
+
 export async function getFortmarkListingSummary(): Promise<{
   listing: Listing | undefined;
   activeCount: number | undefined;
+  /** Whether the brokerage's MLS office id is set in brokerage identity. */
+  office: FortmarkOfficeState | undefined;
 }> {
   if ((await availableSource()) === "sample") {
     await delay(120);
-    return { listing: getSampleFeaturedListing(), activeCount: undefined };
+    return { listing: getSampleFeaturedListing(), activeCount: undefined, office: undefined };
   }
-  const body = await request<{ listing: Listing | null; fortmarkActiveCount?: number }>(
-    "/api/listings/featured"
-  );
+  const body = await request<{
+    listing: Listing | null;
+    fortmarkActiveCount?: number | null;
+    office?: FortmarkOfficeState;
+  }>("/api/listings/featured");
   return {
     listing: body.listing ?? undefined,
     activeCount: typeof body.fortmarkActiveCount === "number" ? body.fortmarkActiveCount : undefined,
+    office: body.office,
   };
 }
 
