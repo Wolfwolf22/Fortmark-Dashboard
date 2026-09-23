@@ -172,23 +172,25 @@ Truthful settings · Read-only AI as a secondary layer.
 | Capability | State | Backing source | Production? | Remaining |
 |---|---|---|---|---|
 | Auth | COMPLETE | Clerk + allowlist | Yes | — |
-| Profile + licence | COMPLETE | profile tables | Yes (licence rule pending promotion) | Promote this phase |
+| Profile + licence | COMPLETE | profile tables | Yes (licence rule pending promotion) | Promote |
 | Real team | COMPLETE | users + profiles | No (Preview) | Promote; invites/roles later |
-| Home daily brief | COMPLETE | metrics service | Yes | FortMark listings card goes live with the MLS |
+| Home daily brief | COMPLETE | metrics service + FortMark MLS summary | Partly (MLS card Preview) | Promote |
 | Contacts | COMPLETE | `contacts` | Yes | — |
 | Transactions | COMPLETE | `transactions` | Yes | — |
-| Unified search | PARTIAL | search service | Yes (contacts, transactions) | Listings provider needs the credential |
-| Live MLS listings | BLOCKED | Bridge `miamire` | No | Dashboard credential; live certification |
-| FortMark listings | BLOCKED | Bridge, `FTMK01` | No | Same |
-| Listing detail / media | BLOCKED | Bridge `Property.Media` | No | Same |
-| Comparables | BLOCKED (deferrable) | Bridge closed sales | No | Same; not required for core listings |
-| Truthful settings | PARTIAL | profile + team | Partly | Brokerage section (§6) |
-| Read-only AI | PARTIAL | OpenAI `gpt-5.5` | Disabled | Production key (Stage 2, frozen) |
+| Unified search | COMPLETE | search service (contacts, transactions, MLS) | Partly | Promote |
+| Live MLS listings | COMPLETE (Preview, live-certified 2026-09-23) | Bridge `miamire` | No | Production credential + promotion audit |
+| FortMark listings | COMPLETE (Preview) | Bridge, office `FTMK01` | No | Same |
+| Listing detail / media | COMPLETE (Preview) | Bridge `Property.Media` | No | Same |
+| Comparables | CERTIFIED — advanced (Preview) | Bridge closed sales | No | Same |
+| Truthful settings | PARTIAL | profile + team | Partly | Brokerage identity (licence #, address; MLS office phone) |
+| Read-only AI | SECONDARY | OpenAI `gpt-5.5` | Disabled | Production key (frozen) |
 | Migration runner | COMPLETE | `migrate-core.mjs` | Used by Preview builds | Use for the next Production migration |
 
-**Biggest blocker:** the dashboard project has no Bridge credential
-(`BRIDGE_API_TOKEN`, `BRIDGE_DATASET=miamire`, `MLS_LISTINGS_ENABLED=1`).
+See `docs/MLS_LIVE_CERTIFICATION.md` for the live evidence.
 
-**Recommended next implementation:** live MLS listings certification on Preview —
-search, FortMark listings, detail, media, Home and ⌘K — once the credential is added
-to Preview scope.
+**Biggest remaining Core V1 gap:** brokerage identity in Settings (licence number, office
+address and the MLS office phone). Everything else in Core V1 is certified on Preview.
+
+**Recommended next step:** a Production promotion audit for the Core Completion
+release (licence validation, real Team, live MLS, Home MLS, Search MLS, migration
+runner). Nothing is promoted automatically.

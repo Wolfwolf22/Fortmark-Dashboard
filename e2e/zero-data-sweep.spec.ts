@@ -97,6 +97,14 @@ test("the deployment is not in fixture mode", async () => {
 test("no route states a brokerage fact it cannot support", async () => {
   test.setTimeout(420_000);
   const findings: string[] = [];
+  // With the MLS live, two figures are real facts rather than brokerage
+  // claims: FortMark's featured listing price on Home, and MLS list prices on
+  // the Listings screen (certified against the feed by mls-live.spec.ts).
+  // The featured price is taken from the API, not assumed.
+  const featured = await api("/dashboard/api/listings/featured");
+  const featuredPrice =
+    featured.status === 200 ? String((featured.body.listing as { listPrice?: number } | null)?.listPrice ?? "") : "";
+  const digits = (a: string) => a.replace(/\D/g, "");
   for (const route of ROUTES) {
     let text = "";
     // The refused-chunk mitigation can leave a page unhydrated; read it
@@ -116,7 +124,12 @@ test("no route states a brokerage fact it cannot support", async () => {
     // is a queried zero, not a manufactured one — the difference the whole
     // remediation turns on — and the next test proves the source. Any other
     // figure, there or anywhere else, would be invented.
-    const permitted = route === "/dashboard/" ? amounts.filter((a) => a !== "$0") : amounts;
+    const permitted =
+      route === "/dashboard/"
+        ? amounts.filter((a) => a !== "$0" && !(featuredPrice && digits(a) === featuredPrice))
+        : route === "/dashboard/listings"
+          ? []
+          : amounts;
     if (permitted.length) findings.push(`${route} shows money on an empty account: ${permitted.join(", ")}`);
     if (invented.length) findings.push(`${route} shows generated records: ${invented.join(", ")}`);
   }

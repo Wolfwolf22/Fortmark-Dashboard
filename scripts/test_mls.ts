@@ -448,6 +448,38 @@ try {
   }
 }
 
+// --- Live-certification invariants (static; 2026-09-23) ----------------------
+{
+  // No mock mixing: every listings route reaches the sample set only on the
+  // branch where the MLS is NOT configured. With Bridge configured, a route
+  // either answers from the MLS or fails — it never substitutes generated rows.
+  const routes = [
+    "app/api/listings/route.ts",
+    "app/api/listings/[id]/route.ts",
+    "app/api/listings/featured/route.ts",
+    "app/api/listings/[id]/comparables/route.ts",
+  ];
+  for (const file of routes) {
+    const full = readFileSync(file, "utf8");
+    const src = full.slice(full.indexOf("export async function GET"));
+    const gate = src.indexOf("if (!config.ok)");
+    const firstSample = src.search(/getSample|searchSample|sampleListingsEnabled\(\)/);
+    const tryBlock = src.indexOf("try {", gate);
+    check(`${file}: sample rows only inside the not-configured branch`,
+      gate > 0 && (firstSample === -1 || (firstSample > gate && firstSample < tryBlock)));
+    check(`${file}: an MLS failure is a failure response, not a fallback`, /catch \(error\) \{\s*return failureResponse\(error\)/.test(src));
+  }
+  const widget = readFileSync("components/home/widgets/featured-listing.tsx", "utf8");
+  check("Home says there are no active FortMark listings rather than borrowing another office's",
+    widget.includes("No active FortMark listings"));
+  check("Home's listing card reads the FortMark summary only", widget.includes("getFortmarkListingSummary") && !widget.includes("searchListings"));
+  check("an MLS failure on Home degrades only the listing card", widget.includes("The featured listing failed to load"));
+  const search = readFileSync("lib/search/service.ts", "utf8");
+  check("⌘K listing hits are built from the sanitised Listing, not a raw record",
+    search.includes("title: listing.address") && !search.includes("UnparsedAddress"));
+  check("the search listing provider never touches the sample set", !/sample/i.test(search.slice(search.indexOf("async function runListingProvider"), search.indexOf("async function runListingProvider") + 1200)));
+}
+
 // Comparables.
   {
     const subject = (await getListing(cfg, "k1"))!;
