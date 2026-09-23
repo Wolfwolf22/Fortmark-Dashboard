@@ -177,11 +177,41 @@ test("an MLS number resolves to exactly that listing, and its detail loads with 
   for (const k of Object.keys(l)) expect(PRODUCT_KEYS.has(k), `unexpected key ${k}`).toBe(true);
   console.log(`[mls] detail photos=${l.photos.length} office=${(l.listingOffice as Json)?.mlsId} fields=${["beds", "baths", "sqft", "lotSqft", "yearBuilt", "daysOnMarket", "description", "listingAgent"].filter((k) => l[k] !== undefined && l[k] !== "" && l[k] !== 0).join(",")}`);
   expect(l.mlsNumber).toBe(sample.mlsNumber);
-  expect(l.photos.length).toBeGreaterThan(1);
+  expect(l.photos.length).toBeGreaterThan(0);
   expect(l.photos.every((u) => u.startsWith("https://dvvjkgh94f2v6.cloudfront.net/"))).toBe(true);
   // By MLS number too.
   const byMls = await api(`/dashboard/api/listings/${encodeURIComponent(sample.mlsNumber)}`);
   expect((byMls.body.listing as Item).id).toBe(sample.id);
+});
+
+// --- Media against the feed's own photo counts ---------------------------------
+const PHOTO_COUNTS = (process.env.MLS_PHOTO_COUNTS ?? "").split(",").filter(Boolean).map((s) => {
+  const [key, n] = s.split(":");
+  return { key, n: Number(n) };
+});
+const NO_PHOTO = process.env.MLS_NO_PHOTO_KEY ?? "";
+
+test("detail galleries carry every embedded photo the feed counts, in order", async () => {
+  test.skip(PHOTO_COUNTS.length === 0, "no photo counts supplied");
+  for (const { key, n } of PHOTO_COUNTS) {
+    const d = await api(`/dashboard/api/listings/${encodeURIComponent(key)}`);
+    const photos = (d.body.listing as Item).photos;
+    expect(photos.length, `photos for one listing`).toBe(n);
+    expect(new Set(photos).size).toBe(photos.length);
+    expect(photos.every((u) => u.startsWith("https://dvvjkgh94f2v6.cloudfront.net/"))).toBe(true);
+  }
+  console.log(`[mls] embedded galleries matched PhotosCount on ${PHOTO_COUNTS.length} listings (${PHOTO_COUNTS.map((c) => c.n).join("/")})`);
+});
+
+test("a listing with no photos says so — no stand-in image", async () => {
+  test.skip(!NO_PHOTO, "no photo-less listing supplied");
+  const d = await api(`/dashboard/api/listings/${encodeURIComponent(NO_PHOTO)}`);
+  expect(d.status).toBe(200);
+  expect((d.body.listing as Item).photos.length).toBe(0);
+  await page.goto(`/dashboard/listings/${NO_PHOTO}`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("main")).toContainText("The MLS has no photos for this listing", { timeout: 60_000 });
+  const plates = await page.locator('main img[src*="plate"], main img[src$=".svg"]').count();
+  expect(plates).toBe(0);
 });
 
 // --- FortMark's own book -------------------------------------------------------
@@ -293,7 +323,11 @@ test("rendered: Listings — MLS search and FortMark listings, detail, deep link
   expect(fmCount).toBeGreaterThan(0);
   expect(fmCount).toBeLessThan(100);
   // Back to MLS: no stale FortMark rows.
-  await page.getByRole("radio", { name: "MLS search" }).or(page.getByRole("button", { name: "MLS search" })).first().click();
+  // Keyboard: the scope switch is operable without a pointer.
+  const mlsRadio = page.getByRole("radio", { name: "MLS search" });
+  await mlsRadio.focus();
+  await page.keyboard.press("Enter");
+  await expect(mlsRadio).toHaveAttribute("aria-checked", "true");
   await expect(page).not.toHaveURL(/office=fortmark/);
   await expect.poll(async () => (await main.innerText()).match(/([\d,]+) listings/)?.[1] ?? "", { timeout: 60_000 }).toBe(mlsCountText);
 

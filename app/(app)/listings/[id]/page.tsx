@@ -87,15 +87,18 @@ function DetailBody({
     <>
       {listing.source === "sample" && <SampleDataNotice />}
 
-      <div className="grid gap-6 lg:grid-cols-5">
-        <div className="lg:col-span-3">
+      {/* grid-cols-1 + min-w-0: a grid item's automatic minimum is its content
+          width, so without these a long thumbnail strip widened the page on
+          phones instead of scrolling inside its own row. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+        <div className="min-w-0 lg:col-span-3">
           <ListingGallery
             photos={listing.photos}
             address={listing.address}
             source={listing.source}
           />
         </div>
-        <div className="lg:col-span-2">
+        <div className="min-w-0 lg:col-span-2">
           <ListingSummary listing={listing} agent={agent} />
         </div>
       </div>
