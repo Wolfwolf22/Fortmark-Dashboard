@@ -478,3 +478,78 @@ independent and gives a same-code, MLS-off deployment to roll back to in seconds
 - Parent `br-bitter-cake-av7pmzth` at LSN `0/1E99E98`, parent timestamp 2026-09-23T03:50:13Z.
 - No compute; state `ready`; taken at migration level 9.
 - Restore only by explicit human approval.
+
+## Migration 0009 (operator-run, canonical runner, 2026-09-23)
+
+- The operator ran `npm run db:migrate` from `c4e304b` on their own machine, with the
+  secret held in shell memory (`read -rs`), then removed it.
+- Target fingerprint `23deffc7e4e5`; preflight 9 migrations, table absent, counts as
+  recorded.
+- Result: `migrations applied atomically (bookkeeping rows 9 -> 10, 1 new)` and
+  `Core V1 brokerage identity table present`.
+- **Independent verification (04:1xZ, read-only):**
+  - 10 bookkeeping rows; the last `created_at` is `1790131131105` (0009's journal time);
+  - `brokerage_identities` and `brokerage_identities_brokerage_key_key` present;
+    0 brokerage rows;
+  - users 1 (`admin`/`active`), profiles 1, images 1, audit events 65, contacts 0,
+    transactions 0, prepared actions 0: unchanged.
+  - **Schema is now identical to certified Preview:** column, constraint, index and
+    enum fingerprints are equal, with 192 columns on both.
+- **Finding EX-C1 (P3, cosmetic):**
+  - Production's 0009 bookkeeping hash is `f4c19419…`, where the repository and
+    Preview have `d7b6f614…`. `f4c19419…` is exactly the sha256 of 0009 with CRLF line
+    endings: the operator's Windows checkout converted line endings
+    (`core.autocrlf`).
+  - The executed SQL is equivalent, as the identical schema fingerprints show.
+  - Drizzle never compares hashes. It applies a migration only when its journal time
+    is newer than the last `created_at`, so 0009 can never be re-applied.
+  - No action is needed. Post-promotion recommendation: add `.gitattributes`
+    `*.sql text eol=lf` (and a matching journal rule) so operator runs record LF
+    hashes. The bookkeeping row was not edited.
+- The old app `b4c04d0` stayed healthy on the new schema: health 200, protected APIs
+  401 without a session, 0 error/warning log lines.
+
+## Deploy A — Core V1, MLS off (2026-09-23)
+
+- **Pre-deploy env (names only):** no `BRIDGE_*`, `MLS_LISTINGS_ENABLED` or `SAMPLE_*`;
+  no `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AI_CHAT_PROVIDER_ENABLED` or
+  `AI_ACTIONS_ENABLED`; `AI_PROVIDER`, `CONTACTS_DATABASE_ENABLED` and
+  `TRANSACTIONS_DATABASE_ENABLED` present. The last Production env change is still
+  the Stage 1 set (2026-09-22 18:20Z).
+- **Git:** `claude/fortmark-dashboard-build-v39u96` fast-forwarded `b4c04d0 → c4e304b`
+  at 04:16:36Z (no force).
+- **Deploy A:** **`dpl_C1LNWdNA8CEdYTRtoXyXrrghNnH1`**, a fresh Production build of
+  `c4e304b`, READY. It serves Production from 04:18:31Z. **Preferred Core V1 / MLS-off
+  rollback target.**
+- **Build log:**
+  - `VERCEL_ENV=production`, fingerprint `23deffc7e4e5`, pooled and unpooled on the
+    same branch;
+  - contacts and transactions `database`;
+  - listings `MLS_LISTINGS_ENABLED=unset BRIDGE_API_TOKEN present=false` (the "sample
+    data" wording is P3-1; runtime is `not_configured`);
+  - assistant `not connected` (unchanged);
+  - `migrations skipped — build guard allows preview only`.
+- **Health:** `{"ok":true,"revision":"c4e304b","sources":{"transactions":"db","contacts":"db","listings":"not_configured","homeMetrics":"real-only","assistant":{"provider":"openai","model":"gpt-5.5","status":"no_credential"},"actions":"disabled"}}`.
+  The AI and actions state is identical to before the rollout.
+- **Unauthenticated checks:**
+  - 401 without a session for `/api/brokerage` (GET and PUT), `/team`, `/profile`,
+    `/listings`, `/listings/featured`, `/listings/source`, `/search`, `/subsystems`,
+    `/contacts`, `/transactions`, `/metrics`, `/chat` and `/ai/actions`;
+  - portal `/dashboard`, `/dashboard/settings` and `/dashboard/listings` redirect
+    (307) to sign-in;
+  - health is `cache-control: no-store`.
+- **Deployed-bundle scan:**
+  - 54 of the 93 client chunks from a local `c4e304b` build are served byte-identical
+    by Production (content-hashed names);
+  - none contains the Bridge host, `BRIDGE_API_TOKEN`, a Postgres URL, `neon.tech`,
+    Clerk/OpenAI/Anthropic key prefixes, Blob token prefixes, `ListOfficeMlsId`,
+    `ParcelNumber` or `FTMK01`;
+  - the other chunks differ only by build-specific public values, and the
+    pre-promotion canary build covered them.
+- **Runtime:** 401 ×16, 200 ×4 and 307 ×2 (all from these probes); 0 error, warning or
+  fatal lines.
+- **Data after deploy:** unchanged: migrations 10, brokerages 0, users 1, profiles 1,
+  images 1, audit events 65, business tables 0.
+- **Status: DEPLOY A LIVE — waiting for the owner's signed-in smoke and Settings ›
+  Brokerage configuration.** Deploy B is not started. No Bridge variable exists in
+  Production.
