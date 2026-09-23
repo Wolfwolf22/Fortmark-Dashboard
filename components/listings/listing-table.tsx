@@ -146,7 +146,7 @@ export function ListingTable({
                   {listing.daysOnMarket}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-right text-muted-foreground tabular">
-                  {formatDate(listing.listedDate)}
+                  {listing.listedDate ? formatDate(listing.listedDate) : "—"}
                 </TableCell>
               </TableRow>
             );

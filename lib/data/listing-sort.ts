@@ -60,7 +60,8 @@ function sortValue(listing: Listing, key: ListingSortKey): string | number {
     case "daysOnMarket":
       return listing.daysOnMarket ?? 0;
     case "listedDate":
-      return new Date(listing.listedDate).getTime();
+      // An unknown list date sorts as the oldest rather than as NaN.
+      return listing.listedDate ? new Date(listing.listedDate).getTime() : 0;
   }
 }
 

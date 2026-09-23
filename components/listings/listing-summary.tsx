@@ -55,7 +55,7 @@ export function ListingSummary({
       label: "Days on market",
       value: listing.daysOnMarket !== undefined ? String(listing.daysOnMarket) : "—",
     },
-    { label: "Listed", value: formatDate(listing.listedDate) },
+    { label: "Listed", value: listing.listedDate ? formatDate(listing.listedDate) : "—" },
   ];
 
   return (

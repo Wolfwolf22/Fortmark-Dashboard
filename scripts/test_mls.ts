@@ -209,7 +209,7 @@ const FULL: Row = {
   check("missing numbers are 0 (the domain's 'not stated')", sparse?.beds === 0 && sparse?.sqft === 0 && sparse?.listPrice === 0);
   check("missing optionals are absent, not invented",
     sparse?.yearBuilt === undefined && sparse?.daysOnMarket === undefined && sparse?.lotSqft === undefined && sparse?.neighborhood === undefined && sparse?.folioNumber === undefined);
-  check("listed date falls back to modification time", sparse?.listedDate === new Date("2026-09-01T00:00:00Z").toISOString());
+  check("a missing list date stays unknown — modification time is not a list date", sparse?.listedDate === "");
   check("no price history without a list date and price", toPriceHistory({ ListPrice: 1 }).length === 0);
 }
 check("a record without a key is rejected", toListing({ ListingId: "A1" }) === null);
@@ -268,10 +268,16 @@ check("status filter uses RESO names",
   buildSearchFilter(base({ status: ["underContract", "withdrawn"] })).includes("StandardStatus eq 'Active Under Contract' or StandardStatus eq 'Withdrawn' or StandardStatus eq 'Canceled'"));
 check("type filter maps to sub-types under Residential",
   buildSearchFilter(base({ propertyType: ["condo"] })) === "(InternetEntireListingDisplayYN eq true) and ((PropertyType eq 'Residential') and (PropertySubType eq 'Condominium'))");
-check("land swaps the property type",
-  buildSearchFilter(base({ propertyType: ["land"] })) === "(InternetEntireListingDisplayYN eq true) and (PropertyType eq 'Land')");
+check("land swaps to the dataset's land property types (miamire: Land/Boat Docks, Commercial Land)",
+  buildSearchFilter(base({ propertyType: ["land"] })) ===
+    "(InternetEntireListingDisplayYN eq true) and (PropertyType eq 'Land' or PropertyType eq 'Land/Boat Docks' or PropertyType eq 'Commercial Land')");
 check("land plus residential is an or of both",
-  buildSearchFilter(base({ propertyType: ["land", "condo"] })).includes("or (PropertyType eq 'Land')"));
+  buildSearchFilter(base({ propertyType: ["land", "condo"] })).includes("or (PropertyType eq 'Land' or PropertyType eq 'Land/Boat Docks'"));
+check("multi-family includes Residential Income (where miamire files duplexes)",
+  buildSearchFilter(base({ propertyType: ["multiFamily"] })).includes("(PropertyType eq 'Residential Income')"));
+check("miamire land types normalise to land",
+  toPropertyType("Land/Boat Docks", "Residential") === "land" && toPropertyType("Commercial Land", "Agriculture") === "land");
+check("miamire income property normalises to multi-family", toPropertyType("Residential Income", "Duplex") === "multiFamily");
 check("every search leads with the IDX display clause", buildSearchFilter(base({})).startsWith("(InternetEntireListingDisplayYN eq true)"));
 check("other cannot be expressed and is ignored",
   buildSearchFilter(base({ propertyType: ["other"] })) === "(InternetEntireListingDisplayYN eq true) and (PropertyType eq 'Residential')");

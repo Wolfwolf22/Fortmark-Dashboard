@@ -24,6 +24,8 @@ import type { BridgeConfig } from "./config.ts";
 import { EMBEDDED_MEDIA_FIELD, MEDIA_FIELDS, PROPERTY_FIELDS, selectClause } from "./fields.ts";
 import { FORTMARK_LIST_OFFICE_MLS_ID } from "./brokerage.ts";
 import {
+  INCOME_PROPERTY_TYPES,
+  LAND_PROPERTY_TYPES,
   embeddedPhotoUrls,
   PROPERTY_SUB_TYPES_FOR,
   STANDARD_STATUS_FOR,
@@ -93,16 +95,26 @@ function typeFilters(types: readonly PropertyType[] | undefined): string[] {
   const wanted = (types ?? []).filter((t): t is Exclude<PropertyType, "other"> => t !== "other");
   if (wanted.length === 0) return [eq("PropertyType", SALES_PROPERTY_TYPE)];
 
-  const land = wanted.includes("land");
-  const residential = wanted.filter((t) => t !== "land");
   const clauses: string[] = [];
+  // Residential sub-types (and the RESO-standard multi-family sub-types, for
+  // a dataset that files them under Residential).
+  const residential = wanted.filter((t) => t !== "land");
   if (residential.length > 0) {
     const subs = residential.flatMap((t) => PROPERTY_SUB_TYPES_FOR[t]);
     clauses.push(
       andFilters([eq("PropertyType", SALES_PROPERTY_TYPE), anyOf("PropertySubType", subs)])
     );
   }
-  if (land) clauses.push(eq("PropertyType", "Land"));
+  // Income property is its own RESO PropertyType on `miamire`.
+  if (wanted.includes("multiFamily")) {
+    const income = anyOf("PropertyType", INCOME_PROPERTY_TYPES);
+    if (income) clauses.push(income);
+  }
+  // Land is its own PropertyType, under the dataset's spellings.
+  if (wanted.includes("land")) {
+    const land = anyOf("PropertyType", LAND_PROPERTY_TYPES);
+    if (land) clauses.push(land);
+  }
   return clauses.length === 1 ? clauses : [clauses.map((c) => `(${c})`).join(" or ")];
 }
 

@@ -94,10 +94,23 @@ export const STANDARD_STATUS_FOR: Record<ListingStatus, readonly string[]> = {
  * Sub-type carries the useful distinction for residential; PropertyType
  * catches land. Unknown combinations are `other`, not a guess.
  */
+/**
+ * RESO PropertyType values that mean land, and that mean multi-family income
+ * property, as datasets actually spell them. `miamire` files land as
+ * "Land/Boat Docks" (residential) and "Commercial Land", and duplexes through
+ * quadruplexes under "Residential Income" — never under "Residential", and
+ * never as the RESO-standard "Land" (both verified live 2026-09-23: the
+ * standard spellings matched zero active listings). The standard spellings
+ * stay in the lists so a conforming dataset still works.
+ */
+export const LAND_PROPERTY_TYPES: readonly string[] = ["Land", "Land/Boat Docks", "Commercial Land"];
+export const INCOME_PROPERTY_TYPES: readonly string[] = ["Residential Income"];
+
 export function toPropertyType(propertyType: unknown, propertySubType: unknown): PropertyType {
   const type = (str(propertyType) ?? "").toLowerCase();
   const sub = (str(propertySubType) ?? "").toLowerCase();
-  if (type === "land" || sub === "unimproved land" || sub === "land") return "land";
+  if (LAND_PROPERTY_TYPES.some((t) => t.toLowerCase() === type) || sub === "unimproved land" || sub === "land") return "land";
+  if (INCOME_PROPERTY_TYPES.some((t) => t.toLowerCase() === type)) return "multiFamily";
   if (sub === "single family residence" || sub === "single family") return "singleFamily";
   if (sub === "condominium" || sub === "condo") return "condo";
   if (sub === "townhouse") return "townhouse";
@@ -200,7 +213,11 @@ export function toListing(r: ResoRecord, photos: string[] = []): Listing | null 
   const officeMlsId = str(r.ListOfficeMlsId);
   const coOfficeMlsId = str(r.CoListOfficeMlsId);
   const officeName = str(r.ListOfficeName);
-  const listedDate = isoDate(r.ListingContractDate) ?? isoDate(r.ModificationTimestamp) ?? "";
+  // The listing's own contract date, or nothing. A record's modification time
+  // is not when it was listed, and showing it as "Listed" would state a fact
+  // the feed never gave (one active Fort Lauderdale listing carries no contract
+  // date at all). Empty renders as "—".
+  const listedDate = isoDate(r.ListingContractDate) ?? "";
 
   const agentName = str(r.ListAgentFullName);
 

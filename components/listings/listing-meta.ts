@@ -91,8 +91,15 @@ export interface ListingFilterState {
   query: string;
 }
 
+/**
+ * Active by default. The MLS keeps every record it has ever held — on
+ * `miamire` "All statuses" is roughly 770,000 rows of closed, expired and
+ * withdrawn history against about 48,000 active listings — so an unfiltered
+ * default would open the screen on history. Every other status stays one
+ * choice away, including "All statuses".
+ */
 export const DEFAULT_LISTING_FILTER_STATE: ListingFilterState = {
-  status: "all",
+  status: "active",
   propertyType: "all",
   city: "all",
   minBeds: "any",
@@ -103,7 +110,7 @@ export const DEFAULT_LISTING_FILTER_STATE: ListingFilterState = {
 
 export function isListingFilterStateDefault(state: ListingFilterState): boolean {
   return (
-    state.status === "all" &&
+    state.status === DEFAULT_LISTING_FILTER_STATE.status &&
     state.propertyType === "all" &&
     state.city === "all" &&
     state.minBeds === "any" &&
