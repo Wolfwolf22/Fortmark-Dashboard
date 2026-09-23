@@ -561,6 +561,17 @@ try {
     sortListings([{ ...a, status: "closed" }, { ...b, status: "active" }, { ...c, status: "pending" }], "status", "asc").map((l) => l.status).join(",") === "active,pending,closed");
 }
 
+// --- Structural: detail layout at phone width -----------------------------------
+{
+  const page = readFileSync("app/(app)/listings/[id]/page.tsx", "utf8");
+  // Every grid on the detail page names its single mobile column. An implicit
+  // track grows to its content's min-content width, which is how a thumbnail
+  // strip (L5) and then a comparables table widened the page at 390px.
+  const grids = page.match(/className="grid [^"]*"/g) ?? [];
+  check("every detail-page grid declares grid-cols-1 for phones",
+    grids.length >= 3 && grids.every((g) => g.includes("grid-cols-1") || /grid-cols-2 gap-3/.test(g)));
+}
+
 // --- Structural: routes and adapter ------------------------------------------
 {
   const search = readFileSync("app/api/listings/route.ts", "utf8");

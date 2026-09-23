@@ -116,7 +116,10 @@ function DetailBody({
         </Card>
       ) : null}
 
-      <div className="grid items-start gap-6 lg:grid-cols-2">
+      {/* Same rule as above: without an explicit single column, the implicit
+          track grows to the comparables table's min-content width and widens
+          the page on phones; the table scrolls inside its own card instead. */}
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2 [&>*]:min-w-0">
         <PriceHistory events={listing.priceHistory} />
         <ComparableSales listing={listing} />
       </div>
@@ -127,8 +130,8 @@ function DetailBody({
 function DetailSkeleton() {
   return (
     <>
-      <div className="grid gap-6 lg:grid-cols-5">
-        <div className="space-y-3 lg:col-span-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+        <div className="min-w-0 space-y-3 lg:col-span-3">
           <Skeleton className="aspect-[16/10] w-full rounded-card" />
           <div className="flex gap-2">
             {Array.from({ length: 5 }, (_, i) => (
