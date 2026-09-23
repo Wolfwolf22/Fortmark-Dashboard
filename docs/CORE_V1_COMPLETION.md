@@ -1,7 +1,10 @@
 # FortMark Dashboard — Core V1 Completion
 
 **Phase:** Core product completion — dashboard first, AI second.
-**Date:** 2026-09-22 · **Branch:** `claude/dashboard-status-yir55p` · **Preview:** `2d80e68` → `6244813`
+**Date:** 2026-09-22 → 2026-09-23 · **Branch:** `claude/dashboard-status-yir55p` · **Preview:** `2d80e68` → `c4e304b`
+
+**Status: CORE V1 = COMPLETE IN PREVIEW** (2026-09-23, after the brokerage identity
+domain, §9). Not promoted: the next phase is the Core V1 Production promotion audit.
 **Production impact:** none. Production still serves `b4c04d0` (Stage 1); nothing
 in this phase touched Production configuration, data or deployments.
 
@@ -15,7 +18,7 @@ in this phase touched Production configuration, data or deployments.
 | Professional profile | REAL | `professional_profiles`, `profile_images` | Onboarding, editor, photo, business card. |
 | Professional licensing | REAL (self-reported) | `license_state/type/number/expiration`, `nrds_number` columns — already first-class | Labelled "Self-reported. FortMark does not verify licence details." No authoritative verification exists (DBPR not integrated), and none is claimed. |
 | Team / agents | REAL (this phase) | `dashboard_users` + profiles via `/api/team` | Was a generated roster. Role changes and invitations: NOT IMPLEMENTED (and no longer pretended). |
-| Brokerage identity | NOT CONFIGURED | — | Settings › Brokerage refuses the generated brokerage. See §6. |
+| Brokerage identity | NOT CONFIGURED at baseline → REAL (Preview, §9) | `brokerage_identities` | Settings › Brokerage refused the generated brokerage. Now a real, operator-provided record. |
 | Listings / MLS search | NOT CONFIGURED (code complete) | Bridge RESO `miamire` | The dashboard project has no Bridge credential in any environment. |
 | Listing detail / media | NOT CONFIGURED (code complete) | Bridge `Property` + embedded `Media` | Media defect fixed this phase (§4). |
 | Comparables | NOT CONFIGURED (code complete) | Bridge closed sales | Upstream verified working (254 closed SFR, Sunrise, 6 mo). |
@@ -25,7 +28,7 @@ in this phase touched Production configuration, data or deployments.
 | Home metrics | REAL | metrics service over contacts/transactions | `real-only`; zeros are real zeros. |
 | Search (⌘K) | REAL for contacts/transactions | search service | Listing provider built; activates with the MLS credential. |
 | Reports, Calendar, Documents, Messages, Notifications, Market activity, Integrations | NOT IMPLEMENTED | — | Honest `not_configured` states, verified by the zero-data sweep (no invented money, names, files, appointments). |
-| Settings | PARTIAL | Profile real, Team real; Brokerage/Notifications/Integrations not configured | |
+| Settings | PARTIAL at baseline → COMPLETE for Core V1 (§9) | Profile, Team, Brokerage real; Notifications/Integrations truthfully not configured | |
 | AI | REAL on Preview; DISABLED in Production | OpenAI `gpt-5.5`, 9 read tools | Frozen. No change in this phase. |
 
 No domain is in MOCK in normal mode. Fixture data exists only behind the explicit
@@ -35,7 +38,7 @@ No domain is in MOCK in normal mode. Fixture data exists only behind the explici
 1. Migration runner (infrastructure prerequisite for any schema work).
 2. P0 — licence rules + real Team (no schema change needed).
 3. P1–P3 — listings: credential investigation, architecture, FortMark book, media, IDX, Home.
-4. P4 — brokerage identity: audited, minimum defined (§6).
+4. P4 — brokerage identity: audited, minimum defined (§6), then built (§9).
 5. AI prominence: audited, no change needed (§7).
 
 ---
@@ -144,7 +147,7 @@ responses.
 
 ---
 
-## 6. Brokerage identity (audit only)
+## 6. Brokerage identity (audit; superseded by §9)
 
 - **Real today:** brokerage name "FortMark, LLC" and MLS office id `FTMK01` (from the MLS); the brokerage key `fortmark`.
 - **Also available from the MLS office record once the credential exists:** `ListOfficePhone`, `ListOfficeURL`.
@@ -179,18 +182,98 @@ Truthful settings · Read-only AI as a secondary layer.
 | Transactions | COMPLETE | `transactions` | Yes | — |
 | Unified search | COMPLETE | search service (contacts, transactions, MLS) | Partly | Promote |
 | Live MLS listings | COMPLETE (Preview, live-certified 2026-09-23) | Bridge `miamire` | No | Production credential + promotion audit |
-| FortMark listings | COMPLETE (Preview) | Bridge, office `FTMK01` | No | Same |
+| FortMark listings | COMPLETE (Preview) | Bridge; office id from brokerage identity (`FTMK01`) | No | Same |
 | Listing detail / media | COMPLETE (Preview) | Bridge `Property.Media` | No | Same |
 | Comparables | CERTIFIED — advanced (Preview) | Bridge closed sales | No | Same |
-| Truthful settings | PARTIAL | profile + team | Partly | Brokerage identity (licence #, address; MLS office phone) |
+| Truthful settings | COMPLETE (Preview) | profile + team + `brokerage_identities` | Partly (profile only) | Owner input: brokerage licence #, office address, website |
 | Read-only AI | SECONDARY | OpenAI `gpt-5.5` | Disabled | Production key (frozen) |
-| Migration runner | COMPLETE | `migrate-core.mjs` | Used by Preview builds | Use for the next Production migration |
+| Brokerage identity | COMPLETE (Preview) | `brokerage_identities` (0009) | No | Promotion audit; owner input above |
+| Migration runner | COMPLETE | `migrate-core.mjs` | Used by Preview builds (0009 applied 9 → 10) | Use for the next Production migration |
 
 See `docs/MLS_LIVE_CERTIFICATION.md` for the live evidence.
 
-**Biggest remaining Core V1 gap:** brokerage identity in Settings (licence number, office
-address and the MLS office phone). Everything else in Core V1 is certified on Preview.
+**Biggest remaining Core V1 gap (superseded):** brokerage identity — built in §9.
 
-**Recommended next step:** a Production promotion audit for the Core Completion
-release (licence validation, real Team, live MLS, Home MLS, Search MLS, migration
-runner). Nothing is promoted automatically.
+---
+
+## 9. Brokerage identity — built (Core V1 final domain)
+
+See `docs/BROKERAGE_IDENTITY.md` for the full model.
+
+- **Schema:** migration `0009_steep_warstar`, additive only. It creates
+  `brokerage_identities` with one row per brokerage key (a unique index) and
+  SET NULL foreign keys to `dashboard_users`.
+  - Applied to Preview only, by the canonical runner in build `dpl_2f7TDznSNzRbucJN7sU6Lrqd7WK9`:
+    `migrations applied atomically (bookkeeping rows 9 -> 10, 1 new)` and
+    `Core V1 brokerage identity table present`.
+  - Production: 9 migrations, no table.
+- **Authorisation:**
+  - The tenant, role and actor come from the session (`resolveActor`), never from the
+    request.
+  - Admin and broker edit. Agent, member and transaction coordinator read.
+  - The body is strict: a key, id or role in it is a 400.
+- **Truthfulness:**
+  - The licence is labelled operator-provided and carries no status claims.
+  - The MLS office phone and name are shown as a labelled display supplement and never
+    stored.
+  - Nothing was invented: the licence number, address and website await the owner.
+- **Listings:** FortMark's office id is read from the record. With a wrong id the
+  FortMark views are empty; with no id they say "not configured". General MLS search is
+  independent of the record.
+- **Preview seed:** entered through the UI by a privileged certification user:
+  "FortMark, LLC", FL, `FTMK01`.
+
+### Live authorisation matrix (Preview `942e5b8`, `e2e/brokerage.spec.ts`)
+
+| Role (set in the Preview DB between runs) | Record | Result |
+|---|---|---|
+| member | none | read-only empty state; PUT 403; FortMark listings 409 / Home "not configured"; general search OK: 7/7 |
+| admin | none → seed | privileged empty state → Configure → saved via UI; validation, injection and office-id matrix; responsive; a11y: 12/12 |
+| agent | seed + synthetic foreign row | reads own record, never the foreign one; PUT 403; no edit controls: 7/7 |
+| member | same | 7/7 |
+| transaction coordinator | same | 7/7 |
+| broker | seed | editor path again: 12/12 |
+
+- **Audit:** 1 `brokerage_identity_created` (displayName, licenseState, mlsOfficeId), then
+  `…_updated` events naming only `mlsOfficeId`. Refused writes produced no events.
+- **Foreign row:** unchanged throughout.
+
+### Regressions on Preview `c4e304b`
+
+- `e2e/mls-live.spec.ts`: 12 passed, 3 skipped. The skips are the input-driven
+  restricted-address, photo-count and no-photo checks; their private inputs were not
+  re-supplied, and the offline suite covers those rules.
+- **Defect L6 (P2), fixed:** the listing detail was 512 px wide at 390 on listings with
+  comparables. The Price history / Comparables grid had no mobile column. Fixed, with a
+  static check added.
+- `e2e/zero-data-sweep.spec.ts`: 8/8. Settings › Brokerage is now truthful rather than
+  "not configured".
+- One run of each spec hit the known hydration/navigation flake. The re-runs passed, and
+  no content assertion failed.
+
+### Could FortMark operate without OpenAI?
+
+**Yes.**
+- No Core surface imports the AI layer: only `/api/health` reports its status.
+- Production has run Core with AI off since Stage 1.
+- Home, Transactions, Listings, Leads, Settings and ⌘K are complete without the
+  assistant.
+
+### Navigation
+
+The order is Home, Transactions, Listings, Leads, then Calendar, Documents, Reports,
+AI and Messages.
+- The four Core destinations lead.
+- AI is 8th of 9 and secondary.
+- Calendar, Documents and Reports sit before AI while unimplemented. Each says so
+  honestly (the zero-data sweep verifies it).
+- Grouping or hiding unimplemented domains is a post-V1 navigation choice, not a V1
+  defect. Settings is reached from the account menu.
+
+## 10. Core V1 verdict
+
+**CORE V1 = COMPLETE IN PREVIEW.** Every Core V1 capability in §8 is COMPLETE or
+certified on Preview, and AI is a secondary layer. What remains is:
+- owner input: the brokerage licence number, authoritative office address, and website
+  if wanted;
+- the Core V1 Production promotion audit.

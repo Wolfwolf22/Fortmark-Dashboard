@@ -126,7 +126,8 @@ embedded, and results are trimmed to one thumbnail), no N+1 and no serial chain.
 - There is no baths filter in the current design (P3).
 - Rows with no list date sort first on "newest" (Bridge orders nulls first); they show "—".
 - The non-displayable rule has no live test case because the feed currently omits such records; it is certified offline.
-- Office phone is available from the MLS (`ListOfficePhone`) and the office URL is null in the feed. Neither is shown yet: brokerage identity is its own next phase. The brokerage licence number and office address belong in FortMark-owned data, because the MLS is not their source of record.
+- Office phone is available from the MLS (`ListOfficePhone`) and the office URL is null in the feed. Since the brokerage identity phase, Settings shows the MLS phone only as a labelled fallback and never stores it. The FortMark office id now comes from `brokerage_identities` (`docs/BROKERAGE_IDENTITY.md`), not a constant.
+- L6 (found 2026-09-23 re-run, fixed in `c4e304b`): detail overflowed at 390 px on listings with comparables (bottom grid had no mobile column).
 - Settings-hydration flakiness in automation (known ISS-09 class) occasionally needs a re-run; no product defect.
 
 ## 11. Verification run
