@@ -109,7 +109,7 @@ export function HomeHero({
   return (
     <section
       aria-labelledby="home-welcome"
-      className="dark mb-5 grid gap-6 overflow-hidden rounded-card border border-white/10 bg-[#0b0b0b] p-6 text-foreground md:p-8 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)] lg:gap-10"
+      className="dark mb-5 grid grid-cols-[minmax(0,1fr)] gap-6 overflow-hidden rounded-card border border-white/10 bg-[#0b0b0b] p-6 text-foreground md:p-8 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)] lg:gap-10"
     >
       <div className="flex min-w-0 flex-col justify-between gap-8">
         <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/55">
@@ -141,7 +141,7 @@ export function HomeHero({
 
       <aside
         aria-label="Needs attention summary"
-        className="flex flex-col justify-between gap-6 rounded-panel border border-white/10 bg-white/[0.03] p-5"
+        className="flex min-w-0 flex-col justify-between gap-6 rounded-panel border border-white/10 bg-white/[0.03] p-5"
       >
         <div>
           <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/55">
