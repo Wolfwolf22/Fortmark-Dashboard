@@ -78,10 +78,17 @@ export function createSampleLead(
 }
 
 /** "Mark contacted today": a touch, stamped on the sample row. */
-export function markSampleLeadContacted(id: string): Lead | undefined {
+export function markSampleLeadContacted(
+  id: string,
+  followUp: { nextFollowUpDate?: string; completeFollowUp?: boolean } = {}
+): Lead | undefined {
   const lead = leads.find((l) => l.id === id);
   if (!lead) return undefined;
   lead.lastContactDate = now().toISOString();
+  // Same rule as the database: a new date wins, completion clears, and a
+  // plain touch keeps the reminder.
+  if (followUp.nextFollowUpDate) lead.nextFollowUpDate = followUp.nextFollowUpDate;
+  else if (followUp.completeFollowUp) lead.nextFollowUpDate = undefined;
   bumpDataVersion();
   return lead;
 }

@@ -2,8 +2,11 @@
 
 /**
  * Leads table — sortable by name, budget, and last contact; 12-row pages.
- * A row click opens the lead drawer. Leads quiet for more than two weeks
- * show a "Follow up" pill in place of the relative timestamp.
+ * A row click opens the lead drawer.
+ *
+ * "Follow-up" is the stored reminder, due by the same rule Home's Needs
+ * attention queue uses. "No touch in 14 days" is a separate heuristic on
+ * last contact, labelled as exactly that.
  */
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronsUpDown, Users } from "lucide-react";
@@ -29,11 +32,18 @@ import {
   LEAD_STAGE_LABELS,
 } from "@/lib/data/types";
 import { cn, formatCurrencyCompact, formatRelative, initials } from "@/lib/utils";
-import { INTENT_LABELS, lastName, needsFollowUp } from "./lead-shared";
+import {
+  followUpLabel,
+  followUpStatus,
+  isFollowUpDue,
+  noRecentTouch,
+  NO_TOUCH_LABEL,
+} from "@/lib/contacts/follow-up";
+import { INTENT_LABELS, lastName } from "./lead-shared";
 
 const PAGE_SIZE = 12;
 
-type SortKey = "name" | "budget" | "lastContact";
+type SortKey = "name" | "budget" | "lastContact" | "followUp";
 type SortDir = "asc" | "desc";
 
 const COLUMNS: {
@@ -49,6 +59,7 @@ const COLUMNS: {
   { id: "neighborhood", label: "Neighborhood" },
   { id: "agent", label: "Agent" },
   { id: "stage", label: "Stage" },
+  { id: "followUp", label: "Follow-up", sortKey: "followUp" },
   { id: "lastContact", label: "Last contact", sortKey: "lastContact" },
 ];
 
@@ -60,6 +71,9 @@ function sortValue(lead: Lead, key: SortKey): string | number {
       return lead.budget ?? -1;
     case "lastContact":
       return new Date(lead.lastContactDate).getTime();
+    case "followUp":
+      // Soonest first when ascending; none set sorts last.
+      return lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).getTime() : Number.MAX_SAFE_INTEGER;
   }
 }
 
@@ -208,7 +222,8 @@ export function LeadsTable({
               {pageRows.map((lead) => {
                 const agentName =
                   lead.assignedAgentName ?? agentById.get(lead.assignedAgentId)?.name;
-                const overdue = needsFollowUp(lead.lastContactDate);
+                const followUp = followUpStatus(lead.nextFollowUpDate);
+                const quiet = noRecentTouch(lead.lastContactDate);
                 return (
                   <TableRow
                     key={lead.id}
@@ -267,9 +282,18 @@ export function LeadsTable({
                         {LEAD_STAGE_LABELS[lead.stage]}
                       </Badge>
                     </TableCell>
+                    <TableCell data-testid="lead-follow-up-cell">
+                      {isFollowUpDue(followUp) ? (
+                        <StatusPill tone="warn">{followUpLabel(followUp)}</StatusPill>
+                      ) : followUp.state === "scheduled" ? (
+                        <span className="tabular whitespace-nowrap">{followUpLabel(followUp)}</span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
-                      {overdue ? (
-                        <StatusPill tone="warn">Follow up</StatusPill>
+                      {quiet ? (
+                        <StatusPill tone="neutral">{NO_TOUCH_LABEL}</StatusPill>
                       ) : (
                         <span className="tabular text-muted-foreground">
                           {formatRelative(lead.lastContactDate)}

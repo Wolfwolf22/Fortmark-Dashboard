@@ -33,6 +33,7 @@ import {
   canCreateFor,
   canSee,
   canWrite,
+  resolveFollowUp,
   toLead,
   type ActivityInput,
   type CreateContactInput,
@@ -404,6 +405,8 @@ export async function logActivity(ctx: Ctx, id: string, input: ActivityInput, no
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
 
   const occurredAt = input.occurredAt ? new Date(input.occurredAt) : now;
+  // Kept unless the caller sets a new date or explicitly completes it.
+  const followUp = resolveFollowUp(row.nextFollowUpAt ?? null, input);
   await ctx.db.insert(contactActivities).values({
     contactId: row.id,
     opportunityId: input.opportunityId ?? null,
@@ -417,12 +420,15 @@ export async function logActivity(ctx: Ctx, id: string, input: ActivityInput, no
     .set({
       // The most recent touch wins; a backdated note does not move it backwards.
       lastContactAt: row.lastContactAt && row.lastContactAt > occurredAt ? row.lastContactAt : occurredAt,
-      nextFollowUpAt: input.nextFollowUpAt ? new Date(input.nextFollowUpAt) : row.nextFollowUpAt,
+      nextFollowUpAt: followUp.value,
       updatedByUserId: ctx.actor.userId,
       updatedAt: now,
     })
     .where(eq(contacts.id, row.id));
-  await recordAudit(ctx.db, ctx.actor.userId, "contact_updated", row.id, { activity: input.kind });
+  await recordAudit(ctx.db, ctx.actor.userId, "contact_updated", row.id, {
+    activity: input.kind,
+    followUp: followUp.change,
+  });
   const updated = await getContact(ctx, row.id);
   return updated ? { ok: true, value: updated } : { ok: false, reason: "unavailable" };
 }

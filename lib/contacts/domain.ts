@@ -84,11 +84,37 @@ export const activityInputSchema = z.object({
   summary: z.string().trim().min(1).max(1000),
   occurredAt: z.string().datetime().optional(),
   opportunityId: z.string().uuid().optional(),
-  /** Set a follow-up while logging the touch, as people do. */
+  /** Set or reschedule the follow-up while logging the touch, as people do. */
   nextFollowUpAt: z.string().datetime().optional(),
+  /**
+   * Explicitly mark the current follow-up done. Logging a touch alone never
+   * clears it — an attempted call may not complete anything.
+   */
+  completeFollowUp: z.boolean().optional(),
 });
 
 export type ActivityInput = z.infer<typeof activityInputSchema>;
+
+export type FollowUpChange = "set" | "completed" | "kept";
+
+/**
+ * What a logged touch does to the stored follow-up. The one rule for it:
+ *
+ *   - a new date sets or reschedules it (and supersedes "complete");
+ *   - `completeFollowUp` without a date clears it;
+ *   - otherwise it is kept exactly as it was.
+ *
+ * Pure, so the rule is testable without a database and the service cannot
+ * drift from it.
+ */
+export function resolveFollowUp(
+  current: Date | null,
+  input: Pick<ActivityInput, "nextFollowUpAt" | "completeFollowUp">
+): { value: Date | null; change: FollowUpChange } {
+  if (input.nextFollowUpAt) return { value: new Date(input.nextFollowUpAt), change: "set" };
+  if (input.completeFollowUp && current) return { value: null, change: "completed" };
+  return { value: current, change: "kept" };
+}
 
 // --- Row → screen -----------------------------------------------------------------
 

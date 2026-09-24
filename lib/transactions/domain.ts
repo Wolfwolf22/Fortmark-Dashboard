@@ -103,6 +103,21 @@ export const createTransactionSchema = z.object({
 
 export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;
 
+/**
+ * The deadlines a new transaction starts with. A scheduled closing is a
+ * deadline too, so it shows up in "coming up" — but only a closing someone
+ * actually entered. No closing date, no Closing deadline.
+ */
+export function initialDeadlines(
+  input: Pick<CreateTransactionInput, "closingDate" | "deadlines">
+): NonNullable<CreateTransactionInput["deadlines"]> {
+  const deadlines = [...(input.deadlines ?? [])];
+  if (input.closingDate && !deadlines.some((d) => d.kind === "closing")) {
+    deadlines.push({ kind: "closing", label: "Closing", dueDate: input.closingDate });
+  }
+  return deadlines;
+}
+
 export const stageChangeSchema = z.object({
   stage: z.enum(ALL_STAGES as [TransactionStage, ...TransactionStage[]]),
 });

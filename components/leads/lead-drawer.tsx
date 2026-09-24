@@ -2,14 +2,23 @@
 
 /**
  * Lead detail drawer — full record, notes, a stage select that advances the
- * lead through the pipeline, and a quiet "Mark contacted today" action.
+ * lead through the pipeline, and the follow-up loop: log a touch, set or
+ * reschedule the next follow-up, or mark the current one complete.
+ *
+ * Logging a touch never clears a follow-up on its own — an attempted call may
+ * complete nothing. The reminder changes only when the person picks a new
+ * date or ticks "Mark current follow-up complete".
+ *
  * Mutations go through the adapter, which bumps the data version so every
  * open list refetches on its own.
  */
-import { useState, type ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -31,8 +40,10 @@ import { getAgent } from "@/lib/data/adapters/agents";
 import {
   getLead,
   LeadsError,
+  logTouch,
   markContacted,
   updateLeadStage,
+  type TouchKind,
 } from "@/lib/data/adapters/leads";
 import { useQuery } from "@/lib/data/hooks";
 import {
@@ -43,7 +54,31 @@ import {
   LEAD_STAGE_LABELS,
 } from "@/lib/data/types";
 import { cn, formatCurrency, formatDate, formatRelative, initials } from "@/lib/utils";
-import { INTENT_LABELS, needsFollowUp } from "./lead-shared";
+import {
+  followUpLabel,
+  followUpStatus,
+  formatFollowUpDay,
+  isFollowUpDue,
+  noRecentTouch,
+  NO_TOUCH_LABEL,
+} from "@/lib/contacts/follow-up";
+import { INTENT_LABELS } from "./lead-shared";
+
+const TOUCH_KINDS: { value: TouchKind; label: string }[] = [
+  { value: "call", label: "Call" },
+  { value: "email", label: "Email" },
+  { value: "sms", label: "Text" },
+  { value: "meeting", label: "Meeting" },
+  { value: "showing", label: "Showing" },
+  { value: "note", label: "Note" },
+];
+
+/** Today in the reader's calendar, for the date input's floor. */
+function localToday(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 export interface LeadDrawerProps {
   leadId: string | null;
@@ -126,17 +161,37 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  async function run(action: () => Promise<unknown>) {
-    if (!lead || saving) return;
+  // The "Log a touch" form. Reset whenever a different lead opens.
+  const [touchKind, setTouchKind] = useState<TouchKind>("call");
+  const [summary, setSummary] = useState("");
+  const [nextDay, setNextDay] = useState("");
+  const [complete, setComplete] = useState(false);
+  const [formFor, setFormFor] = useState<string | null>(leadId);
+  if (formFor !== leadId) {
+    setFormFor(leadId);
+    setTouchKind("call");
+    setSummary("");
+    setNextDay("");
+    setComplete(false);
+    setError(null);
+    setNotice(null);
+  }
+
+  async function run(action: () => Promise<unknown>): Promise<boolean> {
+    if (!lead || saving) return false;
     setSaving(true);
     setError(null);
+    setNotice(null);
     try {
       // The adapter bumps the data version, so the drawer, the table, and
       // the summary strip all refetch on their own.
       await action();
+      return true;
     } catch (e) {
       setError(describe(e));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -147,7 +202,37 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     void run(() => updateLeadStage(lead.id, stage));
   }
 
-  const overdue = lead ? needsFollowUp(lead.lastContactDate) : false;
+  const followUp = followUpStatus(lead?.nextFollowUpDate);
+  const quiet = lead ? noRecentTouch(lead.lastContactDate) : false;
+  const hasFollowUp = followUp.state !== "none";
+
+  async function submitTouch(e: FormEvent) {
+    e.preventDefault();
+    if (!lead) return;
+    const text = summary.trim();
+    if (!text) {
+      setError("Add a short summary of the touch.");
+      return;
+    }
+    const day = nextDay || undefined;
+    const completing = !day && complete && hasFollowUp;
+    const ok = await run(() =>
+      logTouch(lead.id, { kind: touchKind, summary: text, nextFollowUpDay: day, completeFollowUp: completing })
+    );
+    if (!ok) return;
+    setSummary("");
+    setNextDay("");
+    setComplete(false);
+    setNotice(
+      day
+        ? `Touch logged. Next follow-up set for ${formatFollowUpDay(day)}.`
+        : completing
+          ? "Touch logged. Follow-up marked complete."
+          : hasFollowUp
+            ? `Touch logged. Follow-up kept for ${formatFollowUpDay(followUp.day!)}.`
+            : "Touch logged."
+    );
+  }
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -168,7 +253,12 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
               <Badge variant="outline">{LEAD_SOURCE_LABELS[lead.source]}</Badge>
               <Badge variant="secondary">{LEAD_STAGE_LABELS[lead.stage]}</Badge>
-              {overdue && <StatusPill tone="warn">Follow up</StatusPill>}
+              {isFollowUpDue(followUp) && (
+                <StatusPill tone="warn">
+                  {followUp.state === "overdue" ? "Follow-up overdue" : "Follow-up due today"}
+                </StatusPill>
+              )}
+              {quiet && <StatusPill tone="neutral">{NO_TOUCH_LABEL}</StatusPill>}
             </div>
             <div className="flex-1">
               <div className="mt-6 grid grid-cols-2 gap-x-4 gap-y-4 rounded-panel bg-tint p-4">
@@ -202,6 +292,21 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                   numeric
                   value={formatRelative(lead.lastContactDate)}
                 />
+                <Fact
+                  label="Next follow-up"
+                  numeric
+                  value={
+                    <span
+                      data-testid="lead-next-follow-up"
+                      className={cn(
+                        followUp.state === "none" && "text-muted-foreground",
+                        isFollowUpDue(followUp) && "text-status-warn"
+                      )}
+                    >
+                      {followUpLabel(followUp)}
+                    </span>
+                  }
+                />
               </div>
               <div className="mt-6">
                 <p className="text-micro">Stage</p>
@@ -225,9 +330,84 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                   </SelectContent>
                 </Select>
               </div>
+              <form
+                aria-labelledby="log-touch-heading"
+                onSubmit={submitTouch}
+                className="mt-6 space-y-3 rounded-panel border border-border p-4"
+              >
+                <p id="log-touch-heading" className="text-micro">
+                  Log a touch
+                </p>
+                <div className="grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)]">
+                  <Select
+                    value={touchKind}
+                    onValueChange={(v) => setTouchKind(v as TouchKind)}
+                    disabled={saving}
+                  >
+                    <SelectTrigger aria-label="Touch type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TOUCH_KINDS.map((k) => (
+                        <SelectItem key={k.value} value={k.value}>
+                          {k.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    aria-label="Touch summary"
+                    placeholder="What happened — e.g. left a voicemail"
+                    value={summary}
+                    onChange={(e) => setSummary(e.target.value)}
+                    maxLength={1000}
+                    disabled={saving}
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="lead-next-follow-up-day">
+                    {hasFollowUp ? "Reschedule follow-up (optional)" : "Set next follow-up (optional)"}
+                  </Label>
+                  <Input
+                    id="lead-next-follow-up-day"
+                    type="date"
+                    min={localToday()}
+                    value={nextDay}
+                    onChange={(e) => setNextDay(e.target.value)}
+                    disabled={saving}
+                    className="w-full sm:w-48"
+                  />
+                </div>
+                {hasFollowUp && (
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="lead-complete-follow-up"
+                      checked={complete && !nextDay}
+                      onCheckedChange={(v) => setComplete(v === true)}
+                      disabled={saving || Boolean(nextDay)}
+                    />
+                    <Label htmlFor="lead-complete-follow-up" className="font-normal">
+                      Mark current follow-up complete
+                    </Label>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  {hasFollowUp
+                    ? "Leave both empty to keep the current follow-up. A new date replaces it."
+                    : "The touch updates last contact. Add a date to be reminded."}
+                </p>
+                <Button type="submit" disabled={saving || !summary.trim()}>
+                  Log touch
+                </Button>
+              </form>
               {error && (
                 <p role="alert" className="mt-2 text-sm text-destructive">
                   {error}
+                </p>
+              )}
+              {notice && (
+                <p role="status" className="mt-2 text-sm text-muted-foreground">
+                  {notice}
                 </p>
               )}
               <p className="text-micro mt-6">Notes</p>
@@ -249,7 +429,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 Mark contacted today
               </Button>
               <p className="text-xs text-muted-foreground">
-                Sets last contact to now.
+                Sets last contact to now. The follow-up is kept.
               </p>
             </div>
           </>

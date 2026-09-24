@@ -184,6 +184,46 @@ export async function markContacted(id: string): Promise<Lead | undefined> {
   return contact;
 }
 
+export type TouchKind = "call" | "email" | "sms" | "meeting" | "showing" | "note";
+
+export interface LogTouchInput {
+  kind: TouchKind;
+  summary: string;
+  /** `YYYY-MM-DD`: set or reschedule the next follow-up to this day. */
+  nextFollowUpDay?: string;
+  /** Mark the current follow-up done. Ignored when a new day is given. */
+  completeFollowUp?: boolean;
+}
+
+/** A follow-up day is stored at noon UTC, the convention every writer uses,
+ *  so the calendar day never shifts across time zones. */
+export function followUpAtFromDay(day: string): string {
+  return `${day}T12:00:00.000Z`;
+}
+
+/**
+ * Log a touch, optionally rescheduling or completing the follow-up. Without
+ * either, the stored follow-up is kept: an attempted touch completes nothing.
+ */
+export async function logTouch(id: string, input: LogTouchInput): Promise<Lead | undefined> {
+  if ((await getLeadSource()) === "sample") {
+    await delay(120);
+    return markSampleLeadContacted(id, {
+      nextFollowUpDate: input.nextFollowUpDay ? followUpAtFromDay(input.nextFollowUpDay) : undefined,
+      completeFollowUp: input.completeFollowUp,
+    });
+  }
+  const body: Record<string, unknown> = { kind: input.kind, summary: input.summary.trim() };
+  if (input.nextFollowUpDay) body.nextFollowUpAt = followUpAtFromDay(input.nextFollowUpDay);
+  else if (input.completeFollowUp) body.completeFollowUp = true;
+  const { contact } = await request<{ contact: Lead }>(
+    `/api/contacts/${encodeURIComponent(id)}/activities`,
+    { method: "POST", body: JSON.stringify(body) }
+  );
+  bumpDataVersion();
+  return contact;
+}
+
 /** Agents the filter may list. Sample roster, or the brokerage's real users. */
 export async function getLeadAgents(): Promise<{ id: string; name: string }[]> {
   if ((await getLeadSource()) === "sample") return listSampleLeadAgents();

@@ -32,6 +32,7 @@ import {
   canCreateFor,
   canSee,
   canWrite,
+  initialDeadlines,
   toTransaction,
   type CreateTransactionInput,
 } from "./domain.ts";
@@ -256,11 +257,7 @@ export async function createTransaction(
       }))
     );
   }
-  const deadlines = [...(input.deadlines ?? [])];
-  // A scheduled closing is a deadline too, so it shows up in "coming up".
-  if (input.closingDate && !deadlines.some((d) => d.kind === "closing")) {
-    deadlines.push({ kind: "closing", label: "Closing", dueDate: input.closingDate });
-  }
+  const deadlines = initialDeadlines(input);
   if (deadlines.length) {
     await ctx.db.insert(transactionDeadlines).values(
       deadlines.map((d, i) => ({

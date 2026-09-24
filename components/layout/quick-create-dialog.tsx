@@ -31,6 +31,7 @@ import { useQuery } from "@/lib/data/hooks";
 import { SUBSYSTEM_COPY, unavailableSubsystem } from "@/components/common/subsystem-state";
 import { EventType, PropertyType } from "@/lib/data/types";
 import { now } from "@/lib/dates";
+import { closeDateFromInput } from "@/lib/transactions/close-date";
 
 const TITLES: Record<QuickCreateKind, { title: string; description: string; cta: string; goto: string }> = {
   listing: {
@@ -104,9 +105,9 @@ export function QuickCreateDialog() {
           clientName: get("client"),
           side: (get("side") || "listing") as "listing" | "buyer",
           contractPrice: Number(get("price")) || 0,
-          closeDate: new Date(
-            get("closeDate") || now().getTime() + 45 * 86400000
-          ).toISOString(),
+          // Blank stays unset: no invented closing date, so no invented
+          // "Closing" deadline. An entered day becomes the real one.
+          closeDate: closeDateFromInput(get("closeDate")),
         });
       } else if (kind === "lead") {
         await createLead({
@@ -200,7 +201,7 @@ export function QuickCreateDialog() {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Contract price" name="price" type="number" required placeholder="1185000" />
-                  <Field label="Close date" name="closeDate" type="date" />
+                  <Field label="Close date (optional)" name="closeDate" type="date" />
                 </div>
                 <SelectField
                   label="Side"
