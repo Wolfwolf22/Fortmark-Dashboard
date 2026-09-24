@@ -1114,3 +1114,97 @@ disabled). Identity works with AI off.
 - 0010 stays in place under any rollback.
 
 B2 has not started.
+
+---
+
+# CORE V1 B2 PRODUCTION EXECUTION — live MLS and automatic agent identity (2026-09-24)
+
+**Runtime:** `dadadeb` (unchanged). **B2 deployment:** `dpl_8KdqjRbgJv4ZoWx3cMZN8f1WUaYB`.
+It is a fresh, no-cache Production build of the same commit, redeployed from the A2
+deployment. Status READY, aliased to `fortmark-dashboard.vercel.app`.
+
+**Environment (Production only):**
+- `BRIDGE_API_TOKEN` (Sensitive). **Authorised exception:** this is the former
+  Preview record (`vzAjO2TIvI8il7NG`), re-scoped to Production by the owner, who
+  explicitly approved using the Preview token in Production.
+  - Preview now has no Bridge token, so the next Preview build will report MLS
+    unavailable until one is re-added.
+- `BRIDGE_DATASET=miamire` and `MLS_LISTINGS_ENABLED=1`: new Sensitive Production
+  records.
+- `FORTMARK_MLS_OFFICE_ID=FTMK01` is unchanged.
+- No `SAMPLE_*` variables, and no AI variable changed.
+- The build log shows: `listings MLS_LISTINGS_ENABLED=on BRIDGE_API_TOKEN present=true
+  BRIDGE_DATASET present=true -> MLS`.
+
+**Health:**
+`{"ok":true,"revision":"dadadeb","sources":{"transactions":"db","contacts":"db","listings":"mls","homeMetrics":"real-only","assistant":{"provider":"openai","model":"gpt-5.5","status":"no_credential"},"actions":"disabled"}}`.
+This proves configuration only.
+
+**Credential validation.** Each of the three resources was proven through the
+dashboard's own server path, in the owner's signed-in session:
+
+| Resource | Evidence |
+|---|---|
+| Property | `/api/listings`, listing detail and comparables, and `/api/listings/featured` all returned 200 on the B2 deployment (these routes return 200 only after Bridge answers and the rows are normalised). The owner saw real listings with photos. No 401, 403, 429 or 5xx. |
+| Office | The central record was **created by the system sync** at 00:25:44Z: `created_by` is null; the audit event `brokerage_mls_synced` has `created:true` with fields displayName, mlsOfficeId, mlsOfficeKey, mlsOfficeName and mlsOfficePhone. MLS office `FTMK01` "FortMark, LLC", with an office key present (only Bridge's `Office` record supplies it). |
+| Member | **Check again** at 00:26:34Z moved the link `unavailable → linked`: candidate count 1, office `FTMK01`, member key present, 1 link row, user = the admin. Audit `mls_identity_resolved {status: linked, candidateCount: 1}`. No licence or key was logged. |
+
+**Independent cross-check** (FortMark MCP Bridge connection; the member key was
+compared only as an md5):
+- FortMark (`FTMK01`, listing or co-listing office) has **6** active displayable
+  listings.
+- The linked member has **5**: **1 as listing agent and 4 as co-listing agent**, all
+  in `FTMK01`.
+- Co-listing is therefore re-exercised live in Production by real inventory.
+
+**Operator fields:**
+- After the sync, the owner saved licence state, legal address and website through
+  Settings at 00:26:23Z (`brokerage_identity_updated`, by the admin).
+- The brokerage licence number and preferred phone are still blank.
+- The system sync wrote only MLS columns.
+
+**409s:** 5 × `/api/listings` 409 at 00:24:59–00:25:02, before the member link. That
+is the certified honest response when My Listings is requested before identity is
+connected, never "0 listings".
+
+**Security:**
+- 56 of the 95 client chunks exist byte-for-byte on Production (same content-hash
+  names). Those and the 39 locally built variants contain no Bridge host, no secret
+  variable name, no `MemberKey`/`ListAgentKey`/`CoListAgentKey`/`member_key`, no
+  `MemberStateLicense` and no `FORTMARK_MLS_OFFICE_ID`.
+- With no Bridge host in client code, the browser cannot call Bridge. Photos load
+  from the MLS media CDN.
+
+**Logs (6 h, Production):** no error, warning, fatal or 5xx lines. On the B2
+deployment: 170 × 200 and 5 × 409 (above).
+
+**Performance:** the runtime log view has no per-request duration. No slow-request
+or timeout lines appeared.
+
+**Database:**
+- 11 migrations;
+- `mls_member_links` 1 (`linked`); `brokerage_identities` 1;
+- users 1 (`admin`/active), profiles 1, images 1;
+- contacts 0, transactions 0, PreparedActions 0;
+- audit 111 (sign-in syncs, 3 × `mls_identity_resolved`, 1 × `brokerage_mls_synced`,
+  1 × `brokerage_identity_updated`).
+
+**Rollback:**
+- MLS off: instant rollback to A2 `dpl_6PtaBiMaihNhomQ5Us6xgWv5iDWg` (its env was
+  bound with MLS off), or remove `MLS_LISTINGS_ENABLED` and redeploy.
+- Keep migration 0010, the brokerage row and the link.
+- Never enable sample listings. Never rebuild `c4e304b` or older with the Bridge
+  variables present.
+
+**Branch topology:**
+- The repository default branch **is** the Production branch
+  `claude/fortmark-dashboard-build-v39u96`, at `dadadeb`. There is no `main`.
+- The development branch is `dadadeb` plus docs-only commits.
+- Legacy branches with commits not in the Production lineage need a separate review
+  before any merge or deletion:
+  - `claude/professional-profile-onboarding` (39);
+  - `feature/profile-onboarding-wizard` (24);
+  - `hotfix/production-middleware-invocation` (2);
+  - `claude/multizone-dashboard-clerk` (1);
+  - `claude/neon-production-profile-infra-jksvj0` (1).
+- Nothing was merged or deleted.
