@@ -14,7 +14,7 @@ import { SUBSYSTEM_COPY, unavailableSubsystem } from "@/components/common/subsys
 import { formatRelative } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
-export function NotificationsBell({ expanded }: { expanded: boolean }) {
+export function NotificationsBell() {
   const { data: notifications, error } = useQuery(() => getNotifications(), []);
   // There is no notification service. The bell stays — it is part of the
   // shell — but it never carries a count it cannot justify, and the panel
@@ -23,46 +23,29 @@ export function NotificationsBell({ expanded }: { expanded: boolean }) {
   const notConnected = unavailableSubsystem(error) !== null;
   const unread = notifications?.filter((n) => !n.read).length ?? 0;
 
-  const trigger = (
-    <PopoverTrigger asChild>
-      <button
-        type="button"
-        aria-label={`Notifications${unread ? ` (${unread} unread)` : ""}`}
-        className={cn(
-          "relative flex items-center gap-3 rounded-xl text-sm font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-          expanded ? "w-full px-3 py-2.5" : "h-10 w-10 justify-center"
-        )}
-      >
-        <span className="relative">
-          <Bell className="h-[18px] w-[18px]" aria-hidden />
-          {unread > 0 && (
-            <span
-              aria-hidden
-              className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-foreground ring-2 ring-card"
-            />
-          )}
-        </span>
-        {expanded && <span>Notifications</span>}
-        {expanded && unread > 0 && (
-          <span className="ml-auto rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">
-            {unread}
-          </span>
-        )}
-      </button>
-    </PopoverTrigger>
-  );
-
   return (
     <Popover>
-      {expanded ? (
-        trigger
-      ) : (
-        <Tooltip>
-          <TooltipTrigger asChild>{trigger}</TooltipTrigger>
-          <TooltipContent side="right">Notifications</TooltipContent>
-        </Tooltip>
-      )}
-      <PopoverContent side="right" align="end" className="w-80 p-0">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Notifications${unread ? ` (${unread} unread)` : ""}`}
+              className="relative flex h-9 w-9 items-center justify-center rounded-md border border-transparent text-muted-foreground transition-colors hover:border-border hover:bg-accent hover:text-foreground"
+            >
+              <Bell className="h-[18px] w-[18px]" aria-hidden />
+              {unread > 0 && (
+                <span
+                  aria-hidden
+                  className="absolute right-2 top-2 h-2 w-2 rounded-full bg-foreground ring-2 ring-background"
+                />
+              )}
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Notifications</TooltipContent>
+      </Tooltip>
+      <PopoverContent side="bottom" align="end" className="w-80 p-0">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <p className="text-sm font-bold">Notifications</p>
           <Button

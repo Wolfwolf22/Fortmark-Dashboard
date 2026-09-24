@@ -359,7 +359,8 @@ check("Home does not feature a generated listing", (() => {
 // --- Home hierarchy: what the real-data transition forced ---------------------------
 check("needs attention leads the page", DEFAULT_WIDGET_ORDER[0] === "compliance");
 check("the MLS module cannot lead the page",
-  DEFAULT_WIDGET_ORDER[DEFAULT_WIDGET_ORDER.length - 1] === "featured-listing");
+  DEFAULT_WIDGET_ORDER.indexOf("featured-listing") > DEFAULT_WIDGET_ORDER.indexOf("compliance") &&
+    DEFAULT_WIDGET_ORDER.indexOf("featured-listing") > DEFAULT_WIDGET_ORDER.indexOf("transactions-table"));
 check("the headline figures are not reorderable widgets",
   !HOME_WIDGETS.some((id) => ["under-contract", "pipeline-value", "closed"].includes(id)));
 check("the removed KPI cards are really gone", (() => {
@@ -467,19 +468,26 @@ check("needs-attention has no score, only dated facts", (() => {
 })());
 
 // --- Focus order matches what is on screen -------------------------------------------
-check("the identity card is repositioned in the DOM, never by a CSS order", (() => {
+check("the grid renders modules in DOM order, never by a CSS order", (() => {
   const src = code("components/home/bento-grid.tsx");
-  // A visual-only reorder would leave eleven profile controls first in the tab
-  // order while rendering them last on screen.
-  return (
-    !/\border-(first|last|none|\d)\b/.test(src) &&
-    /visible\.slice\(0, 1\)[\s\S]{0,200}fixedLead[\s\S]{0,200}visible\.slice\(1\)/.test(src)
-  );
+  // A visual-only reorder would put the tab order out of step with the screen.
+  return !/\border-(first|last|none|\d)\b/.test(src) && /visible\.map\(\(id\) =>/.test(src);
 })());
-check("the identity card is still permanent", (() => {
+check("the grid holds only the sortable modules", (() => {
   const src = code("components/home/bento-grid.tsx");
-  // Rendered outside the sortable list, so there is nothing to drag or persist.
-  return /SortableContext items=\{visible\}/.test(src) && !/SortableWidget[^>]*fixedLead/.test(src);
+  return /SortableContext items=\{visible\}/.test(src) && !src.includes("fixedLead");
+})());
+check("every default row packs without a hole", (() => {
+  // xl is 12 columns, md is 6: each default row must sum exactly.
+  const reg = code("components/home/widget-registry.tsx");
+  const span = (id: string, bp: "md" | "xl") => {
+    const m = new RegExp(`${id.includes("-") ? `"${id}"` : id}: \\{[\\s\\S]{0,160}?${bp}:col-span-(\\d+)`).exec(reg);
+    return m ? Number(m[1]) : NaN;
+  };
+  const xlRows = [["compliance", "transactions-table"], ["featured-listing", "market-pulse", "projected-commission"], ["closed-volume", "lead-source"], ["leaderboard"]];
+  const mdRows = [["compliance"], ["transactions-table"], ["featured-listing", "market-pulse"], ["projected-commission"], ["closed-volume", "lead-source"], ["leaderboard"]];
+  return xlRows.every((r) => r.reduce((n, id) => n + span(id, "xl"), 0) === 12) &&
+    mdRows.every((r) => r.reduce((n, id) => n + span(id, "md"), 0) === 6);
 })());
 
 // --- Enum columns are never compared against a bound array ------------------

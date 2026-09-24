@@ -1,20 +1,22 @@
 "use client";
 
 /**
- * The client half of the dashboard shell: nav rail, top bar, command palette
- * and the Zustand-backed rail state. Split out of `app/(app)/layout.tsx` so
- * that layout can be an async server component and enforce authentication
- * before any of this renders.
+ * The client half of the dashboard shell: top bar, route-content transition
+ * and the command palette. Split out of `app/(app)/layout.tsx` so that layout
+ * can be an async server component and enforce authentication before any of
+ * this renders.
+ *
+ * The layout is reused across client navigations, so the top bar — logo,
+ * search, account, and the profile photo it already fetched — persists; only
+ * the page inside `<PageTransition>` changes.
  */
 import * as React from "react";
-import { NavRail } from "@/components/layout/nav-rail";
 import { TopBar } from "@/components/layout/top-bar";
 import { CommandPalette } from "@/components/layout/command-palette";
+import { PageTransition } from "@/components/layout/page-transition";
 import { SessionUserProvider } from "@/components/layout/session-user";
-import { useUiStore } from "@/lib/stores/ui";
 import type { PublicSessionUser } from "@/lib/auth/session";
 import type { ShellProfile } from "@/lib/profile/display";
-import { cn } from "@/lib/utils";
 
 export function AppShell({
   user,
@@ -25,24 +27,14 @@ export function AppShell({
   profile: ShellProfile;
   children: React.ReactNode;
 }) {
-  const railPinnedStored = useUiStore((s) => s.railPinned);
-  const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
-  const railPinned = mounted && railPinnedStored;
-
   return (
     <SessionUserProvider user={user}>
-      <div className="min-h-screen">
-        <NavRail />
-        <div
-          className={cn(
-            "flex min-h-screen flex-col transition-[padding] duration-200",
-            railPinned ? "pl-60" : "pl-16"
-          )}
-        >
-          <TopBar profile={profile} />
-          <main className="flex min-h-0 flex-1 flex-col p-6">{children}</main>
-        </div>
+      <div className="flex min-h-screen flex-col">
+        <TopBar profile={profile} />
+        {/* Wide but bounded: dense at 1440, never stretched on ultrawide. */}
+        <main className="mx-auto flex min-h-0 w-full max-w-[1520px] flex-1 flex-col px-4 py-5 md:px-6 md:py-6">
+          <PageTransition>{children}</PageTransition>
+        </main>
         <CommandPalette />
       </div>
     </SessionUserProvider>

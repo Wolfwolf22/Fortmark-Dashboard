@@ -10,14 +10,13 @@
  * numbers sit in one aligned field, separated by rules, and the typography
  * does the work.
  *
- * It does not greet the reader: the identity card below already says "Welcome
- * back", and saying it twice on one screen is the kind of noise this page is
+ * It does not greet the reader or print the date: the Home hero above it does
+ * both, and saying either twice on one screen is the kind of noise this page is
  * meant to remove.
  *
  * Every figure obeys the E1 truth model. A domain that cannot answer shows an
  * em dash and says why underneath — never a zero, which would be a claim.
  */
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FlaskConical } from "lucide-react";
 import { useHomeMetrics } from "./metrics-provider";
@@ -103,19 +102,6 @@ export function figures(metrics: BrokerageMetrics): Figure[] {
 export function DailyBrief() {
   const { metrics, loading, error } = useHomeMetrics();
 
-  // The date is the reader's, so it is computed after mount rather than on the
-  // server, where "today" would be UTC's idea of it.
-  const [today, setToday] = useState<string | null>(null);
-  useEffect(() => {
-    setToday(
-      new Date().toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      })
-    );
-  }, []);
-
   // A request that failed is not a request still in flight. Without this
   // branch a failed fetch left the skeleton pulsing indefinitely — the widgets
   // below said "Metrics could not be loaded" while the headline band above
@@ -134,11 +120,11 @@ export function DailyBrief() {
 
   if (loading || !metrics) {
     return (
-      <section aria-label="Daily brief" className="mb-6">
+      <section aria-label="Daily brief" className="mb-5">
         <div className="h-3 w-48 animate-pulse rounded bg-tint" />
-        <div className="mt-4 grid grid-cols-2 gap-px border-y border-border bg-border sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-2 overflow-hidden rounded-card border-x gap-px border-y border-border bg-border sm:grid-cols-4">
           {Array.from({ length: 4 }, (_, i) => (
-            <div key={i} className="bg-background px-4 py-5">
+            <div key={i} className="bg-card px-4 py-5 sm:px-5 sm:py-6">
               <div className="h-8 w-20 animate-pulse rounded bg-tint" />
               <div className="mt-3 h-3 w-24 animate-pulse rounded bg-tint" />
             </div>
@@ -152,12 +138,10 @@ export function DailyBrief() {
   const firstUse = isFirstUse(metrics);
 
   return (
-    <section aria-label="Daily brief" className="mb-6">
+    <section aria-label="Daily brief" className="mb-5">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <p className="text-micro">
-          {today ?? " "}
-          {today ? " · " : ""}
-          <span className="text-foreground">{scopeLabel(metrics.scope)}</span>
+          Business snapshot · <span className="text-foreground">{scopeLabel(metrics.scope)}</span>
         </p>
         <p className="text-micro">
           Monthly figures cover {monthLabel(metrics.monthStart)}
@@ -180,13 +164,13 @@ export function DailyBrief() {
       {/* One aligned numeric field, divided by hairlines — not four cards. The
           1px gap over a border-coloured background draws the rules between
           cells without a border on each side collapsing into a double line. */}
-      <dl className="mt-4 grid grid-cols-2 gap-px border-y border-border bg-border [&>div:nth-child(odd)]:pl-0 sm:grid-cols-4 sm:[&>div]:pl-5 sm:[&>div:first-child]:pl-0">
+      <dl className="mt-3 grid grid-cols-2 overflow-hidden rounded-card border-x gap-px border-y border-border bg-border sm:grid-cols-4">
         {rows.map((figure) => (
-          <div key={figure.label} className="bg-background px-4 py-5 sm:px-5">
+          <div key={figure.label} className="bg-card px-4 py-5 sm:px-5 sm:py-6">
             <dd
               className={cn(
-                "font-display leading-none tabular",
-                figure.value ? "text-3xl" : "text-3xl text-muted-foreground"
+                "font-display leading-none tracking-[-0.02em] tabular",
+                figure.value ? "text-[32px] sm:text-4xl" : "text-[32px] text-muted-foreground sm:text-4xl"
               )}
             >
               {figure.value ?? "—"}

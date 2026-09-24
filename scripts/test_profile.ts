@@ -137,6 +137,7 @@ import {
 } from "../lib/profile/mls.ts";
 import { publicContactEmail } from "../lib/profile/display.ts";
 import { assetPath } from "../lib/routes.ts";
+import { dueText, greetingParts } from "../components/home/hero-text.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -933,8 +934,9 @@ check(
   DEFAULT_WIDGET_ORDER[0] === "compliance"
 );
 check(
-  "the MLS module is last, so an unconnected integration cannot lead the page",
-  DEFAULT_WIDGET_ORDER[DEFAULT_WIDGET_ORDER.length - 1] === "featured-listing"
+  "the MLS module never leads the page: the queue and the deals come first",
+  DEFAULT_WIDGET_ORDER.indexOf("featured-listing") > DEFAULT_WIDGET_ORDER.indexOf("compliance") &&
+    DEFAULT_WIDGET_ORDER.indexOf("featured-listing") > DEFAULT_WIDGET_ORDER.indexOf("transactions-table")
 );
 check(
   "the headline figures are not draggable widgets",
@@ -1153,266 +1155,46 @@ const ALLOWED_ENV = {
 // weaker than a render test but strong enough to catch the regressions that
 // actually happened here — an uppercase greeting, a 0% bar presented as a
 // measurement, and a primary action styled as a secondary one.
+// --- Home hero: the one greeting ---------------------------------------------
+// The identity card that used to greet on Home was retired by the Home
+// redesign; its identity now lives in the account drawer. These guard the
+// replacement: one greeting, from the profile, never invented.
 {
-  const card = readFileSync("components/home/home-identity-card.tsx", "utf8");
+  const hero = readFileSync("components/home/home-hero.tsx", "utf8");
+  const page = readFileSync("app/(app)/page.tsx", "utf8");
   const grid = readFileSync("components/home/bento-grid.tsx", "utf8");
-  /** The greeting h2's own class list, excluding surrounding commentary. */
-  const greetingClassOf = (src: string) =>
-    src.slice(src.indexOf('id="home-identity-heading"'), src.indexOf("{data.greetingName ?"));
+  const brief = readFileSync("components/home/daily-brief.tsx", "utf8");
+  const css = readFileSync("app/globals.css", "utf8");
 
-  // 1. The eyebrow renders, and is uppercased by CSS rather than by literal.
-  const eyebrow = card.slice(card.indexOf("GREETING ---"), card.indexOf("</h2>"));
-  check("eyebrow label renders My FortMark", eyebrow.includes(">\n          My FortMark\n"));
-  check("eyebrow is uppercased by class, not by literal", eyebrow.includes("uppercase"));
-  check(
-    "eyebrow stays at 10px",
-    eyebrow.includes('className="text-[10px] font-semibold uppercase')
-  );
-  check(
-    "eyebrow is legible but not pure white",
-    eyebrow.includes("tracking-[0.14em] text-foreground/70")
-  );
-  check(
-    "eyebrow stays quieter than the greeting",
-    !greetingClassOf(card).includes("text-foreground/")
-  );
-
-  // 2. The greeting is title-cased. `text-display` force-uppercases, which is
-  // exactly the regression being guarded against.
-  const greetingClass = card.slice(
-    card.indexOf('id="home-identity-heading"'),
-    card.indexOf("{data.greetingName ?")
-  );
-  check("greeting is not force-uppercased", !greetingClass.includes("text-display"));
-  check("greeting carries no uppercase class", !greetingClass.includes("uppercase"));
-  check(
-    "greeting literal is sentence case",
-    card.includes("`Welcome back, ${data.greetingName}`") && !card.includes("WELCOME BACK")
-  );
-  check(
-    "greeting sits in the 20-24px band",
-    eyebrow.includes("text-[20px]") && eyebrow.includes("lg:text-[22px]")
-  );
-  check("greeting is semibold, not display weight", eyebrow.includes("font-semibold"));
-
-  // 3. The greeting name is the real fallback chain, never a literal.
-  check(
-    "greeting name comes from data, not a hardcoded name",
-    !/Welcome back, (Daniel|Test)\b/.test(card)
-  );
-
-  // 4. A missing professional title offers the completion prompt in sentence
-  // case — never the uppercase micro-label treatment.
-  const identity = card.slice(card.indexOf("HEADSHOT + IDENTITY"), card.indexOf("CREDENTIAL GRID"));
-  check(
-    "missing title offers a completion prompt",
-    identity.includes("Complete your professional profile")
-  );
-  check("identity prompt is not uppercase micro type", !identity.includes("text-micro"));
-  check(
-    "identity prompt is a link to the editor",
-    identity.includes("ROUTES.settings}?tab=profile")
-  );
-
-  // 5 + 6. Completion states.
-  const completion = card.slice(card.indexOf("COMPLETION ---"), card.indexOf("ACTIONS ---"));
-  check(
-    "a zero or absent score renders no progress bar",
-    completion.includes("data.completion !== null && data.completion > 0") ||
-      card.includes("const hasMeasuredCompletion = data.completion !== null && data.completion > 0")
-  );
-  check("progressbar is gated on a measured score", completion.includes("hasMeasuredCompletion ?"));
-  check("state A renders a callout with supporting text", completion.includes("Add your title, credentials"));
-  check("state A offers no fabricated percentage", !/State A[\s\S]*0%/.test(completion));
-  check("state B renders the real percentage", completion.includes("Profile {data.completion}% complete"));
-  check("progress bar is 4px", completion.includes("h-1 "));
-  check(
-    "progress bar has no gradient utility",
-    !/bg-gradient|from-\[|via-\[|to-\[/.test(completion)
-  );
-  check(
-    "progress width is the real value",
-    completion.includes("width: `${data.completion}%`")
-  );
-
-  // 7. Edit Profile is the primary action: the filled variant is the Button
-  // default, so it must NOT carry an explicit variant override.
-  const actions = card.slice(card.indexOf("ACTIONS ---"));
-  const editBtn = actions.slice(actions.indexOf("Edit profile") - 400, actions.indexOf("Edit profile"));
-  check("edit profile uses the filled default variant", !editBtn.includes("variant="));
-  check("edit profile meets the 40px target", editBtn.includes("h-10"));
-
-  // 8. New Transaction stays secondary and keeps its creation flow.
-  const newTxn = actions.slice(actions.indexOf("New transaction") - 400, actions.indexOf("New transaction"));
-  check("new transaction is outlined, not filled", newTxn.includes('variant="outline"'));
-  check("new transaction keeps the quick-create flow", newTxn.includes('setQuickCreate("transaction")'));
-  check("new transaction meets the 40px target", newTxn.includes("h-10"));
-
-  // 9. Digital Card stays honestly disabled, with a reason a screen reader can
-  // reach — a disabled control cannot hold focus, so a title alone is not enough.
-  check("digital card disables without a record", actions.includes("disabled={setupRequired}"));
-  check(
-    "digital card explains why it is disabled",
-    actions.includes("Add your profile details first") &&
-      card.includes("Digital card is unavailable until your profile details are added.")
-  );
-
-  // Clipboard success is still reported only after the write resolves.
-  check("copy contact awaits the clipboard write", card.includes("await navigator.clipboard.writeText"));
-  check("copy success is announced politely", card.includes('aria-live="polite"'));
-
-  // 10. Links render only when present, and stay monochrome.
-  // Branching is on the FILTERED list now — the self-card hides email/phone —
-  // but the zero/one/many guarantee is unchanged.
-  check("no contact row is rendered when there are no links",
-    !card.includes("visibleLinks.length > 0 &&") &&
-      card.includes("visibleLinks.length === 1 &&") &&
-      card.includes("visibleLinks.length > 1 &&"));
-  check("the single-link branch reads from the filtered list, not the raw one",
-    card.includes("const link = visibleLinks[0];"));
-  check(
-    "a single contact renders a visible action label",
-    card.includes("{LINK_ACTION[link.kind]}")
-  );
-  check(
-    "a single contact is not an unexplained icon-only button",
-    !/data\.links\.length === 1[\s\S]{0,1400}<\/a>/.test(card) ||
-      /data\.links\.length === 1[\s\S]{0,1400}LINK_ACTION\[link\.kind\][\s\S]{0,200}<\/a>/.test(card)
-  );
-  check(
-    "every contact kind has a short action label",
-    ["linkedin:", "instagram:", "facebook:", "website:", "professionalWebsite:", "email:", "phone:", "whatsapp:"]
-      .every((k) => card.slice(card.indexOf("const LINK_ACTION"), card.indexOf("const LINK_ICON")).includes(k))
-  );
-  check(
-    "the multi-link branch still renders tooltips",
-    card.slice(card.indexOf("visibleLinks.length > 1 &&")).includes("<TooltipContent>{link.label}</TooltipContent>")
-  );
-  check(
-    "both contact branches expose an accessible name",
-    (card.match(/aria-label=\{[\s\S]{0,120}link\.label/g) ?? []).length === 2
-  );
-  check(
-    "the accessible name is the fuller label, never the short action word",
-    !/aria-label=\{[^}]*LINK_ACTION/.test(card)
-  );
-  check(
-    "external contacts announce the new tab in both branches",
-    (card.match(/\(opens in a new tab\)/g) ?? []).length === 2
-  );
-  check("external links keep noopener noreferrer", card.includes('rel: "noopener noreferrer"'));
-  check("external links open in a new tab", card.includes('target: "_blank"'));
-  check(
-    "icon buttons are in the 32-36px band",
-    card.includes("flex h-9 w-9 items-center justify-center")
-  );
-  check("icons are in the 15-17px band", card.includes("h-[17px] w-[17px]"));
-  for (const brand of ["#0A66C2", "#1877F2", "#E4405F", "text-blue-", "bg-blue-"]) {
-    check(`no ${brand} brand colour on the social row`, !card.includes(brand));
-  }
-
-  // 11 + 12. The card is still a fixed, non-draggable lead cell.
-  check("card is rendered as the grid's fixed lead", grid.includes("fixedLead &&"));
-  check(
-    "fixed lead sits outside SortableContext",
-    grid.indexOf("{fixedLead}") < grid.indexOf("<SortableContext")
-  );
-  check("card exposes no drag handle", !card.includes("useSortable") && !card.includes("listeners"));
-  check("card exposes no remove control", !card.includes("removeWidget"));
-
-  // 14 + 15. Theme contrast. `--muted-foreground` is 0 0% 55% in BOTH themes,
-  // which is ~3.5:1 on a white card — under AA at label sizes. Metadata is
-  // derived from the foreground instead so both themes improve symmetrically.
-  check("credential labels do not use the low-contrast token", !card.includes("MetaLabel") || !/MetaLabel[\s\S]{0,220}text-muted-foreground/.test(card));
-  check("credential values use full foreground contrast", card.includes("font-medium tabular-nums text-foreground"));
-  check("no theme-specific layout rules were introduced", !card.includes("dark:") || !/dark:(flex|grid|block|hidden|w-|h-)/.test(card));
-
-  // 16. Mobile: nothing may overflow horizontally.
-  check("card body cannot be pushed wide", card.includes("flex h-full min-w-0 flex-col"));
-  check("credential cells clip rather than overflow", card.includes('<div className="min-w-0">'));
-  check("long values truncate", (card.match(/truncate/g) ?? []).length >= 5);
-  check("social row wraps rather than overflowing", card.includes("flex flex-wrap items-center"));
-  check("actions use a stable two-column grid", (actions.match(/grid grid-cols-2 gap-2/g) ?? []).length === 2);
-  check(
-    "tertiary actions keep a 40px touch target on mobile",
-    (actions.match(/h-10 min-w-0 border-foreground\/45 bg-transparent px-3/g) ?? []).length === 2
-  );
-  check(
-    "tertiary actions shrink to 36px from sm up",
-    (actions.match(/sm:h-9/g) ?? []).length === 2
-  );
-  check(
-    "tertiary actions are bordered, not ghost",
-    !actions.includes('variant="ghost"') &&
-      (actions.match(/variant="outline"/g) ?? []).length === 3
-  );
-  // Anchored to the base class, not a bare substring: `hover:border-foreground/45`
-  // appears on the tertiary buttons too, and matching that made this pass
-  // vacuously when the New Transaction border was reverted.
-  check(
-    "new transaction border clears the non-text threshold",
-    /className="h-10 min-w-0 border-foreground\/45 px-3/.test(actions)
-  );
-  // Subordination is carried by size and fill, NOT by a weaker boundary: a
-  // border that says "this is a control" has to clear 3:1 to do that job.
-  check(
-    "tertiary is subordinate by height, not by contrast",
-    actions.includes("h-10 min-w-0 border-foreground/45 bg-transparent") &&
-      actions.includes("sm:h-9") &&
-      !/border-foreground\/(10|20|25|30|35|40)\b/.test(actions)
-  );
-  check(
-    "tertiary is subordinate by fill",
-    (actions.match(/bg-transparent/g) ?? []).length === 2 &&
-      !actions.includes("bg-transparent px-3 text-[13px]")
-  );
-  check(
-    "tertiary is subordinate by type and glyph size",
-    (actions.match(/bg-transparent px-3 text-\[12px\]/g) ?? []).length === 2 &&
-      (actions.match(/\[&_svg\]:size-3\.5/g) ?? []).length === 2
-  );
-  check(
-    "tertiary hover is lighter than the secondary hover",
-    actions.includes("hover:bg-foreground/[0.05]") &&
-      actions.includes("hover:border-foreground/70 hover:bg-accent")
-  );
-  check(
-    "tertiary sits beneath the primary row",
-    actions.indexOf("New transaction") < actions.indexOf("Digital card")
-  );
-  check(
-    "new transaction stays below the filled primary",
-    actions.includes('variant="outline"') && !actions.includes('variant="default"')
-  );
-  // Not colour-only: the boundary changes SHAPE, so the disabled state survives
-  // for someone who cannot perceive the dimming `disabled:opacity-40` applies.
-  check(
-    "disabled digital card changes border shape, not just colour",
-    /hover:bg-foreground\/\[0\.05\] disabled:border-dashed sm:h-9/.test(actions)
-  );
-  check("disabled digital card keeps disabled semantics", actions.includes("disabled={setupRequired}"));
-  check(
-    "only the digital card carries the disabled treatment",
-    (actions.match(/hover:bg-foreground\/\[0\.05\] disabled:border-dashed/g) ?? []).length === 1
-  );
-  // The button base sets `whitespace-nowrap`, so a label wider than its grid
-  // track would spill outside the card and scroll the page. Every action label
-  // must be able to clip.
-  check(
-    "every action button can shrink below its label",
-    (actions.match(/className="h-10 min-w-0 (border-foreground\/45 (bg-transparent )?)?px-3/g) ?? []).length === 4
-  );
-  check(
-    "every action label truncates rather than overflowing",
-    (actions.match(/<span className="truncate">/g) ?? []).length === 4
-  );
-
-  // 19. Nothing here reads or writes global client state beyond quick-create.
-  check("card takes its data as a prop", card.includes("export function HomeIdentityCard({ data }"));
-  check(
-    "card touches no profile store",
-    !card.includes("useLayoutStore") && !card.includes("useProfile")
-  );
+  check("the greeting uses the resolved first name",
+    JSON.stringify(greetingParts("Daniel")) === JSON.stringify({ lead: "Welcome,", name: "Daniel" }));
+  check("no name gives a plain Welcome",
+    greetingParts(null).lead === "Welcome" && greetingParts(null).name === null &&
+      greetingParts(undefined).name === null && greetingParts("   ").name === null);
+  check("an email is never the greeting", greetingParts("someone@example.com").name === null);
+  check("the greeting can never read 'undefined'",
+    !`${greetingParts(undefined).lead} ${greetingParts(undefined).name ?? ""}`.includes("undefined"));
+  check("the Home page takes the name from the shared profile projection",
+    page.includes("getHomeIdentityCard(session.user)") &&
+      page.includes("greetingName={card?.greetingName ?? null}"));
+  check("only the name and role cross to the client",
+    /<HomeHero greetingName=\{[^}]+\} roleLabel=\{[^}]+\} \/>/.test(page) && !page.includes("data={card}"));
+  check("no user name is hard-coded in the hero", !/Daniel|Hidalgo/.test(hero));
+  check("the retired identity card is gone from Home",
+    !page.includes("<HomeIdentityCard") && !page.includes("home-identity-card") && !grid.includes("fixedLead"));
+  check("Home greets once: the brief does not", !/Welcome/.test(brief));
+  check("the greeting is one heading", (hero.match(/<h1/g) ?? []).length === 1);
+  check("the entrance is staged, name after the lead",
+    hero.includes('className="fm-rise inline-block"') && hero.includes("fm-rise fm-rise-delay-1"));
+  check("the entrance keyframe settles to no transform",
+    /@keyframes fm-rise[\s\S]{0,160}transform: none/.test(css));
+  check("reduced motion still collapses every animation",
+    /prefers-reduced-motion: reduce[\s\S]{0,120}animation-duration: 0\.01ms/.test(css));
+  check("the hero's summary reads the real attention queue, nothing generated",
+    hero.includes("metrics.attention") && !/Math\.random|faker|sample/i.test(hero));
+  check("an empty queue says so plainly", hero.includes("Nothing requires immediate attention."));
+  check("due phrases are exact", dueText(-3) === "3 days overdue" && dueText(-1) === "1 day overdue" &&
+    dueText(0) === "Due today" && dueText(1) === "Due tomorrow" && dueText(5) === "Due in 5 days");
 }
 
 // --- Theme contrast, computed rather than asserted by class ---------------
@@ -2868,17 +2650,8 @@ const ALLOWED_ENV = {
     selfCardLinks(LINKS.filter((l) =>
       ["email", "phone", "whatsapp"].includes(l.kind))).length === 0);
 
-  const card = readFileSync("components/home/home-identity-card.tsx", "utf8");
   const dcard = readFileSync("components/profile/digital-business-card.tsx", "utf8");
 
-  // The coupling that made this dangerous: both surfaces used to recover
-  // email/phone by scanning the link list, so hiding the icons would have
-  // silently emptied Copy Contact and the vCard too.
-  check("Copy Contact reads the carried business email, not the link list",
-    card.includes("email: data.businessEmail,") && card.includes("phoneE164: data.phoneE164,"));
-  check("the self-card no longer scrapes mailto:/tel: out of links",
-    !/kind === "email"\)\?\.href\.replace/.test(card) &&
-      !/kind === "phone"\)\?\.href\.replace/.test(card));
   check("the Digital Card reads the carried resolved email and phone",
     dcard.includes("const email = data.publicContactEmail ?? data.businessEmail;") &&
       dcard.includes("const phone = data.phoneE164;"));
@@ -2979,8 +2752,6 @@ const ALLOWED_ENV = {
     !/Verified by FortMark|label="Verified"/.test(dcardCode));
   check("credentialTrust is still computed and carried internally",
     readFileSync("lib/profile/home-card.ts", "utf8").includes("credentialTrustFor(profile, user, now)"));
-  check("the internal self-card may still show provenance",
-    readFileSync("components/home/home-identity-card.tsx", "utf8").includes("CREDENTIAL_TRUST_LABEL"));
 
   const hc = readFileSync("lib/profile/home-card.ts", "utf8");
   check("status is derived, never accepted from a request",
@@ -2992,15 +2763,6 @@ const ALLOWED_ENV = {
         /\.insert\(dashboardUsers\)[\s\S]*?\.returning\(\)/, "")));
 }
 
-// --- Brokerage is stated once ----------------------------------------------
-{
-  const card = readFileSync("components/home/home-identity-card.tsx", "utf8");
-  check("the secondary line carries location, not a second brokerage",
-    card.includes("{data.locationDisplay && (") &&
-      !card.includes("data.brokerageOffice ?? data.locationDisplay"));
-  check("FortMark is still named once on the self-card",
-    (card.match(/"FortMark"/g) ?? []).length === 1);
-}
 
 
 // --- Account status stays admin-controlled ---------------------------------
@@ -3207,12 +2969,6 @@ const ALLOWED_ENV = {
   check("the exported email is the single resolved public address",
     dcard.includes("const email = data.publicContactEmail ?? data.businessEmail;"));
 
-  // The Home self-card is untouched by this pass.
-  const card = readFileSync("components/home/home-identity-card.tsx", "utf8");
-  check("the Home self-card still hides self-contact",
-    card.includes("selfCardLinks(data.links)"));
-  check("the Home self-card still exports the business email",
-    card.includes("email: data.businessEmail,"));
 }
 
 
@@ -3347,7 +3103,7 @@ const ALLOWED_ENV = {
   const wizardSrc = readFileSync("components/profile/onboarding-wizard.tsx", "utf8");
   const uploadSrc = readFileSync("components/profile/profile-image-upload.tsx", "utf8");
   const fieldSrc = readFileSync("components/profile/profile-field.tsx", "utf8");
-  const railSrc = readFileSync("components/layout/nav-rail.tsx", "utf8");
+  const railSrc = readFileSync("components/layout/top-bar.tsx", "utf8");
   const rootLayoutSrc = readFileSync("app/layout.tsx", "utf8");
   const imageRouteSrc = readFileSync("app/api/profile/image/route.ts", "utf8");
   const shellSrc = readFileSync("lib/profile/shell.ts", "utf8");
@@ -3357,9 +3113,10 @@ const ALLOWED_ENV = {
   // The defect: `next/image` does not apply the zone basePath to a string src,
   // and `unoptimized: true` means the optimizer that would have added it never
   // runs — so `/brand/…` resolved against the portal zone and 404ed.
-  check("the nav rail resolves brand assets through assetPath",
-    railSrc.includes('assetPath("/brand/fortmark-logomark-black.png")') &&
-      railSrc.includes('assetPath("/brand/fortmark-logomark-white.png")'));
+  // The rail is gone; the top bar (always black) carries the white marks.
+  check("the top bar resolves brand assets through assetPath",
+    railSrc.includes('assetPath("/brand/fortmark-logomark-white.png")') &&
+      railSrc.includes('assetPath("/brand/fortmark-wordmark-white.png")'));
   check("no brand asset is referenced without the basePath helper",
     !/src="\/brand\//.test(railSrc));
   check("the favicon is basePath-prefixed too",
@@ -3373,10 +3130,9 @@ const ALLOWED_ENV = {
     assetPath("https://cdn.example.com/a.png") === "https://cdn.example.com/a.png");
 
   // The wordmark is the real asset, not letterforms in a display font.
-  check("the expanded rail renders the official wordmark asset",
-    railSrc.includes("fortmark-wordmark-black.png") &&
-      railSrc.includes("fortmark-wordmark-white.png"));
-  check("the rail no longer renders the brand as plain text",
+  check("the top bar renders the official wordmark asset",
+    railSrc.includes("fortmark-wordmark-white.png"));
+  check("the top bar never renders the brand as plain text",
     !/>FORTMARK</.test(railSrc));
   // Sizing is derived from each asset's INK, not its canvas.
   //
@@ -3399,18 +3155,20 @@ const ALLOWED_ENV = {
       Math.abs(45 - 20 * (1568 / 700)) <= 1);
     check("the wordmark width follows its ratio",
       Math.abs(110 - 32 * (1756 / 512)) <= 1);
-    // Both must fit the expanded rail: w-60 (240px) less px-5 (40px).
-    check("the brand lockup fits the expanded rail", 45 + 8 + 110 <= 200);
+    // The phone bar shows the mark alone; from sm the wordmark alone.
+    check("the wordmark fits the bar's brand slot", 110 <= 200);
   }
   check("the wordmark box is taller than the mark to compensate for padding",
     railSrc.includes("h-8 w-auto") && railSrc.includes("h-5 w-auto"));
   check("brand images are not stretched by a square box",
     !/width=\{28\}[\s\S]{0,40}height=\{28\}/.test(railSrc));
-  check("both themes are covered",
-    railSrc.includes("dark:hidden") && railSrc.includes("hidden h-5 w-auto dark:block"));
+  // The bar is black in both themes, so it carries only the white marks —
+  // a black mark on it would vanish.
+  check("the always-black bar uses only the white marks",
+    railSrc.includes('className="dark sticky top-0') && !railSrc.includes("-black.png"));
   check("the brand link keeps a single accessible name",
     railSrc.includes('aria-label="FortMark home"') &&
-      (railSrc.match(/alt=""/g) ?? []).length >= 4);
+      (railSrc.match(/alt=""/g) ?? []).length >= 2);
   check("the brand link has a visible focus state",
     railSrc.includes("focus-visible:ring-2"));
 
@@ -3752,11 +3510,12 @@ const ALLOWED_ENV = {
       drawer.indexOf("<DigitalBusinessCard") < drawer.indexOf("<Sheet"));
 
     // One account control, not two.
-    const rail = readFileSync("components/layout/nav-rail.tsx", "utf8");
-    check("the duplicate account menu is gone from the rail",
-      !rail.includes("<UserMenu") && !rail.includes('from "./user-menu"'));
-    check("the rail keeps its other bottom actions",
-      rail.includes("NotificationsBell") && rail.includes('href="/settings"'));
+    const rail = readFileSync("components/layout/top-bar.tsx", "utf8");
+    check("the top bar has one account control, not a second menu",
+      !rail.includes("<UserMenu") && !rail.includes('from "./user-menu"') &&
+        (rail.match(/<ProfileIdentity/g) ?? []).length === 1);
+    check("the top bar keeps notifications and settings",
+      rail.includes("<NotificationsBell") && rail.includes('href="/settings"'));
 
     // The avatar opens the DIGITAL CARD, and the drawer does not edit.
     check("the drawer renders the card", drawer.includes("<DigitalBusinessCard"));
@@ -3782,9 +3541,6 @@ const ALLOWED_ENV = {
         !dcardSrc.includes("onEdit"));
     check("navigating to the editor closes the sheet behind it",
       /href=\{`\$\{ROUTES\.settings\}\?tab=profile[^`]*`\}[\s\S]{0,120}onOpenChange\(false\)/.test(dcardSrc));
-    const home = readFileSync("components/home/home-identity-card.tsx", "utf8");
-    check("the Home card's edit action routes to the same page",
-      home.includes("${ROUTES.settings}?tab=profile"));
     const section = readFileSync("components/settings/profile-section.tsx", "utf8");
     check("the settings page hosts the one editor",
       section.includes("<ProfileEditor"));
@@ -3816,8 +3572,6 @@ const ALLOWED_ENV = {
       section.includes("<MlsIdentityStatus"));
 
     // Both entry points ask for edit mode, so the buttons do what they say.
-    check("the Home card's edit button opens edit mode",
-      home.includes("?tab=profile&edit=1"));
     check("the digital card's edit button opens edit mode",
       dcardSrc.includes("?tab=profile&edit=1"));
     check("the settings editor loads the profile itself",

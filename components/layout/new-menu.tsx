@@ -26,9 +26,11 @@ export function NewMenu() {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button className="h-9">
+          {/* Outline, not filled: in the top bar the only solid white element
+              should be the selected section. Icon-only until xl. */}
+          <Button variant="outline" className="h-9 w-9 px-0 xl:w-auto xl:px-3" aria-label="New">
             <Plus />
-            New
+            <span className="hidden xl:inline">New</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48">

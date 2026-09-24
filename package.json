@@ -8,7 +8,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:auth": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_dashboard_access.ts",
-    "test": "npm run typecheck && npm run test:auth && npm run test:profile && npm run test:ai && npm run test:ai:tools && npm run test:ai:providers && npm run test:ai:actions && npm run test:mls && npm run test:transactions && npm run test:contacts && npm run test:metrics && npm run test:mock-leak && npm run test:search && npm run test:team && npm run test:brokerage && npm run test:mls-identity",
+    "test": "npm run typecheck && npm run test:auth && npm run test:profile && npm run test:ai && npm run test:ai:tools && npm run test:ai:providers && npm run test:ai:actions && npm run test:mls && npm run test:transactions && npm run test:contacts && npm run test:metrics && npm run test:mock-leak && npm run test:search && npm run test:team && npm run test:brokerage && npm run test:mls-identity && npm run test:shell",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/migrate.mjs --force",
     "db:check": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/db_check.ts",
@@ -28,7 +28,8 @@
     "test:ai:providers": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_ai_providers.ts",
     "test:ai:actions": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_ai_actions.ts",
     "certify:f2b": "playwright test --project=setup --project=certification e2e/f2b-certification.spec.ts",
-    "certify:f2b:expiry": "playwright test --project=setup --project=certification e2e/expiry.spec.ts"
+    "certify:f2b:expiry": "playwright test --project=setup --project=certification e2e/expiry.spec.ts",
+    "test:shell": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_shell.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

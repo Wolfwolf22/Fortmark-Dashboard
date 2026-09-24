@@ -1,5 +1,6 @@
 import { BentoGrid } from "@/components/home/bento-grid";
-import { HomeIdentityCard } from "@/components/home/home-identity-card";
+import { HomeHero } from "@/components/home/home-hero";
+import { HomeMetricsProvider } from "@/components/home/metrics-provider";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
@@ -8,19 +9,19 @@ import { ROUTES } from "@/lib/routes";
 import { ONBOARDING_DEFERRAL_COOKIE, isDeferred } from "@/lib/profile/deferral";
 
 /**
- * Home — the permanent identity card plus the reorderable bento grid. Title
- * comes from the top bar.
+ * Home — the Welcome hero, the daily brief and the reorderable grid, all
+ * reading one metrics request.
  *
- * A server component so the identity card is built per request and handed
- * straight to the card. That keeps the licence number, NRDS id and contact
- * shortcuts out of the global client stores: they exist only in this page's
- * payload, for the user who requested it.
+ * The greeting is resolved on the server by the same projection the profile
+ * route serves (`getHomeIdentityCard` → `greetingNameFor`), and only the two
+ * strings the hero prints cross to the client: the first name and the role
+ * label. The licence, NRDS id and contact details the identity card used to
+ * carry are no longer in this page's payload at all — the full identity lives
+ * in the account drawer in the top bar.
  *
- * The layout enclosing this route already enforced authentication and the
- * allowlist, so reaching here means the caller is approved — and therefore the
- * card is owed unconditionally. `getHomeIdentityCard` never returns null; on any
- * database or flag failure it returns a session-only projection, so the card is
- * always the first grid cell and can never silently disappear.
+ * `getHomeIdentityCard` never returns null on an approved request (it falls
+ * back to a session-only projection), so the greeting degrades to the Clerk
+ * first name, then to a plain "Welcome", and never to an email.
  */
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -47,9 +48,13 @@ export default async function HomePage() {
     redirect(ROUTES.onboarding);
   }
   // `session` is non-null here in practice: the enclosing layout redirects an
-  // anonymous visitor before this renders. The guard is belt-and-braces, and it
-  // is the ONLY branch that can omit the card.
+  // anonymous visitor before this renders.
   const card = session ? await getHomeIdentityCard(session.user) : null;
 
-  return <BentoGrid fixedLead={card ? <HomeIdentityCard data={card} /> : undefined} />;
+  return (
+    <HomeMetricsProvider>
+      <HomeHero greetingName={card?.greetingName ?? null} roleLabel={card?.roleLabel ?? null} />
+      <BentoGrid />
+    </HomeMetricsProvider>
+  );
 }

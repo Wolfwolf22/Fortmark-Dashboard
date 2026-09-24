@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useShellNavigate } from "./page-transition";
 import { Plus } from "lucide-react";
 import {
   CommandDialog,
@@ -78,7 +78,7 @@ function searchTrigger(): HTMLElement | null {
  * tell.
  */
 export function CommandPalette() {
-  const router = useRouter();
+  const navigate = useShellNavigate();
   const open = useUiStore((s) => s.commandOpen);
   const setOpen = useUiStore((s) => s.setCommandOpen);
   const [query, setQuery] = React.useState("");
@@ -181,7 +181,8 @@ export function CommandPalette() {
     // about to disappear would drop focus on `<body>` a tick later.
     opener.current = null;
     setOpen(false);
-    router.push(href);
+    // Same exit motion as the top bar; still a real `router.push`.
+    navigate(href);
   };
 
   const trimmed = query.trim();

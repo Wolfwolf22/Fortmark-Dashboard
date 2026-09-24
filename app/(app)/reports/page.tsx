@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Reports — production analytics for the global period. The top-bar period
+ * Reports — production analytics for the global period. The page's period
  * selector re-filters everything here; each card exports its rendered
  * dataset as CSV.
  *
@@ -22,6 +22,7 @@ import { ReportStatTiles } from "@/components/reports/stat-tiles";
 import { SubsystemNotConnected, useSubsystem } from "@/components/common/subsystem-state";
 import { SampleDataNotice } from "@/components/listings/sample-data-notice";
 import { Card } from "@/components/ui/card";
+import { DateRangeSelector } from "@/components/layout/date-range-selector";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function ReportsPage() {
@@ -38,6 +39,11 @@ export default function ReportsPage() {
 
   return (
     <div className="space-y-5">
+      {/* The reporting period used to live in the top bar; it now sits with
+          the only surfaces it filters. */}
+      <div className="flex justify-end">
+        <DateRangeSelector />
+      </div>
       <SampleDataNotice subject="Every figure on this page is generated for development. None of it describes this brokerage." />
       <ReportStatTiles />
       <div className="grid items-stretch gap-5 lg:grid-cols-2">

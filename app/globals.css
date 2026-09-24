@@ -136,6 +136,77 @@
   }
 }
 
+/*
+ * Shell motion. Only page content and the Home greeting move; the top bar
+ * never does. One ease family, no springs, no loops. The final keyframe is
+ * `transform: none` so a settled page never becomes a containing block for
+ * its fixed-position descendants.
+ */
+@keyframes fm-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fm-page-exit {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+@keyframes fm-rise {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.fm-page-enter {
+  animation: fm-page-enter 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.fm-page-exit {
+  animation: fm-page-exit 190ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  pointer-events: none;
+}
+
+.fm-rise {
+  animation: fm-rise 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.fm-rise-delay-1 {
+  animation-delay: 90ms;
+}
+
+.fm-rise-delay-2 {
+  animation-delay: 180ms;
+}
+
+/* Phones: shorter, lighter motion. Vertical only — nothing that could be
+   mistaken for a browser back/forward swipe. */
+@media (max-width: 767px) {
+  .fm-page-enter {
+    animation-duration: 300ms;
+  }
+  .fm-rise {
+    animation-duration: 440ms;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

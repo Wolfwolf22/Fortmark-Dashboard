@@ -36,7 +36,10 @@ export const useLayoutStore = create<LayoutState>()(
       // END, so a saved v2 order would have kept attention in last place
       // forever for anyone who had already loaded the dashboard — which is the
       // single thing this release set out to fix. A new key retires them.
-      name: "fm.dashboard.layout.v3",
+      // v4: the Home redesign moved the live MLS module up beside the working
+      // modules and re-spanned the grid for the top-bar shell. A saved v3
+      // order would keep the listing card pinned last, so a new key again.
+      name: "fm.dashboard.layout.v4",
       merge: (persisted, current) => {
         // Tolerate widget ids added/removed between versions.
         const p = persisted as Partial<LayoutState> | undefined;

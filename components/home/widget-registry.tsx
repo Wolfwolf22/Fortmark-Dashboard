@@ -29,21 +29,23 @@ export interface WidgetDef {
 }
 
 export const WIDGETS: Record<WidgetId, WidgetDef> = {
-  // Beside the identity card's 4 columns, so both sit in the first viewport.
+  // Default rows at xl (12 columns): attention 5 + deals 7 · listings 4 +
+  // activity 4 + commission 4 · closed 6 + sources 6 · leaderboard 12.
+  // At md (6 columns) every row also sums to 6.
   compliance: {
     id: "compliance",
     component: ComplianceWidget,
-    spanClass: "md:col-span-6 xl:col-span-8",
+    spanClass: "md:col-span-6 xl:col-span-5",
   },
   "transactions-table": {
     id: "transactions-table",
     component: TransactionsTableWidget,
-    spanClass: "md:col-span-6 xl:col-span-8",
+    spanClass: "md:col-span-6 xl:col-span-7",
   },
   "market-pulse": {
     id: "market-pulse",
     component: MarketPulseWidget,
-    spanClass: "md:col-span-3 xl:col-span-6",
+    spanClass: "md:col-span-3 xl:col-span-4",
   },
   "closed-volume": {
     id: "closed-volume",
@@ -53,7 +55,7 @@ export const WIDGETS: Record<WidgetId, WidgetDef> = {
   "projected-commission": {
     id: "projected-commission",
     component: ProjectedCommissionWidget,
-    spanClass: "md:col-span-6 xl:col-span-6",
+    spanClass: "md:col-span-6 xl:col-span-4",
   },
   "lead-source": {
     id: "lead-source",
@@ -63,11 +65,11 @@ export const WIDGETS: Record<WidgetId, WidgetDef> = {
   leaderboard: {
     id: "leaderboard",
     component: LeaderboardWidget,
-    spanClass: "md:col-span-6 xl:col-span-8",
+    spanClass: "md:col-span-6 xl:col-span-12",
   },
   "featured-listing": {
     id: "featured-listing",
     component: FeaturedListingWidget,
-    spanClass: "md:col-span-6 xl:col-span-12",
+    spanClass: "md:col-span-3 xl:col-span-4",
   },
 };

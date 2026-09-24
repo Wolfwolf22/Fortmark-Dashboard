@@ -69,8 +69,8 @@ const config: Config = {
         display: ["var(--font-archivo-black)", "system-ui", "sans-serif"],
       },
       borderRadius: {
-        card: "1.5rem",
-        panel: "1rem",
+        card: "0.75rem",
+        panel: "0.5rem",
         composer: "1rem",
         lg: "0.75rem",
         md: "0.625rem",

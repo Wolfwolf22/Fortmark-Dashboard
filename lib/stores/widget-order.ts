@@ -21,16 +21,18 @@ export const DEFAULT_WIDGET_ORDER = [
   "compliance",
   // What is being worked.
   "transactions-table",
+  // The MLS book (FortMark's, or the agent's own). Live since Core V1, so it
+  // sits with the working modules — after the queue and the deals, never
+  // ahead of them, and on a phone before the history below.
+  "featured-listing",
   // What just happened.
   "market-pulse",
   // How the year is going.
-  "closed-volume",
   "projected-commission",
+  "closed-volume",
   "lead-source",
   // Brokerage-wide, and shown only to the roles that may see it.
   "leaderboard",
-  // Another system's state. Compact until that system is connected.
-  "featured-listing",
 ] as const;
 
 export type WidgetId = (typeof DEFAULT_WIDGET_ORDER)[number];

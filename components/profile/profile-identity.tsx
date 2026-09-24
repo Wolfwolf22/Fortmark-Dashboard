@@ -23,16 +23,23 @@ import { cn, initials } from "@/lib/utils";
 export function ProfileIdentity({
   display,
   editable,
+  compact = false,
 }: {
   display: ProfileDisplay;
   editable: boolean;
+  /**
+   * Top-bar mode: a 40px avatar, the name only from `xl` (where the bar has
+   * room for it), no role line. The drawer and everything it opens are the
+   * same in both modes.
+   */
+  compact?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
 
   const avatar = (
     // 44px, rising to 48px from md — inside the 44–52px band, and at or above
     // the 44px minimum touch target on the sizes where it is the whole control.
-    <Avatar className="h-11 w-11 shrink-0 md:h-12 md:w-12">
+    <Avatar className={cn("shrink-0", compact ? "h-10 w-10" : "h-11 w-11 md:h-12 md:w-12")}>
       {display.imageUrl && <AvatarImage src={display.imageUrl} alt="" />}
       <AvatarFallback>{initials(display.displayName)}</AvatarFallback>
     </Avatar>
@@ -43,11 +50,11 @@ export function ProfileIdentity({
   const body = (
     <>
       {avatar}
-      <span className="hidden min-w-0 text-left sm:block">
+      <span className={cn("hidden min-w-0 text-left", compact ? "xl:block" : "sm:block")}>
         <span className="block truncate text-[13px] font-semibold leading-tight text-foreground">
           {display.displayName}
         </span>
-        {meta && (
+        {meta && !compact && (
           <span className="hidden truncate text-[11px] leading-tight text-muted-foreground lg:block">
             {meta}
           </span>
@@ -77,14 +84,16 @@ export function ProfileIdentity({
         aria-label={`Your profile — ${display.displayName}`}
         data-testid="profile-identity"
         className={cn(
-          "flex max-w-[15rem] items-center gap-2.5 rounded-xl px-1.5 py-1 transition-colors",
+          "flex max-w-[15rem] items-center gap-2.5 px-1.5 py-1 transition-colors",
+          compact ? "rounded-md" : "rounded-xl",
           "hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         )}
       >
         {body}
         <ChevronDown
           className={cn(
-            "hidden h-4 w-4 shrink-0 text-muted-foreground transition-transform sm:block",
+            "hidden h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+            compact ? "xl:block" : "sm:block",
             open && "rotate-180"
           )}
           aria-hidden
