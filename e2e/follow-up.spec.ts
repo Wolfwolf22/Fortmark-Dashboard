@@ -33,7 +33,7 @@
  *
  * Screenshots go to SHOTS_DIR, never into the repository.
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { refreshingApiFor, signInCertificationUser } from "./session";
 
@@ -114,6 +114,29 @@ async function listRow(p: Page, label: string) {
   await expect(row).toHaveCount(1, { timeout: 20_000 });
   return row;
 }
+/**
+ * Navigate and wait for a page to be ready, reloading ONLY when the platform's
+ * platform's own error page came back instead of the app — the client-side
+ * "Application error" page (an asset the edge failed to serve) or the portal's
+ * "upstream request failed" (its rewrite to the dashboard got no answer). The
+ * Preview has done both on pages unrelated to this work. Any other failure, including a real assertion, propagates at once,
+ * and every reload is counted and reported so it cannot hide a defect.
+ */
+let appErrorReloads = 0;
+async function gotoReady(p: Page, path: string, ready: Locator, timeout = 30_000) {
+  for (let attempt = 1; ; attempt += 1) {
+    await p.goto(path, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    try {
+      await expect(ready).toBeVisible({ timeout });
+      return;
+    } catch (error) {
+      const platformPage = p.getByText(/Application error: a client-side exception|upstream request failed/);
+      if ((await platformPage.count()) === 0 || attempt >= 4) throw error;
+      appErrorReloads += 1;
+      console.log(`[fu] platform error page ("${(await platformPage.first().innerText()).slice(0, 40)}…") at ${path}; reloading (${appErrorReloads} so far)`);
+    }
+  }
+}
 const need = (label: string) => { const id = ids.get(name(label)); expect(id, `${label} is seeded`).toBeTruthy(); return id!; };
 
 test.beforeAll(async ({ browser }) => {
@@ -130,6 +153,7 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test.afterAll(async () => {
+  console.log(`[fu] platform error-page reloads this run: ${appErrorReloads}`);
   await page?.close();
 });
 
@@ -184,8 +208,7 @@ test.describe("agent: classification is the same everywhere", () => {
   test.skip(PHASE !== "agent", "agent phase only");
 
   test("Leads column: none / due today / overdue / future / tomorrow", async () => {
-    await page.goto("/dashboard/leads", { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await expect(page.getByRole("columnheader", { name: /Follow-up/ })).toBeVisible({ timeout: 30_000 });
+    await gotoReady(page, "/dashboard/leads", page.getByRole("columnheader", { name: /Follow-up/ }));
     const cell = async (label: string) => (await listRow(page, label)).getByTestId("lead-follow-up-cell");
     await expect(await cell("FU None")).toHaveText("—");
     await expect(await cell("FU Today")).toHaveText("Due today");
@@ -434,9 +457,8 @@ test.describe("agent: authorization, display and layout", () => {
   for (const [label, closeDay] of [["Blank", null], ["Entered", addDays(TODAY, 60)]] as const) {
     test(`quick-create transaction, ${label.toLowerCase()} closing date`, async () => {
       const address = `${label} ${TAG} Way`;
-      await page.goto("/dashboard/transactions", { waitUntil: "domcontentloaded", timeout: 60_000 });
       // The view's controls render client-side, so seeing them means handlers are attached.
-      await expect(page.getByRole("radio", { name: "Board" })).toBeVisible({ timeout: 30_000 });
+      await gotoReady(page, "/dashboard/transactions", page.getByRole("radio", { name: "Board" }));
       await expect(async () => {
         await page.keyboard.press("Escape");
         await page.locator("header").getByRole("button", { name: "New", exact: true }).click({ timeout: 5_000 });
