@@ -35,7 +35,7 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
-import { apiFor, freshToken, signInCertificationUser } from "./session";
+import { refreshingApiFor, signInCertificationUser } from "./session";
 
 test.describe.configure({ mode: "serial" });
 
@@ -73,7 +73,7 @@ const TODAY = nyDay();
 const name = (label: string) => `${label} ${TAG}`;
 
 let page: Page;
-let api: ReturnType<typeof apiFor>;
+let api: ReturnType<typeof refreshingApiFor>;
 const ids = new Map<string, string>();
 
 type Snap = { status: number; follow: string | undefined; last: string; acts: number };
@@ -121,7 +121,8 @@ test.beforeAll(async ({ browser }) => {
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await signInCertificationUser(page);
   await page.goto("/dashboard", { waitUntil: "domcontentloaded", timeout: 60_000 });
-  api = apiFor(await freshToken(page));
+  // Session tokens last about a minute; this run is longer, so ask for a current one as needed.
+  api = refreshingApiFor(page);
   const list = await api("/dashboard/api/contacts");
   expect(list.status).toBe(200);
   for (const c of list.body.items as { id: string; name: string }[]) if (c.name.endsWith(TAG)) ids.set(c.name, c.id);

@@ -512,7 +512,7 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
   check("adapter: a touch still posts to the activity route", /\/activities`/.test(adapter));
   check("drawer: the direct control calls changeFollowUp, never logTouch", /changeFollowUp\(lead\.id, \{ action: "schedule", day \}\)/.test(drawer) && /changeFollowUp\(lead\.id, \{ action: "complete" \}\)/.test(drawer));
   check("drawer: Schedule / Change / Mark complete", drawer.includes('{hasFollowUp ? "Change" : "Schedule"}') && drawer.includes("Mark complete"));
-  check("drawer: says a reminder is not contact", drawer.includes("A reminder only. It does not count as contacting"));
+  check("drawer: says a reminder is not contact", drawer.includes("A reminder only. It does not count as a touch."));
   check("drawer: Log a touch remains its own section", drawer.includes('id="log-touch-heading"') && drawer.includes("logTouch(lead.id"));
   check("drawer: completion inside a touch still needs a follow-up and no new date", drawer.includes("const completing = !day && complete && hasFollowUp;"));
   check("drawer: 'Mark contacted today' keeps the follow-up", drawer.includes("The follow-up is kept."));

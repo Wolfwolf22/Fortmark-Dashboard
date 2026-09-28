@@ -410,7 +410,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                   </div>
                 )}
                 <p className="mt-3 text-xs text-muted-foreground">
-                  A reminder only. It does not count as contacting {lead.name.split(" ")[0] || "this contact"}.
+                  A reminder only. It does not count as a touch.
                 </p>
               </section>
               <div className="mt-6">
