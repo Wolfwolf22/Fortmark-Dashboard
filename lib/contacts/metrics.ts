@@ -19,6 +19,7 @@ import { contactActivities, contacts } from "../db/schema.ts";
 import type { Actor } from "../auth/actor.ts";
 import { visibleTo } from "./service.ts";
 import { displayName } from "./domain.ts";
+import { followUpDueBy, followUpStatus } from "./follow-up.ts";
 import {
   ACTIVE_CLIENT_STAGES,
   ALL_CONTACT_STAGES,
@@ -28,7 +29,7 @@ import {
 } from "./stages.ts";
 import type { ActivityItem, AttentionItem, ContactMetrics } from "../metrics/types.ts";
 import type { LeadSource } from "../data/types.ts";
-import { dayKey, daysUntil, monthWindow, toInt } from "../metrics/window.ts";
+import { monthWindow, toInt } from "../metrics/window.ts";
 
 export interface Ctx {
   actor: Actor;
@@ -43,11 +44,6 @@ function monthStartInstant(now: Date): Date {
   return new Date(`${monthWindow(now).start}T00:00:00.000Z`);
 }
 
-/** The last instant of today, UTC — a follow-up due today is due, not late. */
-function endOfToday(now: Date): Date {
-  return new Date(`${dayKey(now)}T23:59:59.999Z`);
-}
-
 /**
  * The stage predicates use `${inArray(...)}` rather than `= any(${...})` for
  * the reason documented in `lib/transactions/metrics.ts`: `stage` is a
@@ -56,7 +52,7 @@ function endOfToday(now: Date): Date {
  */
 export async function contactMetrics(ctx: Ctx, now: Date): Promise<ContactMetrics> {
   const monthStart = monthStartInstant(now);
-  const dueBy = endOfToday(now);
+  const dueBy = followUpDueBy(now);
 
   const [agg, byStage, bySource] = await Promise.all([
     ctx.db
@@ -106,7 +102,7 @@ function contactHref(id: string): string {
  * follow-up date owes nothing, and a lost or archived person is not chased.
  */
 export async function contactAttention(ctx: Ctx, now: Date): Promise<AttentionItem[]> {
-  const dueBy = endOfToday(now);
+  const dueBy = followUpDueBy(now);
   const rows = await ctx.db
     .select({
       id: contacts.id,
@@ -127,14 +123,16 @@ export async function contactAttention(ctx: Ctx, now: Date): Promise<AttentionIt
     .limit(50);
 
   return rows.map((row) => {
-    const day = dayKey(row.nextFollowUpAt as Date);
+    // The same classifier the Leads column and the drawer use, so "N days
+    // overdue" here and "Overdue" there can never be two answers.
+    const status = followUpStatus(row.nextFollowUpAt as Date, now);
     return {
       id: `follow-up:${row.id}`,
       kind: "follow_up_due" as const,
       label: "Follow up",
       subject: displayName(row),
-      dueDate: day,
-      daysAway: daysUntil(day, now),
+      dueDate: status.day as string,
+      daysAway: status.daysAway as number,
       href: contactHref(row.id),
     };
   });

@@ -37,8 +37,11 @@ import {
   toLead,
   type ActivityInput,
   type CreateContactInput,
+  type FollowUpChangeInput,
 } from "./domain.ts";
 import { canTransition } from "./stages.ts";
+import { checkFollowUpDay, decideFollowUp, type FollowUpOutcome } from "./follow-up.ts";
+import { businessDayKey } from "../metrics/business-day.ts";
 
 const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
 
@@ -60,11 +63,21 @@ export type ServiceFailure =
   | "not_found"
   | "forbidden"
   | "invalid_transition"
-  | "invalid_assignee";
+  | "invalid_assignee"
+  | "invalid_date";
 
 export type ServiceResult<T> = { ok: true; value: T } | { ok: false; reason: ServiceFailure };
 
-export type Ctx = { actor: Actor; db: Db };
+export type Ctx = {
+  actor: Actor;
+  db: Db;
+  /**
+   * The signed-in person's own name from the identity provider, resolved only
+   * if asked. It is the last resort for "Assigned agent" on a contact the
+   * caller owns whose profile has no name — never an email, never an id.
+   */
+  viewerName?: () => Promise<string | null>;
+};
 
 export async function resolveActor(
   clerkUserId: string,
@@ -103,13 +116,21 @@ async function agentNames(db: Db, userIds: string[]): Promise<Map<string, string
 }
 
 /** Rows → screen, with opportunities and agent names fetched per page. */
-async function bundle(db: Db, rows: ContactRow[]): Promise<Lead[]> {
+async function bundle(ctx: Pick<Ctx, "db" | "actor" | "viewerName">, rows: ContactRow[]): Promise<Lead[]> {
   if (rows.length === 0) return [];
+  const { db } = ctx;
   const ids = rows.map((r) => r.id);
   const [opps, names] = await Promise.all([
     db.select().from(contactOpportunities).where(inArray(contactOpportunities.contactId, ids)),
     agentNames(db, Array.from(new Set(rows.map((r) => r.assignedAgentUserId)))),
   ]);
+  // Profile name first (above). A contact the caller owns whose profile has
+  // no name falls back to the caller's own name; anyone else's stays unnamed
+  // and the screen says so. Neither path ever produces an id or an email.
+  if (ctx.viewerName && !names.has(ctx.actor.userId) && rows.some((r) => r.assignedAgentUserId === ctx.actor.userId)) {
+    const own = (await ctx.viewerName().catch(() => null))?.trim();
+    if (own) names.set(ctx.actor.userId, own);
+  }
   return rows.map((row) =>
     toLead({
       row,
@@ -150,7 +171,7 @@ export async function listContacts(ctx: Ctx, filters: ContactFilters = {}): Prom
     .where(and(...clauses))
     .orderBy(sql`${contacts.lastContactAt} desc nulls last`, desc(contacts.createdAt))
     .limit(MAX_LIST_ROWS);
-  return bundle(ctx.db, rows);
+  return bundle(ctx, rows);
 }
 
 export async function getContact(ctx: Ctx, id: string): Promise<Lead | null> {
@@ -162,7 +183,7 @@ export async function getContact(ctx: Ctx, id: string): Promise<Lead | null> {
     .limit(1);
   const row = rows[0];
   if (!row || !canSee(ctx.actor, row)) return null;
-  return (await bundle(ctx.db, [row]))[0] ?? null;
+  return (await bundle(ctx, [row]))[0] ?? null;
 }
 
 /** The activity history of one contact, newest first. Scoped like a read. */
@@ -404,6 +425,12 @@ export async function logActivity(ctx: Ctx, id: string, input: ActivityInput, no
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
 
+  // A new date is judged the same way as on the direct control: a real day,
+  // not in the past. Checked after authorization, before anything is written.
+  if (input.nextFollowUpAt) {
+    const checked = checkFollowUpDay(businessDayKey(new Date(input.nextFollowUpAt)), now);
+    if (!checked.ok) return { ok: false, reason: "invalid_date" };
+  }
   const occurredAt = input.occurredAt ? new Date(input.occurredAt) : now;
   // Kept unless the caller sets a new date or explicitly completes it.
   const followUp = resolveFollowUp(row.nextFollowUpAt ?? null, input);
@@ -431,6 +458,76 @@ export async function logActivity(ctx: Ctx, id: string, input: ActivityInput, no
   });
   const updated = await getContact(ctx, row.id);
   return updated ? { ok: true, value: updated } : { ok: false, reason: "unavailable" };
+}
+
+/**
+ * Set, reschedule or complete a contact's follow-up WITHOUT logging a touch.
+ *
+ * A reminder is not an interaction. "Call Jane Friday" decided today means
+ * nobody has spoken to Jane today, so this writes exactly one column —
+ * `next_follow_up_at` — and never `last_contact_at`, and it records no
+ * call/email/meeting/note activity: the Leads timeline and the 14-day
+ * "no touch" heuristic stay true. What it does leave is an audit event, which
+ * is history about the system, not about the client: who changed which field,
+ * and how — never the date itself, the contact's name, or any contact detail.
+ *
+ * The update and its audit row commit as one transaction (`db.batch` is a
+ * real Neon transaction, as in `changeStage`), so there is no state in which
+ * the follow-up changed and the audit is missing, or the reverse. A request
+ * that changes nothing writes nothing.
+ *
+ * Authorization is the stage change's, in the same order: outside the caller's
+ * scope is `not_found` (no existence leak), visible but not writable is
+ * `forbidden`, and both are decided before any date is judged or any row written.
+ */
+export async function changeFollowUp(
+  ctx: Ctx,
+  id: string,
+  change: FollowUpChangeInput,
+  now = new Date()
+): Promise<ServiceResult<{ lead: Lead; outcome: FollowUpOutcome }>> {
+  if (!isRecordId(id)) return { ok: false, reason: "not_found" };
+  const rows = await ctx.db
+    .select()
+    .from(contacts)
+    .where(and(eq(contacts.id, id), visibleTo(ctx.actor)))
+    .limit(1);
+  const row = rows[0];
+  if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
+  if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
+
+  if (change.action === "schedule" && !checkFollowUpDay(change.day, now).ok) {
+    return { ok: false, reason: "invalid_date" };
+  }
+  const current = row.nextFollowUpAt ?? null;
+  const decided = decideFollowUp(current, change.action === "schedule" ? { day: change.day } : { complete: true });
+
+  if (decided.outcome !== "kept") {
+    try {
+      await ctx.db.batch([
+        ctx.db
+          .update(contacts)
+          .set({ nextFollowUpAt: decided.value, updatedByUserId: ctx.actor.userId, updatedAt: now })
+          .where(eq(contacts.id, row.id)),
+        ctx.db.insert(auditEvents).values({
+          eventType: "contact_updated",
+          actorUserId: ctx.actor.userId,
+          targetUserId: null,
+          safeMetadata: scrub({
+            contactId: row.id,
+            field: "nextFollowUpAt",
+            followUp: decided.outcome,
+            mechanism: "direct",
+          }) ?? { contactId: row.id },
+        }),
+      ] as unknown as Parameters<Db["batch"]>[0]);
+    } catch {
+      return { ok: false, reason: "unavailable" };
+    }
+  }
+
+  const updated = await getContact(ctx, row.id);
+  return updated ? { ok: true, value: { lead: updated, outcome: decided.outcome } } : { ok: false, reason: "unavailable" };
 }
 
 /** Agents a privileged caller may filter by: every active user with a name. */

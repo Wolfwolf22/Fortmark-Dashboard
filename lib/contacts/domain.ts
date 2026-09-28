@@ -11,6 +11,8 @@ import type { Lead, LeadIntent, LeadSource, LeadStage } from "../data/types.ts";
 import type { ContactActivityRow, ContactOpportunityRow, ContactRow } from "../db/schema.ts";
 import { canCreateOwnedFor, canSeeOwned, canWriteOwned, type Actor } from "../auth/actor.ts";
 import { centsToDollars } from "../transactions/money.ts";
+import { businessDayKey } from "../metrics/business-day.ts";
+import { decideFollowUp, type FollowUpOutcome } from "./follow-up.ts";
 import { ALL_CONTACT_STAGES } from "./stages.ts";
 
 // --- Who ---------------------------------------------------------------------
@@ -95,14 +97,24 @@ export const activityInputSchema = z.object({
 
 export type ActivityInput = z.infer<typeof activityInputSchema>;
 
-export type FollowUpChange = "set" | "completed" | "kept";
+/**
+ * A direct follow-up change: set, reschedule or complete the reminder with no
+ * touch logged. A reminder is not an interaction, so this is its own request
+ * rather than a flag on an activity. Strict, so a body mixing both shapes is
+ * refused instead of half-honoured.
+ */
+export const followUpChangeSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("schedule"), day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).strict(),
+  z.object({ action: z.literal("complete") }).strict(),
+]);
+
+export type FollowUpChangeInput = z.infer<typeof followUpChangeSchema>;
 
 /**
- * What a logged touch does to the stored follow-up. The one rule for it:
- *
- *   - a new date sets or reschedules it (and supersedes "complete");
- *   - `completeFollowUp` without a date clears it;
- *   - otherwise it is kept exactly as it was.
+ * What a logged touch does to the stored follow-up. The rule itself is
+ * `decideFollowUp` — shared with the direct control — so this only translates
+ * the request: the picked instant becomes its business day, so a client that
+ * sends 11 PM Eastern as the next morning's UTC still means the day it picked.
  *
  * Pure, so the rule is testable without a database and the service cannot
  * drift from it.
@@ -110,10 +122,10 @@ export type FollowUpChange = "set" | "completed" | "kept";
 export function resolveFollowUp(
   current: Date | null,
   input: Pick<ActivityInput, "nextFollowUpAt" | "completeFollowUp">
-): { value: Date | null; change: FollowUpChange } {
-  if (input.nextFollowUpAt) return { value: new Date(input.nextFollowUpAt), change: "set" };
-  if (input.completeFollowUp && current) return { value: null, change: "completed" };
-  return { value: current, change: "kept" };
+): { value: Date | null; change: FollowUpOutcome } {
+  const day = input.nextFollowUpAt ? businessDayKey(new Date(input.nextFollowUpAt)) : null;
+  const decided = decideFollowUp(current, { day, complete: input.completeFollowUp });
+  return { value: decided.value, change: decided.outcome };
 }
 
 // --- Row → screen -----------------------------------------------------------------

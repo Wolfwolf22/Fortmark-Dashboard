@@ -12,6 +12,7 @@ import {
   getSampleLead,
   listSampleLeadAgents,
   markSampleLeadContacted,
+  setSampleLeadFollowUp,
   listSampleLeads,
   updateSampleLeadStage,
   type LeadFilters,
@@ -19,6 +20,7 @@ import {
 import { bumpDataVersion } from "../store";
 import type { DateRange, Lead, LeadStage } from "../types";
 import { delay } from "./latency";
+import { followUpInstant, type FollowUpOutcome } from "../../contacts/follow-up.ts";
 
 export type { LeadFilters };
 
@@ -195,12 +197,6 @@ export interface LogTouchInput {
   completeFollowUp?: boolean;
 }
 
-/** A follow-up day is stored at noon UTC, the convention every writer uses,
- *  so the calendar day never shifts across time zones. */
-export function followUpAtFromDay(day: string): string {
-  return `${day}T12:00:00.000Z`;
-}
-
 /**
  * Log a touch, optionally rescheduling or completing the follow-up. Without
  * either, the stored follow-up is kept: an attempted touch completes nothing.
@@ -209,12 +205,12 @@ export async function logTouch(id: string, input: LogTouchInput): Promise<Lead |
   if ((await getLeadSource()) === "sample") {
     await delay(120);
     return markSampleLeadContacted(id, {
-      nextFollowUpDate: input.nextFollowUpDay ? followUpAtFromDay(input.nextFollowUpDay) : undefined,
+      day: input.nextFollowUpDay,
       completeFollowUp: input.completeFollowUp,
     });
   }
   const body: Record<string, unknown> = { kind: input.kind, summary: input.summary.trim() };
-  if (input.nextFollowUpDay) body.nextFollowUpAt = followUpAtFromDay(input.nextFollowUpDay);
+  if (input.nextFollowUpDay) body.nextFollowUpAt = followUpInstant(input.nextFollowUpDay);
   else if (input.completeFollowUp) body.completeFollowUp = true;
   const { contact } = await request<{ contact: Lead }>(
     `/api/contacts/${encodeURIComponent(id)}/activities`,
@@ -222,6 +218,28 @@ export async function logTouch(id: string, input: LogTouchInput): Promise<Lead |
   );
   bumpDataVersion();
   return contact;
+}
+
+export type FollowUpChange = { action: "schedule"; day: string } | { action: "complete" };
+
+/**
+ * Schedule, reschedule or complete the follow-up WITHOUT logging a touch.
+ * A reminder is not an interaction: this never moves last contact and adds
+ * nothing to the activity history.
+ */
+export async function changeFollowUp(id: string, change: FollowUpChange): Promise<{ lead: Lead | undefined; outcome?: FollowUpOutcome }> {
+  if ((await getLeadSource()) === "sample") {
+    await delay(120);
+    return {
+      lead: setSampleLeadFollowUp(id, change.action === "schedule" ? { day: change.day } : { complete: true }),
+    };
+  }
+  const { contact, followUp } = await request<{ contact: Lead; followUp: FollowUpOutcome }>(
+    `/api/contacts/${encodeURIComponent(id)}/follow-up`,
+    { method: "POST", body: JSON.stringify(change) }
+  );
+  bumpDataVersion();
+  return { lead: contact, outcome: followUp };
 }
 
 /** Agents the filter may list. Sample roster, or the brokerage's real users. */

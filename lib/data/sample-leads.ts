@@ -10,6 +10,7 @@ import { bumpDataVersion } from "./store.ts";
 import type { DateRange, Lead, LeadStage } from "./types.ts";
 import { inRange } from "../dates.ts";
 import { canTransition } from "../contacts/stages.ts";
+import { decideFollowUp } from "../contacts/follow-up.ts";
 
 export interface LeadFilters {
   stage?: LeadStage[];
@@ -77,18 +78,36 @@ export function createSampleLead(
   return created;
 }
 
+/** Apply the shared follow-up decision to a sample row. */
+function applyFollowUp(lead: Lead, want: { day?: string | null; complete?: boolean }) {
+  const decided = decideFollowUp(lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate) : null, want);
+  lead.nextFollowUpDate = decided.value ? decided.value.toISOString() : undefined;
+  return decided.outcome;
+}
+
 /** "Mark contacted today": a touch, stamped on the sample row. */
 export function markSampleLeadContacted(
   id: string,
-  followUp: { nextFollowUpDate?: string; completeFollowUp?: boolean } = {}
+  followUp: { day?: string; completeFollowUp?: boolean } = {}
 ): Lead | undefined {
   const lead = leads.find((l) => l.id === id);
   if (!lead) return undefined;
   lead.lastContactDate = now().toISOString();
   // Same rule as the database: a new date wins, completion clears, and a
   // plain touch keeps the reminder.
-  if (followUp.nextFollowUpDate) lead.nextFollowUpDate = followUp.nextFollowUpDate;
-  else if (followUp.completeFollowUp) lead.nextFollowUpDate = undefined;
+  applyFollowUp(lead, { day: followUp.day, complete: followUp.completeFollowUp });
+  bumpDataVersion();
+  return lead;
+}
+
+/**
+ * Set, reschedule or complete a sample row's follow-up. Like the database
+ * path it is a reminder, not a touch: last contact is left exactly as it was.
+ */
+export function setSampleLeadFollowUp(id: string, want: { day?: string; complete?: boolean }): Lead | undefined {
+  const lead = leads.find((l) => l.id === id);
+  if (!lead) return undefined;
+  applyFollowUp(lead, want);
   bumpDataVersion();
   return lead;
 }

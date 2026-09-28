@@ -1,17 +1,24 @@
 /**
- * Follow-up capture and the truthful closing date.
+ * Follow-up workflow: direct scheduling, touch logging, and the business day.
  *
- * The product rule under test: logging a touch never clears a follow-up on
- * its own — an attempted call may complete nothing. The reminder changes only
- * when the person picks a new date or explicitly marks it complete.
+ * Two product rules under test.
  *
- * Three layers:
- *   - the pure decision (`resolveFollowUp`) and the request shape;
- *   - the real `logActivity` service against an in-memory stand-in for the
- *     database, so ownership, the stored value and the audit are exercised
- *     end to end (due, future, completed, unauthorized);
- *   - how the Leads screens read a stored follow-up (Home's due rule), and
- *     the quick-create closing date (blank stays unset, entered is kept).
+ *   1. A follow-up is a reminder, not an interaction. Setting, changing or
+ *      completing one directly never touches last contact and never writes a
+ *      call/email/meeting/note. Logging an actual touch does move last contact
+ *      and may change the reminder in the same step; alone, it never clears it.
+ *   2. "Today" is the BUSINESS day (US Eastern), not the UTC day. At 11:30 PM
+ *      in Fort Lauderdale it is already tomorrow in UTC — the old rule showed
+ *      tomorrow's follow-up as "Due today".
+ *
+ * Every refusal and every "unchanged" assertion below has a positive control:
+ * a test in the same harness where the authorized call succeeds, or where the
+ * same field really does change. A green result cannot come from a harness
+ * that simply never writes.
+ *
+ * Layers: the pure clock and rule; the real `changeFollowUp` / `logActivity`
+ * against an in-memory database that models transactions; how Home, the list
+ * and the drawer read the result; the quick-create closing date; structure.
  *
  * No database is contacted.
  *
@@ -19,8 +26,12 @@
  */
 import { readFileSync } from "node:fs";
 import type { Actor } from "../lib/auth/actor.ts";
-import { activityInputSchema, resolveFollowUp } from "../lib/contacts/domain.ts";
+import { activityInputSchema, followUpChangeSchema, resolveFollowUp } from "../lib/contacts/domain.ts";
 import {
+  checkFollowUpDay,
+  decideFollowUp,
+  followUpDueBy,
+  followUpInstant,
   followUpLabel,
   followUpStatus,
   formatFollowUpDay,
@@ -28,8 +39,16 @@ import {
   noRecentTouch,
   NO_TOUCH_LABEL,
 } from "../lib/contacts/follow-up.ts";
-import { logActivity, type Ctx } from "../lib/contacts/service.ts";
+import { changeFollowUp, getContact, logActivity, type Ctx } from "../lib/contacts/service.ts";
 import { auditEvents, contactActivities, contacts } from "../lib/db/schema.ts";
+import {
+  businessDayKey,
+  businessDayStart,
+  dayDiff,
+  isCalendarDay,
+  startOfNextBusinessDay,
+} from "../lib/metrics/business-day.ts";
+import { dayKey } from "../lib/metrics/window.ts";
 import { closeDateFromInput } from "../lib/transactions/close-date.ts";
 import { initialDeadlines } from "../lib/transactions/domain.ts";
 
@@ -45,37 +64,145 @@ function check(name: string, condition: boolean): void {
   }
 }
 
-// Noon UTC on Sep 24 2026 — "today" for every check below.
-const NOW = new Date("2026-09-24T12:00:00.000Z");
-const at = (day: string) => new Date(`${day}T12:00:00.000Z`);
+const at = (iso: string) => new Date(iso);
+const noon = (day: string) => new Date(`${day}T12:00:00.000Z`);
 
-// --- The pure decision -------------------------------------------------------------
+// The evening that broke the old rule: 11:30 PM EDT on Thu Sep 24 is already
+// Fri Sep 25 in UTC.
+const FLORIDA_EVENING = at("2026-09-25T03:30:00.000Z");
+
+// --- The business clock ------------------------------------------------------------
 {
-  const due = at("2026-09-24");
-  check("a plain touch keeps a due follow-up", resolveFollowUp(due, {}).value === due && resolveFollowUp(due, {}).change === "kept");
-  check("a plain touch with no follow-up keeps none", resolveFollowUp(null, {}).value === null && resolveFollowUp(null, {}).change === "kept");
-  const set = resolveFollowUp(due, { nextFollowUpAt: "2026-10-01T12:00:00.000Z" });
-  check("a new date reschedules", set.change === "set" && set.value?.toISOString() === "2026-10-01T12:00:00.000Z");
-  check("completion clears an existing follow-up", resolveFollowUp(due, { completeFollowUp: true }).value === null &&
-    resolveFollowUp(due, { completeFollowUp: true }).change === "completed");
-  check("completing with nothing set is a no-op, not a completion", resolveFollowUp(null, { completeFollowUp: true }).change === "kept");
-  check("completeFollowUp: false keeps it", resolveFollowUp(due, { completeFollowUp: false }).value === due);
-  const both = resolveFollowUp(due, { nextFollowUpAt: "2026-10-01T12:00:00.000Z", completeFollowUp: true });
-  check("a new date wins over completion (complete this one, schedule the next)", both.change === "set" && both.value !== null);
+  check("the premise: it is already tomorrow in UTC", dayKey(FLORIDA_EVENING) === "2026-09-25");
+  check("…but still Thursday in Fort Lauderdale", businessDayKey(FLORIDA_EVENING) === "2026-09-24");
+  check("midnight Eastern is the boundary (EDT)", businessDayKey(at("2026-09-25T03:59:59.999Z")) === "2026-09-24" && businessDayKey(at("2026-09-25T04:00:00.000Z")) === "2026-09-25");
+  check("winter boundary is one hour later (EST)", businessDayKey(at("2026-12-15T04:59:59.999Z")) === "2026-12-14" && businessDayKey(at("2026-12-15T05:00:00.000Z")) === "2026-12-15");
+  check("a UTC morning is still the previous business day", businessDayKey(at("2026-09-25T02:00:00.000Z")) === "2026-09-24");
+
+  // Daylight saving: spring forward Sun Mar 8 2026, fall back Sun Nov 1 2026.
+  check("spring-forward day starts at EST midnight", businessDayStart("2026-03-08").toISOString() === "2026-03-08T05:00:00.000Z");
+  check("…the next day starts at EDT midnight", businessDayStart("2026-03-09").toISOString() === "2026-03-09T04:00:00.000Z");
+  check("the spring-forward day is 23 hours", (businessDayStart("2026-03-09").getTime() - businessDayStart("2026-03-08").getTime()) / 3_600_000 === 23);
+  check("fall-back day starts at EDT midnight", businessDayStart("2026-11-01").toISOString() === "2026-11-01T04:00:00.000Z");
+  check("the fall-back day is 25 hours", (businessDayStart("2026-11-02").getTime() - businessDayStart("2026-11-01").getTime()) / 3_600_000 === 25);
+  check("11:59 PM on the 23-hour day is still that day", businessDayKey(at("2026-03-09T03:59:59.999Z")) === "2026-03-08");
+  check("11:59 PM on the 25-hour day is still that day", businessDayKey(at("2026-11-02T04:59:59.999Z")) === "2026-11-01");
+  check("…and one millisecond later is the next", businessDayKey(at("2026-11-02T05:00:00.000Z")) === "2026-11-02");
+  check("the start of the next day is measured from the calendar, not +24h",
+    startOfNextBusinessDay(at("2026-11-01T12:00:00.000Z")).toISOString() === "2026-11-02T05:00:00.000Z" &&
+      startOfNextBusinessDay(at("2026-03-08T12:00:00.000Z")).toISOString() === "2026-03-09T04:00:00.000Z");
+  check("noon UTC is the same calendar day in Eastern on both sides of both changes",
+    ["2026-03-07", "2026-03-08", "2026-03-09", "2026-10-31", "2026-11-01", "2026-11-02"].every((d) => businessDayKey(noon(d)) === d));
+
+  check("calendar validation refuses Feb 30 and junk", !isCalendarDay("2026-02-30") && !isCalendarDay("2026-13-01") && !isCalendarDay("soon") && isCalendarDay("2028-02-29"));
+  check("day arithmetic counts calendar days", dayDiff("2026-09-30", "2026-09-24") === 6 && dayDiff("2026-09-24", "2026-09-30") === -6 && dayDiff("2026-11-02", "2026-10-31") === 2);
 }
 
-// --- The request shape ---------------------------------------------------------------
-check("completeFollowUp is accepted", activityInputSchema.safeParse({ kind: "call", summary: "Reached them", completeFollowUp: true }).success);
-check("completeFollowUp must be a boolean", !activityInputSchema.safeParse({ kind: "call", summary: "x", completeFollowUp: "yes" }).success);
-check("a follow-up must be a datetime", !activityInputSchema.safeParse({ kind: "call", summary: "x", nextFollowUpAt: "next week" }).success);
-check("a follow-up datetime is accepted", activityInputSchema.safeParse({ kind: "call", summary: "x", nextFollowUpAt: "2026-10-01T12:00:00.000Z" }).success);
+// --- One classifier: none / due_today / overdue / future ---------------------------------
+{
+  const NOW = FLORIDA_EVENING; // Thursday Sep 24, 11:30 PM Eastern
+  const yesterday = followUpStatus(noon("2026-09-23").toISOString(), NOW);
+  const today = followUpStatus(noon("2026-09-24").toISOString(), NOW);
+  const tomorrow = followUpStatus(noon("2026-09-25").toISOString(), NOW);
+  const later = followUpStatus(noon("2026-10-08").toISOString(), NOW);
 
-// --- logActivity against an in-memory database -----------------------------------------
-//
-// A minimal stand-in for the Drizzle calls logActivity makes: selects from
-// `contacts` return the one stored row (the WHERE is not evaluated, so the
-// service's own canSee/canWrite checks are what decide access — which is the
-// point), inserts and updates are recorded, updates apply to the row.
+  check("none set", followUpStatus(undefined, NOW).state === "none" && followUpStatus(null, NOW).daysAway === null);
+  check("Florida 11:30 PM: today's follow-up is Due today", today.state === "due_today" && today.daysAway === 0);
+  check("Florida 11:30 PM: TOMORROW's follow-up is NOT Due today (the UTC bug)", tomorrow.state === "future" && tomorrow.daysAway === 1 && !isFollowUpDue(tomorrow));
+  check("Florida 11:30 PM: yesterday's is Overdue", yesterday.state === "overdue" && yesterday.daysAway === -1 && isFollowUpDue(yesterday));
+  check("a later date is a plain future date", later.state === "future" && later.daysAway === 14 && !isFollowUpDue(later));
+  // Positive control: under the old UTC rule the same input was wrong, so the
+  // assertion above is not passing by accident.
+  check("control: the old UTC comparison called tomorrow's follow-up due", dayKey(noon("2026-09-25")) <= dayKey(NOW));
+  check("the same follow-up an hour later in the day is still Due today (noon Eastern)", followUpStatus(noon("2026-09-24").toISOString(), at("2026-09-24T16:00:00.000Z")).state === "due_today");
+  check("the reader's clock is irrelevant: only `now` and the stored day decide",
+    followUpStatus(noon("2026-09-25").toISOString(), at("2026-09-25T03:30:00.000Z")).state === followUpStatus(noon("2026-09-25").toISOString(), at("2026-09-25T03:30:00.001Z")).state);
+
+  // DST: a follow-up on the 25-hour and 23-hour days classifies by calendar day.
+  check("DST: the fall-back day itself is due that day", followUpStatus(noon("2026-11-01").toISOString(), at("2026-11-01T14:00:00.000Z")).state === "due_today");
+  check("DST: 11:59 PM on the 25-hour day, tomorrow's is still future", followUpStatus(noon("2026-11-02").toISOString(), at("2026-11-02T04:59:00.000Z")).state === "future");
+  check("DST: the next minute it is due", followUpStatus(noon("2026-11-02").toISOString(), at("2026-11-02T05:00:00.000Z")).state === "due_today");
+  check("DST: 11:59 PM on the 23-hour day, tomorrow's is still future", followUpStatus(noon("2026-03-09").toISOString(), at("2026-03-09T03:59:00.000Z")).state === "future");
+
+  // Home's SQL bound is the classifier written as an instant. Prove the two
+  // agree on every hour around each boundary, so Home and Leads cannot disagree.
+  const probes: Date[] = [];
+  for (const base of ["2026-03-08", "2026-03-09", "2026-09-24", "2026-11-01", "2026-11-02", "2026-12-31"]) {
+    for (let h = -30; h <= 54; h += 1) probes.push(new Date(Date.parse(`${base}T00:00:00.000Z`) + h * 3_600_000));
+  }
+  let agree = true;
+  let sawDue = false;
+  let sawNotDue = false;
+  for (const now of probes) {
+    const dueBy = followUpDueBy(now);
+    for (const day of ["2026-03-07", "2026-03-08", "2026-03-09", "2026-09-23", "2026-09-24", "2026-09-25", "2026-11-01", "2026-11-02", "2027-01-01"]) {
+      const stored = noon(day);
+      const homeSaysDue = stored.getTime() <= dueBy.getTime();
+      const listSaysDue = isFollowUpDue(followUpStatus(stored.toISOString(), now));
+      if (homeSaysDue !== listSaysDue) agree = false;
+      if (listSaysDue) sawDue = true;
+      else sawNotDue = true;
+    }
+  }
+  check(`Home's SQL bound and the classifier agree on ${probes.length * 9} (now, day) pairs`, agree);
+  check("control: that sweep really exercised both outcomes", sawDue && sawNotDue);
+  check("Home's bound is the last millisecond of the business day", followUpDueBy(FLORIDA_EVENING).toISOString() === "2026-09-25T03:59:59.999Z");
+
+  // Copy
+  check("labels: none / due / overdue / future",
+    followUpLabel(followUpStatus(null, NOW)) === "None set" &&
+      followUpLabel(today) === "Due today" &&
+      followUpLabel(today, { withDate: true }) === "Due today · Sep 24, 2026" &&
+      followUpLabel(yesterday) === "Overdue · Sep 23, 2026" &&
+      followUpLabel(later) === "Oct 8, 2026");
+  check("the day prints without timezone drift", formatFollowUpDay("2026-01-01") === "Jan 1, 2026" && formatFollowUpDay("2026-12-31") === "Dec 31, 2026");
+}
+
+// --- Which days may be scheduled ------------------------------------------------------
+{
+  const NOW = FLORIDA_EVENING;
+  check("today (business day) is allowed", checkFollowUpDay("2026-09-24", NOW).ok);
+  check("control: the UTC 'today' is tomorrow here, and is also allowed", checkFollowUpDay("2026-09-25", NOW).ok);
+  const past = checkFollowUpDay("2026-09-23", NOW);
+  check("yesterday is refused", !past.ok && past.reason === "in_the_past");
+  const far = checkFollowUpDay("2028-09-30", NOW);
+  check("more than two years ahead is refused", !far.ok && far.reason === "too_far_ahead");
+  const bad = checkFollowUpDay("2026-02-30", NOW);
+  check("a date that does not exist is refused", !bad.ok && bad.reason === "invalid");
+  check("two years exactly is allowed", checkFollowUpDay("2028-09-23", NOW).ok);
+}
+
+// --- The one decision, both paths -------------------------------------------------------
+{
+  const due = noon("2026-09-24");
+  check("schedule when none is set", (() => { const r = decideFollowUp(null, { day: "2026-10-01" }); return r.outcome === "scheduled" && r.value?.toISOString() === "2026-10-01T12:00:00.000Z"; })());
+  check("reschedule when one is set", (() => { const r = decideFollowUp(due, { day: "2026-10-01" }); return r.outcome === "rescheduled" && r.value?.toISOString() === "2026-10-01T12:00:00.000Z"; })());
+  check("the same day is kept, not rewritten", (() => { const r = decideFollowUp(due, { day: "2026-09-24" }); return r.outcome === "kept" && r.value === due; })());
+  check("complete clears", (() => { const r = decideFollowUp(due, { complete: true }); return r.outcome === "completed" && r.value === null; })());
+  check("completing nothing is kept, not 'completed'", decideFollowUp(null, { complete: true }).outcome === "kept");
+  check("asking for nothing keeps it", (() => { const r = decideFollowUp(due, {}); return r.outcome === "kept" && r.value === due; })());
+  check("a day supersedes complete", decideFollowUp(due, { day: "2026-10-01", complete: true }).outcome === "rescheduled");
+  check("completeFollowUp: false keeps it", decideFollowUp(due, { complete: false }).value === due);
+
+  // The touch path translates the picked instant to its business day first.
+  check("touch: a noon-UTC pick keeps its day", resolveFollowUp(null, { nextFollowUpAt: "2026-10-01T12:00:00.000Z" }).value?.toISOString() === "2026-10-01T12:00:00.000Z");
+  check("touch: 11 PM Eastern sent as the next UTC morning still means the day picked",
+    resolveFollowUp(null, { nextFollowUpAt: "2026-10-02T03:00:00.000Z" }).value?.toISOString() === "2026-10-01T12:00:00.000Z");
+  check("touch: no date, no completion keeps", resolveFollowUp(due, {}).change === "kept");
+}
+
+// --- Request shapes ---------------------------------------------------------------------
+{
+  check("schedule accepts a day", followUpChangeSchema.safeParse({ action: "schedule", day: "2026-10-01" }).success);
+  check("complete takes no day", followUpChangeSchema.safeParse({ action: "complete" }).success && !followUpChangeSchema.safeParse({ action: "complete", day: "2026-10-01" }).success);
+  check("schedule needs a day", !followUpChangeSchema.safeParse({ action: "schedule" }).success);
+  check("a datetime is not a day", !followUpChangeSchema.safeParse({ action: "schedule", day: "2026-10-01T12:00:00.000Z" }).success);
+  check("an unknown action is refused", !followUpChangeSchema.safeParse({ action: "delete" }).success);
+  check("a touch still accepts completeFollowUp", activityInputSchema.safeParse({ kind: "call", summary: "Reached them", completeFollowUp: true }).success);
+  check("a touch still accepts a follow-up datetime", activityInputSchema.safeParse({ kind: "call", summary: "x", nextFollowUpAt: "2026-10-01T12:00:00.000Z" }).success);
+}
+
+// --- The services, against an in-memory database that models transactions ---------------
 const ID = "5b8f6a1e-3c2d-4e5f-8a9b-0c1d2e3f4a5b";
 const AGENT: Actor = { userId: "11111111-1111-4111-8111-111111111111", role: "agent", brokerageKey: "fortmark" };
 const OTHER_AGENT: Actor = { userId: "22222222-2222-4222-8222-222222222222", role: "agent", brokerageKey: "fortmark" };
@@ -83,19 +210,31 @@ const MEMBER_OWNER: Actor = { ...AGENT, role: "member" };
 const BROKER: Actor = { userId: "33333333-3333-4333-8333-333333333333", role: "broker", brokerageKey: "fortmark" };
 const OUTSIDER: Actor = { userId: "44444444-4444-4444-8444-444444444444", role: "admin", brokerageKey: "elsewhere" };
 
+const LAST_CONTACT = new Date("2026-09-01T12:00:00.000Z");
+const NOW = FLORIDA_EVENING;
+
 function storedRow(nextFollowUpAt: Date | null) {
   return {
     id: ID, brokerageKey: "fortmark", assignedAgentUserId: AGENT.userId, createdByUserId: AGENT.userId, updatedByUserId: AGENT.userId,
     firstName: "Synthetic", lastName: "Lead", preferredName: null, email: null, phoneE164: null, company: null,
     source: "other", stage: "qualified", tags: [], notes: null,
-    lastContactAt: new Date("2026-09-01T12:00:00Z"), nextFollowUpAt,
+    lastContactAt: LAST_CONTACT, nextFollowUpAt,
     createdAt: new Date("2026-08-20T12:00:00Z"), updatedAt: new Date("2026-09-01T12:00:00Z"),
   };
 }
 
-function memoryDb(row: ReturnType<typeof storedRow>) {
-  const inserts: { table: unknown; values: Record<string, unknown> }[] = [];
-  const updates: Record<string, unknown>[] = [];
+type Statement = { table: unknown; kind: "insert" | "update"; values: Record<string, unknown>; run: () => void };
+
+/**
+ * Selects return the one stored row (the WHERE is not evaluated, so the
+ * service's own canSee/canWrite decide access — which is the point). Writes are
+ * lazy statements: awaited singly they run at once; handed to `batch` they run
+ * together or not at all, like a Neon transaction. `failOn` makes a statement
+ * for that table throw, so atomicity is exercised for real.
+ */
+function memoryDb(row: ReturnType<typeof storedRow>, failOn?: unknown) {
+  const applied: { table: unknown; kind: string; values: Record<string, unknown> }[] = [];
+  let batches = 0;
   const select = () => {
     let rows: unknown[] = [];
     const b = {
@@ -107,137 +246,288 @@ function memoryDb(row: ReturnType<typeof storedRow>) {
     };
     return b;
   };
+  const statement = (table: unknown, kind: "insert" | "update", values: Record<string, unknown>) => {
+    const s: Statement & { then: PromiseLike<unknown>["then"]; returning: () => Promise<unknown[]> } = {
+      table, kind, values,
+      run() {
+        if (failOn !== undefined && table === failOn) throw new Error("simulated write failure");
+        if (kind === "update") Object.assign(row, values);
+        applied.push({ table, kind, values });
+      },
+      then(ok, fail) {
+        return new Promise<unknown>((res) => { s.run(); res(undefined); }).then(ok, fail);
+      },
+      returning: () => Promise.resolve([]),
+    };
+    return s;
+  };
   const db = {
     select,
-    insert: (table: unknown) => ({
-      values(values: Record<string, unknown>) {
-        inserts.push({ table, values });
-        const p = Promise.resolve([]);
-        return Object.assign(p, { returning: () => Promise.resolve([]) });
-      },
-    }),
-    update: () => ({
-      set(values: Record<string, unknown>) {
-        return { where() { Object.assign(row, values); updates.push(values); return Promise.resolve(); } };
-      },
-    }),
+    insert: (table: unknown) => ({ values: (values: Record<string, unknown>) => statement(table, "insert", values) }),
+    update: (table: unknown) => ({ set: (values: Record<string, unknown>) => ({ where: () => statement(table, "update", values) }) }),
+    async batch(stmts: Statement[]) {
+      batches++;
+      // All or nothing: check every statement can run before applying any.
+      const snapshot = { ...row };
+      const before = applied.length;
+      try {
+        for (const s of stmts) s.run();
+      } catch (e) {
+        Object.assign(row, snapshot);
+        applied.length = before;
+        throw e;
+      }
+    },
   };
-  return { db, row, inserts, updates };
+  return { db, row, applied, batchCount: () => batches };
 }
 
-async function touch(actor: Actor, followUp: Date | null, input: Record<string, unknown>) {
-  const mem = memoryDb(storedRow(followUp));
-  const parsed = activityInputSchema.parse({ kind: "call", summary: "Called, no answer", ...input });
-  const result = await logActivity({ actor, db: mem.db } as unknown as Ctx, ID, parsed, NOW);
-  const audit = mem.inserts.find((i) => i.table === auditEvents)?.values.safeMetadata as Record<string, unknown> | undefined;
-  const activity = mem.inserts.find((i) => i.table === contactActivities)?.values;
-  return { result, mem, audit, activity };
+const writesTo = (m: ReturnType<typeof memoryDb>, table: unknown) => m.applied.filter((w) => w.table === table);
+const auditOf = (m: ReturnType<typeof memoryDb>) => writesTo(m, auditEvents)[0]?.values.safeMetadata as Record<string, unknown> | undefined;
+
+async function direct(actor: Actor, follow: Date | null, change: unknown, opts: { failOn?: unknown; viewerName?: () => Promise<string | null> } = {}) {
+  const m = memoryDb(storedRow(follow), opts.failOn);
+  const result = await changeFollowUp({ actor, db: m.db, viewerName: opts.viewerName } as unknown as Ctx, ID, followUpChangeSchema.parse(change), NOW);
+  return { m, result };
+}
+async function touch(actor: Actor, follow: Date | null, input: Record<string, unknown>) {
+  const m = memoryDb(storedRow(follow));
+  const result = await logActivity({ actor, db: m.db } as unknown as Ctx, ID, activityInputSchema.parse({ kind: "call", summary: "Called", ...input }), NOW);
+  return { m, result };
 }
 
+// Scenario A — schedule only.
 {
-  const dueDay = at("2026-09-24");
-  const r = await touch(AGENT, dueDay, {});
-  check("service: a touch on a DUE follow-up keeps it", r.result.ok && r.mem.row.nextFollowUpAt?.getTime() === dueDay.getTime());
-  check("service: …and the lead still reads as due", r.result.ok && isFollowUpDue(followUpStatus(r.result.value.nextFollowUpDate, NOW)));
-  check("service: …while last contact moves to now", r.mem.row.lastContactAt?.getTime() === NOW.getTime());
-  check("service: …and the activity is recorded against the actor", r.activity?.actorUserId === AGENT.userId && r.activity?.kind === "call");
-  check("service: …audited as kept", r.audit?.followUp === "kept" && r.audit?.activity === "call" && r.audit?.contactId === ID);
-}
-{
-  const future = at("2026-10-08");
-  const r = await touch(AGENT, future, {});
-  check("service: a touch on a FUTURE follow-up keeps it", r.result.ok && r.mem.row.nextFollowUpAt?.getTime() === future.getTime());
-  check("service: …and it is not due", r.result.ok && followUpStatus(r.result.value.nextFollowUpDate, NOW).state === "scheduled");
-}
-{
-  const r = await touch(AGENT, at("2026-09-20"), { completeFollowUp: true, summary: "Reached them, booked a showing" });
-  check("service: explicit completion clears an overdue follow-up", r.result.ok && r.mem.row.nextFollowUpAt === null);
-  check("service: …the lead has no follow-up afterwards", r.result.ok && r.result.value.nextFollowUpDate === undefined);
-  check("service: …audited as completed", r.audit?.followUp === "completed");
-}
-{
-  const r = await touch(AGENT, at("2026-09-24"), { nextFollowUpAt: "2026-10-02T12:00:00.000Z" });
-  check("service: a new date reschedules", r.result.ok && r.mem.row.nextFollowUpAt?.toISOString() === "2026-10-02T12:00:00.000Z");
-  check("service: …audited as set", r.audit?.followUp === "set");
-}
-{
-  const r = await touch(AGENT, null, { nextFollowUpAt: "2026-10-02T12:00:00.000Z" });
-  check("service: a first follow-up can be set while logging", r.result.ok && r.mem.row.nextFollowUpAt?.toISOString() === "2026-10-02T12:00:00.000Z");
-}
-{
-  const r = await touch(BROKER, at("2026-09-24"), { completeFollowUp: true });
-  check("service: a broker may complete an agent's follow-up", r.result.ok && r.mem.row.nextFollowUpAt === null);
-}
-// Unauthorized: nothing is written, not even the activity or the audit.
-{
-  const due = at("2026-09-24");
-  const member = await touch(MEMBER_OWNER, due, { completeFollowUp: true });
-  check("service: a member is forbidden, even on their own contact", !member.result.ok && member.result.reason === "forbidden");
-  check("service: …and nothing is written", member.mem.inserts.length === 0 && member.mem.updates.length === 0 && member.mem.row.nextFollowUpAt === due);
-  const colleague = await touch(OTHER_AGENT, due, { completeFollowUp: true });
-  check("service: another agent's contact is not found (no existence leak)", !colleague.result.ok && colleague.result.reason === "not_found");
-  check("service: …and nothing is written", colleague.mem.inserts.length === 0 && colleague.mem.updates.length === 0);
-  const outsider = await touch(OUTSIDER, due, { completeFollowUp: true });
-  check("service: another brokerage is not found", !outsider.result.ok && outsider.result.reason === "not_found" && outsider.mem.updates.length === 0);
-  const bad = await logActivity({ actor: AGENT, db: memoryDb(storedRow(due)).db } as unknown as Ctx, "not-a-uuid", activityInputSchema.parse({ kind: "call", summary: "x" }), NOW);
-  check("service: a malformed id is not found", !bad.ok && bad.reason === "not_found");
+  const r = await direct(AGENT, null, { action: "schedule", day: "2026-10-02" });
+  check("A: schedule-only succeeds and reports 'scheduled'", r.result.ok && r.result.value.outcome === "scheduled");
+  check("A: next follow-up changes", r.m.row.nextFollowUpAt?.toISOString() === "2026-10-02T12:00:00.000Z");
+  check("A: last contact is UNCHANGED", r.m.row.lastContactAt?.getTime() === LAST_CONTACT.getTime());
+  check("A: no touch activity is written", writesTo(r.m, contactActivities).length === 0);
+  check("A: the audit records the change, atomically with it", r.m.batchCount() === 1 && auditOf(r.m)?.followUp === "scheduled" && auditOf(r.m)?.field === "nextFollowUpAt");
+  check("A: the audit names the actor", writesTo(r.m, auditEvents)[0]?.values.actorUserId === AGENT.userId);
+  check("A: the lead the screen gets carries the new day", r.result.ok && r.result.value.lead.nextFollowUpDate === "2026-10-02T12:00:00.000Z");
+  const reschedule = await direct(AGENT, noon("2026-09-24"), { action: "schedule", day: "2026-10-09" });
+  check("A: rescheduling is 'rescheduled' and still no touch, no last-contact move",
+    reschedule.result.ok && reschedule.result.value.outcome === "rescheduled" && auditOf(reschedule.m)?.followUp === "rescheduled" &&
+      reschedule.m.row.lastContactAt?.getTime() === LAST_CONTACT.getTime() && writesTo(reschedule.m, contactActivities).length === 0);
+  const same = await direct(AGENT, noon("2026-10-02"), { action: "schedule", day: "2026-10-02" });
+  check("A: scheduling the same day writes nothing at all", same.result.ok && same.result.value.outcome === "kept" && same.m.applied.length === 0);
 }
 
-// --- How the Leads screens read a follow-up (Home's rule) --------------------------------
+// Scenario D — complete without a touch.
 {
-  check("none set", followUpStatus(undefined, NOW).state === "none" && followUpLabel(followUpStatus(null, NOW)) === "None set");
-  const today = followUpStatus("2026-09-24T12:00:00.000Z", NOW);
-  check("today is due", today.state === "due" && isFollowUpDue(today) && followUpLabel(today) === "Due today");
-  const late = followUpStatus("2026-09-20T12:00:00.000Z", NOW);
-  check("a past day is overdue and names the day", late.state === "overdue" && late.daysAway === -4 && followUpLabel(late) === "Overdue · Sep 20, 2026");
-  const ahead = followUpStatus("2026-10-08T12:00:00.000Z", NOW);
-  check("a future day is scheduled, not due", ahead.state === "scheduled" && !isFollowUpDue(ahead) && followUpLabel(ahead) === "Oct 8, 2026");
-  // Home's contactAttention counts next_follow_up_at <= end of today UTC.
-  check("late tonight UTC is still today (Home's end-of-day rule)", followUpStatus("2026-09-24T23:59:59.000Z", NOW).state === "due");
-  check("just after midnight UTC is tomorrow", followUpStatus("2026-09-25T00:00:01.000Z", NOW).state === "scheduled");
-  check("the stored day is shown without timezone drift", formatFollowUpDay("2026-01-01") === "Jan 1, 2026");
-  check("the heuristic is labelled for what it measures", NO_TOUCH_LABEL === "No touch in 14 days");
-  check("15 days quiet trips the heuristic, 13 does not",
-    noRecentTouch("2026-09-09T12:00:00.000Z", NOW) && !noRecentTouch("2026-09-11T12:00:00.000Z", NOW));
+  const r = await direct(AGENT, noon("2026-09-24"), { action: "complete" });
+  check("D: complete succeeds and reports 'completed'", r.result.ok && r.result.value.outcome === "completed");
+  check("D: the follow-up is cleared", r.m.row.nextFollowUpAt === null && r.result.ok && r.result.value.lead.nextFollowUpDate === undefined);
+  check("D: last contact is UNCHANGED", r.m.row.lastContactAt?.getTime() === LAST_CONTACT.getTime());
+  check("D: no touch activity is written", writesTo(r.m, contactActivities).length === 0);
+  check("D: audited as completed", auditOf(r.m)?.followUp === "completed");
+  const none = await direct(AGENT, null, { action: "complete" });
+  check("D: completing when nothing is set writes nothing", none.result.ok && none.result.value.outcome === "kept" && none.m.applied.length === 0);
 }
 
-// --- Quick-create closing date ------------------------------------------------------------
+// Scenario B — touch, keep the follow-up.
+{
+  const due = noon("2026-09-24");
+  const r = await touch(AGENT, due, {});
+  check("B: a touch on a due follow-up succeeds", r.result.ok);
+  check("B: an activity IS created", writesTo(r.m, contactActivities).length === 1 && writesTo(r.m, contactActivities)[0].values.kind === "call");
+  check("B: last contact MOVES (control for A and D)", r.m.row.lastContactAt?.getTime() === NOW.getTime() && NOW.getTime() !== LAST_CONTACT.getTime());
+  check("B: the follow-up is kept", r.m.row.nextFollowUpAt?.getTime() === due.getTime());
+  check("B: …and still classifies as due", r.result.ok && isFollowUpDue(followUpStatus(r.result.value.nextFollowUpDate, NOW)));
+  check("B: audited as kept", auditOf(r.m)?.followUp === "kept" && auditOf(r.m)?.activity === "call");
+  const future = await touch(AGENT, noon("2026-10-08"), {});
+  check("B: a future follow-up is kept too", future.m.row.nextFollowUpAt?.getTime() === noon("2026-10-08").getTime());
+}
+
+// Scenario C — touch + new follow-up.
+{
+  const r = await touch(AGENT, noon("2026-09-24"), { nextFollowUpAt: "2026-10-02T12:00:00.000Z" });
+  check("C: an activity is created", writesTo(r.m, contactActivities).length === 1);
+  check("C: last contact moves", r.m.row.lastContactAt?.getTime() === NOW.getTime());
+  check("C: the follow-up changes", r.m.row.nextFollowUpAt?.toISOString() === "2026-10-02T12:00:00.000Z");
+  check("C: audited as rescheduled", auditOf(r.m)?.followUp === "rescheduled");
+  const first = await touch(AGENT, null, { nextFollowUpAt: "2026-10-02T12:00:00.000Z" });
+  check("C: a first follow-up set while logging is 'scheduled'", first.m.row.nextFollowUpAt?.toISOString() === "2026-10-02T12:00:00.000Z" && auditOf(first.m)?.followUp === "scheduled");
+  const past = await touch(AGENT, noon("2026-09-24"), { nextFollowUpAt: "2026-09-20T12:00:00.000Z" });
+  check("C: a past follow-up date is refused before anything is written", !past.result.ok && past.result.reason === "invalid_date" && past.m.applied.length === 0);
+}
+
+// Scenario E — touch + complete.
+{
+  const r = await touch(AGENT, noon("2026-09-20"), { completeFollowUp: true, summary: "Reached them, booked a showing" });
+  check("E: an activity is created", writesTo(r.m, contactActivities).length === 1);
+  check("E: last contact moves", r.m.row.lastContactAt?.getTime() === NOW.getTime());
+  check("E: the follow-up is cleared", r.m.row.nextFollowUpAt === null);
+  check("E: audited as completed", auditOf(r.m)?.followUp === "completed");
+}
+
+// Authorization — every refusal is paired with the authorized call succeeding.
+{
+  const due = noon("2026-09-24");
+  const change = { action: "complete" };
+  const owner = await direct(AGENT, due, change);
+  check("auth control: the owning agent may complete", owner.result.ok && owner.m.row.nextFollowUpAt === null);
+  const broker = await direct(BROKER, due, change);
+  check("auth control: a broker may change an agent's follow-up in the brokerage", broker.result.ok && broker.m.row.nextFollowUpAt === null);
+
+  const member = await direct(MEMBER_OWNER, due, change);
+  check("member: forbidden, even on their own contact", !member.result.ok && member.result.reason === "forbidden");
+  check("member: nothing written, follow-up intact", member.m.applied.length === 0 && member.m.row.nextFollowUpAt === due);
+  const memberSchedule = await direct(MEMBER_OWNER, due, { action: "schedule", day: "2026-10-09" });
+  check("member: scheduling is forbidden too", !memberSchedule.result.ok && memberSchedule.result.reason === "forbidden" && memberSchedule.m.applied.length === 0);
+
+  const colleague = await direct(OTHER_AGENT, due, change);
+  check("another agent: not found (no existence leak)", !colleague.result.ok && colleague.result.reason === "not_found");
+  check("another agent: nothing written", colleague.m.applied.length === 0 && colleague.m.row.nextFollowUpAt === due);
+
+  const outsider = await direct(OUTSIDER, due, change);
+  check("foreign brokerage: not found", !outsider.result.ok && outsider.result.reason === "not_found" && outsider.m.applied.length === 0);
+
+  const mal = await changeFollowUp({ actor: AGENT, db: memoryDb(storedRow(due)).db } as unknown as Ctx, "not-a-uuid", { action: "complete" }, NOW);
+  check("a malformed id is not found", !mal.ok && mal.reason === "not_found");
+
+  // The refusal comes before the date is even judged.
+  const memberBad = await direct(MEMBER_OWNER, due, { action: "schedule", day: "2020-01-01" });
+  check("permission is decided before the date: a member with a bad date is 'forbidden', not 'invalid_date'", !memberBad.result.ok && memberBad.result.reason === "forbidden");
+  const agentBad = await direct(AGENT, due, { action: "schedule", day: "2020-01-01" });
+  check("control: the same bad date from an authorized agent is 'invalid_date'", !agentBad.result.ok && agentBad.result.reason === "invalid_date" && agentBad.m.applied.length === 0);
+
+  // Touch path: same permission model.
+  const touchMember = await touch(MEMBER_OWNER, due, {});
+  const touchColleague = await touch(OTHER_AGENT, due, {});
+  check("touch: member forbidden, other agent not found, nothing written",
+    !touchMember.result.ok && touchMember.result.reason === "forbidden" && !touchColleague.result.ok && touchColleague.result.reason === "not_found" &&
+      touchMember.m.applied.length === 0 && touchColleague.m.applied.length === 0);
+  const touchOwner = await touch(AGENT, due, {});
+  check("touch control: the owner's identical request succeeds", touchOwner.result.ok && touchOwner.m.applied.length > 0);
+}
+
+// Atomicity — the contact update and its audit commit together or not at all.
+{
+  const due = noon("2026-09-24");
+  const auditFails = await direct(AGENT, due, { action: "complete" }, { failOn: auditEvents });
+  check("atomic: if the audit cannot be written, the request fails", !auditFails.result.ok && auditFails.result.reason === "unavailable");
+  check("atomic: …and the contact is NOT changed", auditFails.m.row.nextFollowUpAt === due && auditFails.m.applied.length === 0);
+  const contactFails = await direct(AGENT, due, { action: "complete" }, { failOn: contacts });
+  check("atomic: if the contact update fails, no audit row exists", !contactFails.result.ok && writesTo(contactFails.m, auditEvents).length === 0 && contactFails.m.row.nextFollowUpAt === due);
+  const ok = await direct(AGENT, due, { action: "complete" });
+  check("atomic control: with no failure both writes land in one batch", ok.result.ok && writesTo(ok.m, contacts).length === 1 && writesTo(ok.m, auditEvents).length === 1 && ok.m.batchCount() === 1);
+}
+
+// Audit content: field and kind, never the date, the name, or contact details.
+{
+  const r = await direct(AGENT, noon("2026-09-24"), { action: "schedule", day: "2026-10-09" });
+  const meta = JSON.stringify(auditOf(r.m));
+  check("audit: contact id, field and kind only", Object.keys(auditOf(r.m) ?? {}).sort().join(",") === "contactId,field,followUp,mechanism");
+  check("audit: no date, name or contact detail", !/2026|Synthetic|Lead|@|\+1/.test(meta.replace(ID, "")));
+}
+
+// Assigned agent: profile name → the caller's own name → neutral. Never an id or email.
+{
+  const own = memoryDb(storedRow(null));
+  const named = await getContact({ actor: AGENT, db: own.db, viewerName: async () => "Dana Reyes" } as unknown as Ctx, ID);
+  check("assigned agent: no profile name falls back to the caller's own name", named?.assignedAgentName === "Dana Reyes");
+  const none = await getContact({ actor: AGENT, db: memoryDb(storedRow(null)).db, viewerName: async () => null } as unknown as Ctx, ID);
+  check("assigned agent: nothing known stays unset, never an id or email", none?.assignedAgentName === undefined);
+  const others = await getContact({ actor: BROKER, db: memoryDb(storedRow(null)).db, viewerName: async () => "Broker Bob" } as unknown as Ctx, ID);
+  check("assigned agent: someone else's contact never borrows the viewer's name", others?.assignedAgentName === undefined);
+  let asked = false;
+  await getContact({ actor: BROKER, db: memoryDb(storedRow(null)).db, viewerName: async () => { asked = true; return "x"; } } as unknown as Ctx, ID);
+  check("assigned agent: the identity provider is not called unless needed", !asked);
+}
+
+// --- "No touch in 14 days" is independent of the follow-up ---------------------------------
+{
+  const quiet = "2026-09-01T12:00:00.000Z"; // 23 days before NOW
+  check("premise: 23 days with no touch trips the heuristic", noRecentTouch(quiet, NOW));
+  const scheduled = await direct(AGENT, null, { action: "schedule", day: "2026-10-02" });
+  const lastAfterSchedule = scheduled.result.ok ? scheduled.result.value.lead.lastContactDate : "";
+  check("scheduling a follow-up does NOT reset the no-touch clock", noRecentTouch(lastAfterSchedule, NOW) && lastAfterSchedule === quiet);
+  const completed = await direct(AGENT, noon("2026-09-24"), { action: "complete" });
+  check("completing one does not either", completed.result.ok && noRecentTouch(completed.result.value.lead.lastContactDate, NOW));
+  const touched = await touch(AGENT, null, {});
+  check("control: an actual touch DOES reset it", touched.result.ok && !noRecentTouch(touched.result.value.lastContactDate, NOW));
+  check("the heuristic reads only last contact", (() => {
+    const src = readFileSync("lib/contacts/follow-up.ts", "utf8");
+    const body = src.slice(src.indexOf("export function noRecentTouch"), src.indexOf("// --- Words"));
+    return !/nextFollowUp|followUpStatus/.test(body);
+  })());
+  check("the label is truthful", NO_TOUCH_LABEL === "No touch in 14 days");
+  check("14 vs 15 days", noRecentTouch("2026-09-09T12:00:00.000Z", NOW) && !noRecentTouch("2026-09-11T12:00:00.000Z", NOW));
+}
+
+// --- Quick-create closing date -------------------------------------------------------------
 {
   check("a blank close date stays unset", closeDateFromInput("") === undefined && closeDateFromInput("  ") === undefined && closeDateFromInput(null) === undefined);
   check("an entered close date is kept, at noon UTC", closeDateFromInput("2026-11-14") === "2026-11-14T12:00:00.000Z");
   check("a malformed close date is not invented into one", closeDateFromInput("11/14/2026") === undefined);
-  // The adapter sends closeDate.slice(0, 10) as closingDate; the service seeds deadlines from it.
   const entered = closeDateFromInput("2026-11-14")!.slice(0, 10);
   const withDate = initialDeadlines({ closingDate: entered });
-  check("an entered date creates the real Closing deadline",
+  check("an entered date creates exactly one real Closing deadline",
     withDate.length === 1 && withDate[0].kind === "closing" && withDate[0].label === "Closing" && withDate[0].dueDate === "2026-11-14");
   check("a blank date creates no deadline at all", initialDeadlines({ closingDate: undefined }).length === 0);
   check("an explicit closing deadline is not duplicated",
     initialDeadlines({ closingDate: "2026-11-14", deadlines: [{ kind: "closing", label: "Closing", dueDate: "2026-11-20" }] }).length === 1);
 }
 
-// --- Structural: the UI and adapter wiring -----------------------------------------------
+// --- Structure: one rule, wired everywhere --------------------------------------------------
 {
-  const drawer = readFileSync("components/leads/lead-drawer.tsx", "utf8");
-  const table = readFileSync("components/leads/leads-table.tsx", "utf8");
-  const quick = readFileSync("components/layout/quick-create-dialog.tsx", "utf8");
-  const adapter = readFileSync("lib/data/adapters/leads.ts", "utf8");
-  const service = readFileSync("lib/contacts/service.ts", "utf8");
+  const read = (p: string) => readFileSync(p, "utf8");
+  const drawer = read("components/leads/lead-drawer.tsx");
+  const table = read("components/leads/leads-table.tsx");
+  const quick = read("components/layout/quick-create-dialog.tsx");
+  const adapter = read("lib/data/adapters/leads.ts");
+  const service = read("lib/contacts/service.ts");
+  const metrics = read("lib/contacts/metrics.ts");
+  const sampleMetrics = read("lib/data/sample-metrics.ts");
+  const route = read("app/api/contacts/[id]/follow-up/route.ts");
+  const followUp = read("lib/contacts/follow-up.ts");
+  const http = read("lib/contacts/http.ts");
 
-  check("drawer: shows the stored follow-up", drawer.includes('label="Next follow-up"') && drawer.includes("followUpStatus(lead?.nextFollowUpDate)"));
-  check("drawer: logs touches through the adapter", /logTouch\(lead\.id, \{ kind: touchKind, summary: text, nextFollowUpDay: day, completeFollowUp: completing \}\)/.test(drawer));
-  check("drawer: completion is only offered when a follow-up exists", /\{hasFollowUp && \([\s\S]{0,200}lead-complete-follow-up/.test(drawer));
-  check("drawer: a new date disables completion (the date wins)", /disabled=\{saving \|\| Boolean\(nextDay\)\}/.test(drawer));
-  check("drawer: completion is sent only when chosen and nothing new is scheduled", drawer.includes("const completing = !day && complete && hasFollowUp;"));
-  check("drawer: 'Mark contacted today' says the follow-up is kept", drawer.includes("The follow-up is kept."));
-  check("drawer: the old unlabelled 'Follow up' heuristic pill is gone", !/>Follow up</.test(drawer) && !drawer.includes("needsFollowUp"));
-  check("table: a Follow-up column reads the stored date", table.includes('{ id: "followUp", label: "Follow-up", sortKey: "followUp" }') && table.includes("followUpStatus(lead.nextFollowUpDate)"));
-  check("table: the heuristic is labelled truthfully", table.includes("{NO_TOUCH_LABEL}") && !/>Follow up</.test(table) && !table.includes("needsFollowUp"));
+  // Single source of truth for "due".
+  check("Home's SQL bound comes from the shared rule, not a UTC end-of-day", metrics.includes("followUpDueBy(now)") && !/endOfToday|T23:59:59/.test(metrics));
+  check("Home's attention items are classified by the shared rule", /followUpStatus\(row\.nextFollowUpAt/.test(metrics) && !/daysUntil|dayKey/.test(metrics));
+  check("sample Home uses the same classifier", sampleMetrics.includes("isFollowUpDue(followUpStatus(l.nextFollowUpDate, at))") && !/nextFollowUpDate[^)]*slice\(0, 10\)/.test(sampleMetrics));
+  check("the Leads column classifies with the shared rule", table.includes("followUpStatus(lead.nextFollowUpDate)") && table.includes("isFollowUpDue(followUp)"));
+  check("the drawer classifies with the shared rule", drawer.includes("followUpStatus(lead?.nextFollowUpDate)") && drawer.includes("followUpLabel(followUp"));
+  check("no component compares dates itself", !/new Date\([^)]*\)\s*[<>]=?\s*new Date|getTime\(\)\s*[<>]/.test(drawer) && !/dayKey|toISOString\(\)\.slice\(0, 10\)/.test(drawer + table));
+  check("the states are named as the product names them", /"none" \| "overdue" \| "due_today" \| "future"/.test(followUp));
+  check("the business timezone is one documented constant", /BUSINESS_TIME_ZONE = "America\/New_York"/.test(read("lib/metrics/business-day.ts")));
+  check("the drawer's date floor is the business day, not the browser's", drawer.includes("businessDayKey(new Date())") && !/getFullYear\(\)|getMonth\(\)/.test(drawer));
+
+  // Direct follow-up path.
+  check("route: authentication first, then the body, then the service", route.indexOf("requireCaller()") < route.indexOf("request.json()") && route.indexOf("request.json()") < route.indexOf("changeFollowUp("));
+  check("route: refusals map through the shared failure table", route.includes("failure(result.reason)") && http.includes('case "invalid_date"'));
+  check("service: authorization precedes the date check and the write", (() => {
+    const fn = service.slice(service.indexOf("export async function changeFollowUp"));
+    return fn.indexOf("canSee(ctx.actor, row)") < fn.indexOf("canWrite(ctx.actor, row)") && fn.indexOf("canWrite(ctx.actor, row)") < fn.indexOf("checkFollowUpDay(") && fn.indexOf("checkFollowUpDay(") < fn.indexOf("ctx.db.batch");
+  })());
+  check("service: the direct change never writes last contact or an activity", (() => {
+    const fn = service.slice(service.indexOf("export async function changeFollowUp"), service.indexOf("/** Agents a privileged caller may filter by"));
+    return !/lastContactAt|contactActivities/.test(fn.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, ""));
+  })());
+  check("service: the update and its audit are one batch", /ctx\.db\.batch\(\[[\s\S]*update\(contacts\)[\s\S]*insert\(auditEvents\)/.test(service));
+  check("adapter: the direct control posts to the follow-up route, not the activity route", /\/follow-up`/.test(adapter) && /export async function changeFollowUp/.test(adapter));
+  check("adapter: a touch still posts to the activity route", /\/activities`/.test(adapter));
+  check("drawer: the direct control calls changeFollowUp, never logTouch", /changeFollowUp\(lead\.id, \{ action: "schedule", day \}\)/.test(drawer) && /changeFollowUp\(lead\.id, \{ action: "complete" \}\)/.test(drawer));
+  check("drawer: Schedule / Change / Mark complete", drawer.includes('{hasFollowUp ? "Change" : "Schedule"}') && drawer.includes("Mark complete"));
+  check("drawer: says a reminder is not contact", drawer.includes("A reminder only. It does not count as contacting"));
+  check("drawer: Log a touch remains its own section", drawer.includes('id="log-touch-heading"') && drawer.includes("logTouch(lead.id"));
+  check("drawer: completion inside a touch still needs a follow-up and no new date", drawer.includes("const completing = !day && complete && hasFollowUp;"));
+  check("drawer: 'Mark contacted today' keeps the follow-up", drawer.includes("The follow-up is kept."));
+  check("drawer: no lone separator when there is no email or phone", drawer.includes("[lead.email, lead.phone].filter(Boolean)") && !/\{lead\.email\} · \{lead\.phone\}/.test(drawer));
+  check("drawer: an unnamed stored agent reads 'Unnamed agent', never an id", drawer.includes("Unnamed agent") && !/assignedAgentId\}/.test(drawer));
+  check("table: the heuristic is labelled truthfully and separate", table.includes("{NO_TOUCH_LABEL}") && !table.includes("needsFollowUp"));
+  check("touch path: last contact is only ever set from an actual touch", (() => {
+    const fn = service.slice(service.indexOf("export async function logActivity"), service.indexOf("export async function changeFollowUp"));
+    return /lastContactAt: row\.lastContactAt/.test(fn);
+  })());
+  check("service: the caller's name is fetched lazily, and only from the identity provider", /ctx\.viewerName\(\)/.test(service) && /currentUser\(\)/.test(http) && !/primaryEmailAddress|emailAddresses/.test(http));
+
+  // Quick-create closing date.
   check("quick-create: no invented 45-day closing", !/45 \* 86400000/.test(quick) && quick.includes('closeDate: closeDateFromInput(get("closeDate"))'));
-  check("adapter: a new date is sent as nextFollowUpAt, else completion", /if \(input\.nextFollowUpDay\) body\.nextFollowUpAt = followUpAtFromDay\(input\.nextFollowUpDay\);\s*else if \(input\.completeFollowUp\) body\.completeFollowUp = true;/.test(adapter));
-  check("adapter: 'Mark contacted today' sends no follow-up change", /kind: "note", summary: "Marked contacted" \}\)/.test(adapter));
-  check("service: the stored value comes only from resolveFollowUp", /nextFollowUpAt: followUp\.value,/.test(service) && (service.match(/nextFollowUpAt:/g) ?? []).length === 1);
-  check("service: ownership checks precede the write", service.indexOf('if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };') < service.indexOf("resolveFollowUp(row.nextFollowUpAt"));
+  check("quick-create: the field says optional", quick.includes('label="Close date (optional)"'));
 }
 
 const total = passed + failures.length;

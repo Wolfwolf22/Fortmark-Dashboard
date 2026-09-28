@@ -2,12 +2,19 @@
 
 /**
  * Lead detail drawer — full record, notes, a stage select that advances the
- * lead through the pipeline, and the follow-up loop: log a touch, set or
- * reschedule the next follow-up, or mark the current one complete.
+ * lead through the pipeline, and two separate things people do about a
+ * contact:
+ *
+ *   - the FOLLOW-UP: a reminder. Schedule, change or mark it complete on its
+ *     own; nothing about it says the contact was reached, and last contact is
+ *     left alone.
+ *   - a TOUCH: something that happened (a call, a showing). Logging one moves
+ *     last contact, and may also set the next follow-up in the same step —
+ *     "I called Jane today, call again Friday."
  *
  * Logging a touch never clears a follow-up on its own — an attempted call may
- * complete nothing. The reminder changes only when the person picks a new
- * date or ticks "Mark current follow-up complete".
+ * complete nothing. The reminder changes only when the person picks a date or
+ * asks to complete it.
  *
  * Mutations go through the adapter, which bumps the data version so every
  * open list refetches on its own.
@@ -40,6 +47,7 @@ import { getAgent } from "@/lib/data/adapters/agents";
 import {
   getLead,
   LeadsError,
+  changeFollowUp,
   logTouch,
   markContacted,
   updateLeadStage,
@@ -54,6 +62,7 @@ import {
   LEAD_STAGE_LABELS,
 } from "@/lib/data/types";
 import { cn, formatCurrency, formatDate, formatRelative, initials } from "@/lib/utils";
+import { businessDayKey } from "@/lib/metrics/business-day";
 import {
   followUpLabel,
   followUpStatus,
@@ -73,11 +82,13 @@ const TOUCH_KINDS: { value: TouchKind; label: string }[] = [
   { value: "note", label: "Note" },
 ];
 
-/** Today in the reader's calendar, for the date input's floor. */
-function localToday(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+/**
+ * Today for the date inputs' floor — the business day, the same one that
+ * decides what "due" means, not the browser's. A person in another timezone
+ * is never offered a day the server would call the past.
+ */
+function businessToday(): string {
+  return businessDayKey(new Date());
 }
 
 export interface LeadDrawerProps {
@@ -138,6 +149,7 @@ function describe(error: unknown): string {
     if (error.code === "invalid_transition") return "That stage change is not allowed from here.";
     if (error.status === 403) return "You do not have permission to change this contact.";
     if (error.status === 404) return "This contact is no longer available.";
+    if (error.code === "invalid_date") return "Pick today or a later date.";
   }
   return "The change could not be saved. Try again.";
 }
@@ -163,6 +175,10 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // The direct follow-up control (no touch involved).
+  const [editingFollowUp, setEditingFollowUp] = useState(false);
+  const [followUpDay, setFollowUpDay] = useState("");
+
   // The "Log a touch" form. Reset whenever a different lead opens.
   const [touchKind, setTouchKind] = useState<TouchKind>("call");
   const [summary, setSummary] = useState("");
@@ -175,6 +191,8 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     setSummary("");
     setNextDay("");
     setComplete(false);
+    setEditingFollowUp(false);
+    setFollowUpDay("");
     setError(null);
     setNotice(null);
   }
@@ -205,6 +223,24 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
   const followUp = followUpStatus(lead?.nextFollowUpDate);
   const quiet = lead ? noRecentTouch(lead.lastContactDate) : false;
   const hasFollowUp = followUp.state !== "none";
+
+  async function saveFollowUp(e: FormEvent) {
+    e.preventDefault();
+    if (!lead || !followUpDay) return;
+    const day = followUpDay;
+    const rescheduling = hasFollowUp;
+    const ok = await run(() => changeFollowUp(lead.id, { action: "schedule", day }));
+    if (!ok) return;
+    setEditingFollowUp(false);
+    setFollowUpDay("");
+    setNotice(`Follow-up ${rescheduling ? "changed to" : "set for"} ${formatFollowUpDay(day)}.`);
+  }
+
+  async function completeCurrentFollowUp() {
+    if (!lead) return;
+    const ok = await run(() => changeFollowUp(lead.id, { action: "complete" }));
+    if (ok) setNotice("Follow-up marked complete.");
+  }
 
   async function submitTouch(e: FormEvent) {
     e.preventDefault();
@@ -241,9 +277,13 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
           <>
             <SheetHeader className="pr-8">
               <SheetTitle>{lead.name}</SheetTitle>
-              <SheetDescription>
-                {lead.email} · {lead.phone}
-              </SheetDescription>
+              {/* Only what exists: a contact with no email or phone has no
+                  subtitle, not a lone separator. */}
+              {[lead.email, lead.phone].filter(Boolean).length > 0 ? (
+                <SheetDescription>{[lead.email, lead.phone].filter(Boolean).join(" · ")}</SheetDescription>
+              ) : (
+                <SheetDescription className="sr-only">Contact details</SheetDescription>
+              )}
             </SheetHeader>
             {lead.recordSource === "sample" && (
               <div className="mt-3">
@@ -282,7 +322,11 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                         {agentName}
                       </span>
                     ) : (
-                      "—"
+                      // A stored contact whose agent has no profile name:
+                      // say so plainly. Never an id, never an email.
+                      <span className="text-muted-foreground">
+                        {lead.recordSource === "sample" ? "—" : "Unnamed agent"}
+                      </span>
                     )
                   }
                 />
@@ -292,22 +336,83 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                   numeric
                   value={formatRelative(lead.lastContactDate)}
                 />
-                <Fact
-                  label="Next follow-up"
-                  numeric
-                  value={
-                    <span
-                      data-testid="lead-next-follow-up"
-                      className={cn(
-                        followUp.state === "none" && "text-muted-foreground",
-                        isFollowUpDue(followUp) && "text-status-warn"
-                      )}
-                    >
-                      {followUpLabel(followUp)}
-                    </span>
-                  }
-                />
               </div>
+              <section aria-labelledby="follow-up-heading" className="mt-6 rounded-panel border border-border p-4">
+                <p id="follow-up-heading" className="text-micro">
+                  Next follow-up
+                </p>
+                <p
+                  data-testid="lead-next-follow-up"
+                  className={cn(
+                    "mt-1 text-sm font-semibold tabular",
+                    followUp.state === "none" && "font-normal text-muted-foreground",
+                    isFollowUpDue(followUp) && "text-status-warn"
+                  )}
+                >
+                  {followUpLabel(followUp, { withDate: true })}
+                </p>
+                {editingFollowUp ? (
+                  <form onSubmit={saveFollowUp} className="mt-3 flex flex-wrap items-end gap-2">
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="lead-follow-up-day">{hasFollowUp ? "New date" : "Date"}</Label>
+                      <Input
+                        id="lead-follow-up-day"
+                        type="date"
+                        min={businessToday()}
+                        value={followUpDay}
+                        onChange={(e) => setFollowUpDay(e.target.value)}
+                        disabled={saving}
+                        className="w-44"
+                      />
+                    </div>
+                    <Button type="submit" size="sm" disabled={saving || !followUpDay}>
+                      Save follow-up
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={saving}
+                      onClick={() => {
+                        setEditingFollowUp(false);
+                        setFollowUpDay("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </form>
+                ) : (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={saving}
+                      onClick={() => {
+                        setError(null);
+                        setNotice(null);
+                        setEditingFollowUp(true);
+                      }}
+                    >
+                      {hasFollowUp ? "Change" : "Schedule"}
+                    </Button>
+                    {hasFollowUp && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={saving}
+                        onClick={() => void completeCurrentFollowUp()}
+                      >
+                        Mark complete
+                      </Button>
+                    )}
+                  </div>
+                )}
+                <p className="mt-3 text-xs text-muted-foreground">
+                  A reminder only. It does not count as contacting {lead.name.split(" ")[0] || "this contact"}.
+                </p>
+              </section>
               <div className="mt-6">
                 <p className="text-micro">Stage</p>
                 <Select
@@ -366,12 +471,12 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="lead-next-follow-up-day">
-                    {hasFollowUp ? "Reschedule follow-up (optional)" : "Set next follow-up (optional)"}
+                    {hasFollowUp ? "Also change the follow-up (optional)" : "Also set a follow-up (optional)"}
                   </Label>
                   <Input
                     id="lead-next-follow-up-day"
                     type="date"
-                    min={localToday()}
+                    min={businessToday()}
                     value={nextDay}
                     onChange={(e) => setNextDay(e.target.value)}
                     disabled={saving}
@@ -393,8 +498,8 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 )}
                 <p className="text-xs text-muted-foreground">
                   {hasFollowUp
-                    ? "Leave both empty to keep the current follow-up. A new date replaces it."
-                    : "The touch updates last contact. Add a date to be reminded."}
+                    ? "This touch updates last contact. Leave both empty to keep the current follow-up."
+                    : "This touch updates last contact. Add a date to be reminded."}
                 </p>
                 <Button type="submit" disabled={saving || !summary.trim()}>
                   Log touch

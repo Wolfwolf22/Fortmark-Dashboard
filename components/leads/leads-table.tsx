@@ -285,7 +285,7 @@ export function LeadsTable({
                     <TableCell data-testid="lead-follow-up-cell">
                       {isFollowUpDue(followUp) ? (
                         <StatusPill tone="warn">{followUpLabel(followUp)}</StatusPill>
-                      ) : followUp.state === "scheduled" ? (
+                      ) : followUp.state === "future" ? (
                         <span className="tabular whitespace-nowrap">{followUpLabel(followUp)}</span>
                       ) : (
                         <span className="text-muted-foreground">—</span>

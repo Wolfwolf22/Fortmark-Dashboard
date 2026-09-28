@@ -23,6 +23,7 @@ import {
 } from "../contacts/stages.ts";
 import { available, type BrokerageMetrics, type MonthPoint } from "../metrics/types.ts";
 import { dayKey, daysUntil, monthBucket, monthSeries, monthWindow } from "../metrics/window.ts";
+import { followUpStatus, isFollowUpDue } from "../contacts/follow-up.ts";
 import type { LeadSource } from "./types.ts";
 
 const ACTIVE = ACTIVE_STAGES as readonly string[];
@@ -68,8 +69,9 @@ export function sampleBrokerageMetrics(at: Date = sampleNow()): BrokerageMetrics
     sourceCounts.set(lead.source, (sourceCounts.get(lead.source) ?? 0) + 1);
   }
 
+  // The database path's classifier, not a second date comparison.
   const followUps = leads.filter(
-    (l) => OPEN_PIPELINE.includes(l.stage) && l.nextFollowUpDate && l.nextFollowUpDate.slice(0, 10) <= dayKey(at)
+    (l) => OPEN_PIPELINE.includes(l.stage) && isFollowUpDue(followUpStatus(l.nextFollowUpDate, at))
   );
 
   const attentionItems = [
@@ -94,8 +96,8 @@ export function sampleBrokerageMetrics(at: Date = sampleNow()): BrokerageMetrics
       kind: "follow_up_due" as const,
       label: "Follow up",
       subject: l.name,
-      dueDate: l.nextFollowUpDate!.slice(0, 10),
-      daysAway: daysUntil(l.nextFollowUpDate!.slice(0, 10), at),
+      dueDate: followUpStatus(l.nextFollowUpDate, at).day as string,
+      daysAway: followUpStatus(l.nextFollowUpDate, at).daysAway as number,
       href: `/leads?open=${encodeURIComponent(l.id)}`,
     })),
   ].sort((a, b) => a.daysAway - b.daysAway || a.subject.localeCompare(b.subject));
