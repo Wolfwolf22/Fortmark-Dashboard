@@ -503,12 +503,15 @@ test("§17 a manual stage change through the rendered drawer, and invalid moves 
   console.log(`[sys] manual stage lead→qualified via drawer; activities ${before.items.length}→${after.items.length}; same=${same.status} bogus=${bogus.status}`);
 });
 
+// A follow-up may no longer be scheduled in the past (400 invalid_date), so
+// "due" here means due TODAY; an overdue one exists only when time passes, and
+// e2e/follow-up.spec.ts seeds that case directly.
 test("§19 follow-up domain: due, future, lost-excluded", async () => {
   const log = (id: string, body: Record<string, unknown>) =>
     api(`/dashboard/api/contacts/${id}/activities`, { method: "POST", headers: { "Content-Type": "application/json" }, body: json(body) });
-  expect((await log(state.A, { kind: "call", summary: "SYSVERIFY intro call", nextFollowUpAt: isoAt(-1) })).status).toBe(201);
+  expect((await log(state.A, { kind: "call", summary: "SYSVERIFY intro call", nextFollowUpAt: isoAt(0) })).status).toBe(201);
   expect((await log(state.B, { kind: "note", summary: "SYSVERIFY later", nextFollowUpAt: isoAt(10) })).status).toBe(201);
-  expect((await log(state.C, { kind: "note", summary: "SYSVERIFY went cold", nextFollowUpAt: isoAt(-2) })).status).toBe(201);
+  expect((await log(state.C, { kind: "note", summary: "SYSVERIFY went cold", nextFollowUpAt: isoAt(0) })).status).toBe(201);
   const lost = await api(`/dashboard/api/contacts/${state.C}/stage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: json({ stage: "lost" }) });
   expect(lost.status).toBe(200);
   const archived = await api(`/dashboard/api/contacts/${state.F}/stage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: json({ stage: "archived" }) });

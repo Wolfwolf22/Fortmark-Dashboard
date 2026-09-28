@@ -85,5 +85,18 @@ check("phones get shorter, vertical-only motion",
 check("⌘K navigates through the same path",
   src("components/layout/command-palette.tsx").includes("navigate(href)"));
 
+// --- Every section has exactly one page heading (found by the master certification) ---
+check("the shell renders one page heading for the sections with no visible title",
+  shell.includes("function PageHeading()") && shell.includes("<PageHeading />") && shell.includes('<h1 className="sr-only">{title}</h1>'));
+check("the heading's text comes from the navigation table, not a second list",
+  shell.includes("pageTitleFor(pathname)") && shell.includes('from "@/components/layout/nav-items"'));
+check("Home is exempt: its hero is its h1", /if \(pathname === "\/"\) return null;/.test(shell));
+check("unknown routes are exempt: onboarding carries its own h1", /if \(title === "FortMark"\) return null;/.test(shell) && src("components/profile/onboarding-wizard.tsx").includes("<h1"));
+check("every navigable section has a heading name", NAV_ITEMS.filter((i) => i.href !== "/").every((i) => pageTitleFor(i.href) === i.label) && pageTitleFor("/settings") === "Settings");
+check("an unknown route falls back so it gets no heading", pageTitleFor("/nowhere") === "FortMark");
+check("the heading sits outside the transition, so it never fades with a page",
+  shell.indexOf("<PageHeading />") < shell.lastIndexOf("<PageTransition>"));
+check("Home's hero is the only other h1 on a section page", !src("components/home/home-hero.tsx").includes('<h1 className="sr-only"') && src("components/home/home-hero.tsx").includes("<h1"));
+
 console.log(`\n${passed}/${passed + failures.length} shell checks passed`);
 if (failures.length > 0) process.exit(1);
