@@ -181,8 +181,15 @@ test.describe("agent phase: capture, keep, complete, reschedule", () => {
       await page.goto("/dashboard", { waitUntil: "domcontentloaded", timeout: 60_000 });
       await expect(page.locator('section[aria-label="Daily brief"] dl')).toBeVisible({ timeout: 25_000 });
     }).toPass({ timeout: 120_000 });
-    await expect(page.locator(`a[href*="open=${dueId}"]`).first()).toBeAttached({ timeout: 20_000 });
-    await expect(page.locator(`a[href*="open=${futureId}"]`)).toHaveCount(0);
+    // Scope to the queue itself: Home's "Recent activity" feed also links
+    // both new contacts ("… added"), which is not an attention claim.
+    const queue = page
+      .getByRole("heading", { name: "Needs attention", level: 3, exact: true })
+      .locator(`xpath=ancestor::*[.//a[contains(@href, "open=${dueId}")]][1]`);
+    await expect(queue.locator(`a[href*="open=${dueId}"]`).first()).toBeVisible({ timeout: 20_000 });
+    await expect(queue.locator(`a[href*="open=${futureId}"]`)).toHaveCount(0);
+    const hero = page.locator('aside[aria-label="Needs attention summary"]');
+    await expect(hero.locator(`a[href*="open=${futureId}"]`)).toHaveCount(0);
     await page.screenshot({ path: `${SHOTS}/home-attention.png` });
   });
 
@@ -252,12 +259,15 @@ test.describe("agent phase: capture, keep, complete, reschedule", () => {
   for (const [label, closeDay] of [["Blank", null], ["Entered", plusDays(60)]] as const) {
     test(`Quick-create transaction, ${label.toLowerCase()} closing date`, async () => {
       const address = `${label} ${TAG} Way`;
+      await page.goto("/dashboard/transactions", { waitUntil: "domcontentloaded", timeout: 60_000 });
+      // The view's controls render client-side, so seeing them means handlers are attached.
+      await expect(page.getByRole("radio", { name: "Board" })).toBeVisible({ timeout: 30_000 });
       await expect(async () => {
-        await page.goto("/dashboard/transactions", { waitUntil: "domcontentloaded", timeout: 60_000 });
-        await page.locator("header").getByRole("button", { name: "New", exact: true }).click();
-        await page.getByRole("menuitem", { name: "Transaction" }).click({ timeout: 5_000 });
+        await page.keyboard.press("Escape");
+        await page.locator("header").getByRole("button", { name: "New", exact: true }).click({ timeout: 5_000 });
+        await page.getByRole("menuitem", { name: "Transaction" }).click({ timeout: 3_000 });
         await expect(page.getByRole("dialog", { name: "New transaction" })).toBeVisible({ timeout: 5_000 });
-      }).toPass({ timeout: 90_000 });
+      }).toPass({ timeout: 60_000 });
       const dlg = page.getByRole("dialog", { name: "New transaction" });
       await dlg.getByLabel("Property address").fill(address);
       await dlg.getByLabel("Client").fill(`FU Client ${TAG}`);
