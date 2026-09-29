@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiFor, freshToken, signInCertificationUser } from "./session";
+import { refreshingApiFor, signInCertificationUser } from "./session";
 
 /**
  * Rendered confirmation certification.
@@ -15,7 +15,7 @@ import { apiFor, freshToken, signInCertificationUser } from "./session";
 test.describe.configure({ mode: "serial" });
 
 let page: Page;
-let api: ReturnType<typeof apiFor>;
+let api: ReturnType<typeof refreshingApiFor>;
 const RUN = Date.now().toString(36).toUpperCase().slice(-4);
 const B_NAME = `UIF2B Jane ${RUN}`;
 const C_NAME = `UIF2C Jane ${RUN}`;
@@ -31,7 +31,8 @@ const liveProposals = () =>
   page.locator(CARD).filter({ has: page.getByRole("button", { name: "Confirm" }) });
 
 async function refresh() {
-  api = apiFor(await freshToken(page));
+  // A session token lasts about a minute and this file runs far longer, so ask for a current one as needed.
+  api = refreshingApiFor(page);
 }
 
 /**

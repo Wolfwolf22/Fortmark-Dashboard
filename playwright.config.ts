@@ -31,11 +31,19 @@ export default defineConfig({
   retries: 0,
   timeout: 180_000,
   expect: { timeout: 30_000 },
+  // Nothing may wait forever. Playwright leaves actions and navigations UNBOUNDED by default, so a
+  // wedged page.goto or click is limited only by the test's own timeout; these cap each one, and the
+  // global cap ends the whole run. Certification is not allowed to become a background task that
+  // outlives its purpose: 20 minutes is longer than any single spec here has needed (longest: ~4).
+  globalTimeout: Number(process.env.PW_GLOBAL_TIMEOUT_MS ?? 20 * 60_000),
+  maxFailures: 3,
   reporter: [["list"]],
   // Traces and screenshots can capture a signed-in session. This harness is
   // pointed at a real deployment, so neither is collected.
   use: {
     baseURL: PORTAL,
+    actionTimeout: 30_000,
+    navigationTimeout: 60_000,
     trace: "off",
     screenshot: "off",
     video: "off",

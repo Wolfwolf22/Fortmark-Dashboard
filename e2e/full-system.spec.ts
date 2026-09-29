@@ -903,8 +903,11 @@ test("§43/§44 conversation context resolves, and missing data is not invented"
   const plain = dscr.replace(/[\u2018\u2019]/g, "'");
   expect(plain, "a DSCR ratio was stated").not.toMatch(/\b\d+(\.\d+)?\s?x\b/i);
   expect(plain, "a DSCR was computed").not.toMatch(/DSCR (is|of|=|:)\s*\d/i);
+  // "n't" is matched as a suffix: `\bn't\b` can never match inside "can't" or
+  // "don't" (no word boundary before the n), which failed an honest "I can't
+  // calculate the DSCR … I don't have the net operating income" reply.
   expect(plain, "the absence is not stated at all").toMatch(
-    /\b(no|not|n't|cannot|unable|lacks?|lacking|missing|without|need|require)\b/i
+    /\b(no|not|cannot|unable|lacks?|lacking|missing|without|need|require)\b|n't\b/i
   );
 });
 

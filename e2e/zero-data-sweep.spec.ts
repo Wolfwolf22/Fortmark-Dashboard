@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiFor, freshToken, signInCertificationUser } from "./session";
+import { refreshingApiFor, signInCertificationUser } from "./session";
 
 /**
  * ISS-07 closure: every route, on an account with no records at all.
@@ -18,7 +18,7 @@ import { apiFor, freshToken, signInCertificationUser } from "./session";
 test.describe.configure({ mode: "serial" });
 
 let page: Page;
-let api: ReturnType<typeof apiFor>;
+let api: ReturnType<typeof refreshingApiFor>;
 
 const ROUTES = [
   "/dashboard/",
@@ -67,7 +67,8 @@ test.beforeAll(async ({ browser }) => {
     await page.goto("/dashboard", { waitUntil: "domcontentloaded", timeout: 60_000 });
     if ((await page.locator("main").first().innerText().catch(() => "")).trim().length > 40) break;
   }
-  api = apiFor(await freshToken(page));
+  // A session token lasts about a minute and this file runs longer, so ask for a current one as needed.
+  api = refreshingApiFor(page);
 });
 
 test("the account really is empty", async () => {
