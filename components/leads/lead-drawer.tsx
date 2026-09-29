@@ -435,9 +435,12 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                     value={
                       ownerName ? (
                         <span className="flex items-center gap-2" data-testid="lead-assigned-agent">
-                          <Avatar className="h-5 w-5">
-                            <AvatarFallback className="text-[9px]">{initials(ownerName)}</AvatarFallback>
-                          </Avatar>
+                          {/* Initials of a placeholder would be a made-up person: no avatar for an unnamed agent. */}
+                          {ownerName !== "Unnamed agent" && (
+                            <Avatar className="h-5 w-5">
+                              <AvatarFallback className="text-[9px]">{initials(ownerName)}</AvatarFallback>
+                            </Avatar>
+                          )}
                           <span className={cn(ownerName === "Unnamed agent" && "font-normal text-muted-foreground")}>{ownerName}</span>
                         </span>
                       ) : (

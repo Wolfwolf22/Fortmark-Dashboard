@@ -35,7 +35,7 @@
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
-import { refreshingApiFor, signInCertificationUser } from "./session";
+import { freshToken, refreshingApiFor, signInCertificationUser } from "./session";
 
 test.describe.configure({ mode: "serial" });
 
@@ -143,7 +143,19 @@ test.beforeAll(async ({ browser }) => {
   test.setTimeout(600_000);
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await signInCertificationUser(page);
-  await page.goto("/dashboard", { waitUntil: "domcontentloaded", timeout: 60_000 });
+  // Clerk intermittently fails to finish loading on a Preview page; reload (counted) until the page
+  // holds a session. Any other failure surfaces at once.
+  for (let attempt = 1; ; attempt += 1) {
+    await page.goto("/dashboard", { waitUntil: "domcontentloaded", timeout: 60_000 });
+    try {
+      await freshToken(page);
+      break;
+    } catch (error) {
+      if (attempt >= 4) throw error;
+      appErrorReloads += 1;
+      console.log(`[fu] Clerk session not ready after load; reloading (${appErrorReloads} so far)`);
+    }
+  }
   // Session tokens last about a minute; this run is longer, so ask for a current one as needed.
   api = refreshingApiFor(page);
   const list = await api("/dashboard/api/contacts");
@@ -210,7 +222,7 @@ test.describe("agent: classification is the same everywhere", () => {
   test.skip(PHASE !== "agent", "agent phase only");
 
   test("Leads column: none / due today / overdue / future / tomorrow", async () => {
-    await gotoReady(page, "/dashboard/leads", page.getByRole("columnheader", { name: /Follow-up/ }));
+    await gotoReady(page, "/dashboard/leads", page.getByRole("columnheader", { name: /follow-up/i }));
     const cell = async (label: string) => (await listRow(page, label)).getByTestId("lead-follow-up-cell");
     await expect(await cell("FU None")).toHaveText("—");
     await expect(await cell("FU Today")).toHaveText("Due today");

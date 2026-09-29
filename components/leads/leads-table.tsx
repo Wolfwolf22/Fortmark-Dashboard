@@ -244,10 +244,13 @@ export function LeadsTable({
                   </TableCell>
                   <TableCell>
                     <span className="flex items-center gap-2 whitespace-nowrap">
-                      <Avatar className="h-6 w-6">
-                        <AvatarFallback className="text-[9px]">{initials(agent)}</AvatarFallback>
-                      </Avatar>
-                      <span className={cn(agent === "Unnamed agent" && "text-muted-foreground")}>{agent}</span>
+                      {/* No avatar for a placeholder: its initials would be a made-up person. */}
+                      {agent !== "Unnamed agent" && agent !== "—" && (
+                        <Avatar className="h-6 w-6">
+                          <AvatarFallback className="text-[9px]">{initials(agent)}</AvatarFallback>
+                        </Avatar>
+                      )}
+                      <span className={cn((agent === "Unnamed agent" || agent === "—") && "text-muted-foreground")}>{agent}</span>
                     </span>
                   </TableCell>
                   <TableCell>
