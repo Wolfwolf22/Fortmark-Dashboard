@@ -653,6 +653,9 @@ const reassign = (actor: Actor, to: string, opts: { failOn?: unknown; row?: Reco
   check("ui: the follow-up and touch controls kept their names", drawer.includes("Mark complete") && drawer.includes("Save follow-up") && drawer.includes("Log touch") && drawer.includes('aria-label="Lead stage"') && drawer.includes("A reminder only. It does not count as a touch."));
   check("ui: the shell's heading is the page's only h1", !/<h1/.test(ui));
 
+  const adapter = strip(src("lib/data/adapters/leads.ts"));
+  check("adapter: a read that got no answer is retried once; a write never is", adapter.includes("async function fetchOnce") && adapter.includes("if (!read) return send();") && adapter.includes("first.status !== 502 && first.status !== 504") && adapter.includes("init?.method === undefined || init.method === \"GET\""));
+  check("adapter: only the search POST is declared a read", (adapter.match(/read: true/g) ?? []).length === 1);
   check("no migration was added for Leads V2", !src("lib/db/migrations/meta/_journal.json").includes("0011"));
 }
 

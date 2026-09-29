@@ -45,11 +45,32 @@ export class LeadsError extends Error {
 
 type Source = "db" | "sample";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(apiPath(path), {
-    ...init,
-    headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
-  });
+/**
+ * One fetch, with a single retry for a READ that never got an answer — the
+ * connection dropped, or a gateway said 502/504 — which is what a deployment
+ * swapping underneath the page looks like. A write is never retried (it may have
+ * happened), and neither is any answer the application itself gave.
+ */
+async function fetchOnce(path: string, init: RequestInit | undefined, read: boolean): Promise<Response> {
+  const send = () =>
+    fetch(apiPath(path), {
+      ...init,
+      headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
+    });
+  if (!read) return send();
+  try {
+    const first = await send();
+    if (first.status !== 502 && first.status !== 504) return first;
+  } catch {
+    // fall through to the one retry
+  }
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  return send();
+}
+
+async function request<T>(path: string, init?: RequestInit, options: { read?: boolean } = {}): Promise<T> {
+  const read = options.read ?? (init?.method === undefined || init.method === "GET");
+  const response = await fetchOnce(path, init, read);
   if (!response.ok) {
     let code = "unknown";
     let fields: string[] = [];
@@ -296,7 +317,8 @@ export async function getLeadsPage(query: ContactQuery): Promise<LeadPage> {
   const fields = queryFields(query);
   // Search text never travels in a URL (see `getLeads`); it goes to the POST form.
   if (query.q) {
-    return request<LeadPage>("/api/contacts/search", { method: "POST", body: JSON.stringify({ ...fields, q: query.q }) });
+    // A POST, but a read: it is safe to ask twice.
+    return request<LeadPage>("/api/contacts/search", { method: "POST", body: JSON.stringify({ ...fields, q: query.q }) }, { read: true });
   }
   const qs = new URLSearchParams(fields).toString();
   return request<LeadPage>(`/api/contacts${qs ? `?${qs}` : ""}`);

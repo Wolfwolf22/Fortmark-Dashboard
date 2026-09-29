@@ -40,6 +40,7 @@ let platformReloads = 0;
 const uncaught: string[] = [];
 const consoleErrors: string[] = [];
 const requests: string[] = [];
+const apiProblems: string[] = [];
 const PLATFORM = /Failed to load resource|MIME type|502|upstream request failed|Clerk|clerk|ERR_/;
 
 const say = (line: string) => console.log(`[leads-v2] ${ROLE}: ${line}`);
@@ -93,6 +94,15 @@ test.beforeAll(async ({ browser }) => {
     const u = new URL(r.url());
     if (u.pathname.startsWith("/dashboard/api/")) requests.push(`${r.method()} ${u.pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, ":id")}`);
   });
+  // What the browser was told, when something was not fine: the evidence a "could not be loaded" needs.
+  page.on("response", (r) => {
+    const u = new URL(r.url());
+    if (u.pathname.startsWith("/dashboard/api/") && r.status() >= 400) apiProblems.push(`${r.status()} ${r.request().method()} ${u.pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, ":id")}${u.search.slice(0, 60)}`);
+  });
+  page.on("requestfailed", (r) => {
+    const u = new URL(r.url());
+    if (u.pathname.startsWith("/dashboard/api/")) apiProblems.push(`failed ${r.method()} ${u.pathname}${u.search.slice(0, 60)} ${r.failure()?.errorText}`);
+  });
   await signInCertificationUser(page);
   for (let attempt = 1; ; attempt += 1) {
     await page.goto("/dashboard", { waitUntil: "domcontentloaded", timeout: 60_000 });
@@ -109,6 +119,7 @@ test.beforeAll(async ({ browser }) => {
 
 test.afterAll(async () => {
   say(`platform error-page reloads=${platformReloads}, uncaught=${uncaught.length}, console errors=${consoleErrors.length}`);
+  if (apiProblems.length) say(`API problems seen by the browser: ${JSON.stringify(apiProblems).slice(0, 700)}`);
   if (uncaught.length || consoleErrors.length) say(`detail: ${JSON.stringify([...uncaught, ...consoleErrors]).slice(0, 600)}`);
   await page?.close();
 });
