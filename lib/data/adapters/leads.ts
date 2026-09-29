@@ -9,7 +9,9 @@
 import { apiPath } from "@/lib/routes";
 import {
   createSampleLead,
+  editSampleLead,
   getSampleLead,
+  reassignSampleLead,
   listSampleLeadAgents,
   markSampleLeadContacted,
   setSampleLeadFollowUp,
@@ -21,17 +23,23 @@ import { bumpDataVersion } from "../store";
 import type { DateRange, Lead, LeadStage } from "../types";
 import { delay } from "./latency";
 import { followUpInstant, type FollowUpOutcome } from "../../contacts/follow-up.ts";
+import type { ContactQuery } from "../../contacts/filters.ts";
+import { applyQuery, snapshotOf, type LeadPage, type LeadSnapshot } from "../../contacts/windows.ts";
+import type { TimelineItem } from "../../contacts/timeline.ts";
 
 export type { LeadFilters };
 
 export class LeadsError extends Error {
   readonly code: string;
   readonly status: number;
-  constructor(code: string, status: number) {
+  /** Which fields a 400 named. Names only — never what was typed. */
+  readonly fields: string[];
+  constructor(code: string, status: number, fields: string[] = []) {
     super(`Contacts request failed (${status}: ${code})`);
     this.name = "LeadsError";
     this.code = code;
     this.status = status;
+    this.fields = fields;
   }
 }
 
@@ -44,13 +52,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     let code = "unknown";
+    let fields: string[] = [];
     try {
-      const body = (await response.json()) as { error?: unknown };
+      const body = (await response.json()) as { error?: unknown; fields?: unknown };
       if (typeof body.error === "string") code = body.error;
+      if (Array.isArray(body.fields)) fields = body.fields.filter((f): f is string => typeof f === "string");
     } catch {
       // A non-JSON failure body is still a failure; the status says enough.
     }
-    throw new LeadsError(code, response.status);
+    throw new LeadsError(code, response.status, fields);
   }
   return (await response.json()) as T;
 }
@@ -246,5 +256,103 @@ export async function changeFollowUp(id: string, change: FollowUpChange): Promis
 export async function getLeadAgents(): Promise<{ id: string; name: string }[]> {
   if ((await getLeadSource()) === "sample") return listSampleLeadAgents();
   const { items } = await request<{ items: { id: string; name: string }[] }>("/api/contacts/agents");
+  return items;
+}
+
+// --- Leads V2: the paged, filtered workspace ------------------------------------------
+
+export type { ContactQuery, LeadPage, LeadSnapshot, TimelineItem };
+
+/** A query as the wire carries it: comma lists, `1` flags. Search text is not in it. */
+export function queryFields(query: ContactQuery): Record<string, string> {
+  const f: Record<string, string> = {};
+  if (query.stage?.length) f.stage = query.stage.join(",");
+  if (query.source?.length) f.source = query.source.join(",");
+  if (query.intent?.length) f.intent = query.intent.join(",");
+  if (query.agentId) f.agent = query.agentId;
+  if (query.mine) f.mine = "1";
+  if (query.active) f.active = "1";
+  if (query.followUp) f.followUp = query.followUp;
+  if (query.lastTouch) f.lastTouch = query.lastTouch;
+  if (query.created) f.created = query.created;
+  if (query.sort) f.sort = query.sort;
+  if (query.dir) f.dir = query.dir;
+  if (query.page) f.page = String(query.page);
+  if (query.pageSize) f.pageSize = String(query.pageSize);
+  return f;
+}
+
+/**
+ * One page of contacts, filtered, sorted and paged by the server. In the
+ * database there is no client-side narrowing of any kind: what comes back is
+ * the answer. (The labelled sample set is small and complete, so the same rules
+ * run over it locally.)
+ */
+export async function getLeadsPage(query: ContactQuery): Promise<LeadPage> {
+  if ((await getLeadSource()) === "sample") {
+    await delay();
+    return applyQuery(listSampleLeads(), query, new Date());
+  }
+  const fields = queryFields(query);
+  // Search text never travels in a URL (see `getLeads`); it goes to the POST form.
+  if (query.q) {
+    return request<LeadPage>("/api/contacts/search", { method: "POST", body: JSON.stringify({ ...fields, q: query.q }) });
+  }
+  const qs = new URLSearchParams(fields).toString();
+  return request<LeadPage>(`/api/contacts${qs ? `?${qs}` : ""}`);
+}
+
+export async function getLeadSnapshot(): Promise<LeadSnapshot> {
+  if ((await getLeadSource()) === "sample") {
+    await delay(120);
+    return snapshotOf(listSampleLeads(), new Date());
+  }
+  return (await request<{ snapshot: LeadSnapshot }>("/api/contacts/summary")).snapshot;
+}
+
+export interface ContactEdit {
+  firstName?: string;
+  lastName?: string;
+  preferredName?: string;
+  email?: string;
+  phone?: string;
+  company?: string;
+  source?: Lead["source"];
+  notes?: string;
+}
+
+/** Edit a contact's details. Empty text clears a field. Refusals throw `LeadsError`. */
+export async function updateContact(id: string, patch: ContactEdit): Promise<{ lead: Lead | undefined; changed: string[] }> {
+  if ((await getLeadSource()) === "sample") {
+    await delay(150);
+    const name = [patch.firstName, patch.lastName].filter(Boolean).join(" ");
+    return { lead: editSampleLead(id, { ...patch, name: patch.preferredName || name || undefined }), changed: Object.keys(patch) };
+  }
+  const { contact, changed } = await request<{ contact: Lead; changed: string[] }>(`/api/contacts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+  bumpDataVersion();
+  return { lead: contact, changed };
+}
+
+/** Hand a contact to another agent from the brokerage's own roster. */
+export async function reassignLead(id: string, agentId: string): Promise<{ lead: Lead | undefined; changed: boolean }> {
+  if ((await getLeadSource()) === "sample") {
+    await delay(150);
+    return { lead: reassignSampleLead(id, agentId), changed: true };
+  }
+  const { contact, changed } = await request<{ contact: Lead; changed: boolean }>(
+    `/api/contacts/${encodeURIComponent(id)}/reassign`,
+    { method: "POST", body: JSON.stringify({ agentId }) }
+  );
+  bumpDataVersion();
+  return { lead: contact, changed };
+}
+
+/** What happened with a person, newest first, in the domain's words. */
+export async function getTimeline(id: string): Promise<TimelineItem[]> {
+  if ((await getLeadSource()) === "sample") return [];
+  const { items } = await request<{ items: TimelineItem[] }>(`/api/contacts/${encodeURIComponent(id)}/timeline`);
   return items;
 }

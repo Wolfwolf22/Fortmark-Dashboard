@@ -1,14 +1,20 @@
 "use client";
 
 /**
- * Leads table — sortable by name, budget, and last contact; 12-row pages.
- * A row click opens the lead drawer.
+ * The Leads table — dense, sortable, paged by the server.
+ *
+ * Nothing here filters, sorts or pages data: the page asks the server for one
+ * page in one order and this component draws it. Sorting is a request, not a
+ * client-side reorder of what happened to arrive.
  *
  * "Follow-up" is the stored reminder, due by the same rule Home's Needs
- * attention queue uses. "No touch in 14 days" is a separate heuristic on
- * last contact, labelled as exactly that.
+ * attention queue uses. "No touch in 14 days" is a separate heuristic on last
+ * contact, labelled as exactly that. A person never touched reads "Never".
+ *
+ * Below 768px the same page of rows is drawn as a compact list instead of
+ * squeezing a nine-column table: name, stage, next follow-up, last touch and
+ * (for a brokerage-wide role) the agent, one tap to open.
  */
-import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronsUpDown, Users } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -17,21 +23,10 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/ui/status-pill";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Agent,
-  Lead,
-  LEAD_SOURCE_LABELS,
-  LEAD_STAGE_LABELS,
-} from "@/lib/data/types";
-import { cn, formatCurrencyCompact, formatRelative, initials } from "@/lib/utils";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import type { LeadPage } from "@/lib/data/adapters/leads";
+import { Lead, LEAD_SOURCE_LABELS, LEAD_STAGE_LABELS } from "@/lib/data/types";
+import { cn, formatDate, formatRelative, initials } from "@/lib/utils";
 import {
   followUpLabel,
   followUpStatus,
@@ -39,52 +34,64 @@ import {
   noRecentTouch,
   NO_TOUCH_LABEL,
 } from "@/lib/contacts/follow-up";
-import { INTENT_LABELS, lastName } from "./lead-shared";
+import type { SortDir, SortKey } from "@/lib/contacts/filters";
+import { INTENT_LABELS, useMinWidth } from "./lead-shared";
 
-const PAGE_SIZE = 12;
-
-type SortKey = "name" | "budget" | "lastContact" | "followUp";
-type SortDir = "asc" | "desc";
-
-const COLUMNS: {
+interface Column {
   id: string;
   label: string;
   sortKey?: SortKey;
-  align?: "right";
-}[] = [
+}
+
+const COLUMNS: Column[] = [
   { id: "name", label: "Name", sortKey: "name" },
-  { id: "source", label: "Source" },
   { id: "intent", label: "Intent" },
-  { id: "budget", label: "Budget", sortKey: "budget", align: "right" },
-  { id: "neighborhood", label: "Neighborhood" },
-  { id: "agent", label: "Agent" },
-  { id: "stage", label: "Stage" },
-  { id: "followUp", label: "Follow-up", sortKey: "followUp" },
-  { id: "lastContact", label: "Last contact", sortKey: "lastContact" },
+  { id: "stage", label: "Stage", sortKey: "stage" },
+  { id: "source", label: "Source" },
+  { id: "agent", label: "Assigned agent" },
+  { id: "lastTouch", label: "Last touch", sortKey: "lastTouch" },
+  { id: "followUp", label: "Next follow-up", sortKey: "followUp" },
+  { id: "created", label: "Created", sortKey: "created" },
+  { id: "actions", label: "Actions" },
 ];
 
-function sortValue(lead: Lead, key: SortKey): string | number {
-  switch (key) {
-    case "name":
-      return lead.name.toLowerCase();
-    case "budget":
-      return lead.budget ?? -1;
-    case "lastContact":
-      return new Date(lead.lastContactDate).getTime();
-    case "followUp":
-      // Soonest first when ascending; none set sorts last.
-      return lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).getTime() : Number.MAX_SAFE_INTEGER;
-  }
+/** The agent as the screen names them. Never an id, never an email. */
+export function agentLabel(lead: Lead, byId: Map<string, string>): string {
+  return lead.assignedAgentName ?? byId.get(lead.assignedAgentId) ?? (lead.recordSource === "sample" ? "—" : "Unnamed agent");
+}
+
+function FollowUpCell({ lead }: { lead: Lead }) {
+  const followUp = followUpStatus(lead.nextFollowUpDate);
+  return (
+    <span data-testid="lead-follow-up-cell">
+      {isFollowUpDue(followUp) ? (
+        <StatusPill tone="warn">{followUpLabel(followUp)}</StatusPill>
+      ) : followUp.state === "future" ? (
+        <span className="tabular whitespace-nowrap">{followUpLabel(followUp)}</span>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      )}
+    </span>
+  );
+}
+
+function LastTouchCell({ lead }: { lead: Lead }) {
+  const quiet = noRecentTouch(lead.lastContactDate);
+  if (quiet) return <StatusPill tone="neutral">{NO_TOUCH_LABEL}</StatusPill>;
+  return (
+    <span className="tabular text-muted-foreground">
+      {lead.lastTouchDate || lead.recordSource === "sample" ? formatRelative(lead.lastContactDate) : "Never"}
+    </span>
+  );
 }
 
 function TableSkeleton() {
   return (
-    <Card className="p-6">
+    <Card className="p-6" aria-busy>
       <Skeleton className="mb-4 h-4 w-24" />
-      <div className="space-y-2">
-        <Skeleton className="h-8 w-full" />
+      <div className="space-y-3">
         {Array.from({ length: 8 }).map((_, i) => (
-          <Skeleton key={i} className="h-11 w-full" />
+          <Skeleton key={i} className="h-10 w-full" />
         ))}
       </div>
     </Card>
@@ -92,71 +99,74 @@ function TableSkeleton() {
 }
 
 export function LeadsTable({
-  leads,
-  agents,
+  page,
   loading,
+  failed,
+  onRetry,
+  sort,
+  dir,
+  onSort,
+  onPage,
   hasFilters,
   onClearFilters,
+  empty,
   onOpen,
+  agents,
+  showAgent,
 }: {
-  leads: Lead[] | undefined;
-  agents: Pick<Agent, "id" | "name">[] | undefined;
+  page: LeadPage | undefined;
   loading: boolean;
+  failed: boolean;
+  onRetry: () => void;
+  sort: SortKey;
+  dir: SortDir;
+  onSort: (key: SortKey) => void;
+  onPage: (page: number) => void;
   hasFilters: boolean;
   onClearFilters: () => void;
+  empty: { title: string; description: string };
   onOpen: (id: string) => void;
+  agents: { id: string; name: string }[];
+  showAgent: boolean;
 }) {
-  const [sortKey, setSortKey] = useState<SortKey>("lastContact");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [page, setPage] = useState(1);
+  const wide = useMinWidth(768);
+  const byId = new Map(agents.map((a) => [a.id, a.name]));
 
-  const agentById = useMemo(
-    () => new Map((agents ?? []).map((a) => [a.id, a])),
-    [agents]
-  );
-
-  const rows = useMemo(() => {
-    const list = leads ? [...leads] : [];
-    list.sort((a, b) => {
-      const av = sortValue(a, sortKey);
-      const bv = sortValue(b, sortKey);
-      const cmp =
-        typeof av === "number" && typeof bv === "number"
-          ? av - bv
-          : String(av).localeCompare(String(bv));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return list;
-  }, [leads, sortKey, sortDir]);
-
-  if (!leads) return <TableSkeleton />;
-
-  const total = rows.length;
-  const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const current = Math.min(page, maxPage);
-  const start = (current - 1) * PAGE_SIZE;
-  const pageRows = rows.slice(start, start + PAGE_SIZE);
-
-  function toggleSort(key: SortKey) {
-    if (key === sortKey) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir(key === "lastContact" ? "desc" : "asc");
-    }
-    setPage(1);
+  if (!page && failed) {
+    return (
+      <Card className="p-6">
+        <EmptyState
+          icon={Users}
+          title="Leads could not be loaded"
+          description="Something went wrong reaching your contacts. Nothing has been changed."
+          action={
+            <Button variant="outline" size="sm" onClick={onRetry}>
+              Try again
+            </Button>
+          }
+        />
+      </Card>
+    );
   }
+  if (!page) return <TableSkeleton />;
+
+  const { items, total, pageSize } = page;
+  const current = page.page;
+  const maxPage = Math.max(1, Math.ceil(total / pageSize));
+  const first = total === 0 ? 0 : (current - 1) * pageSize + 1;
+  const last = Math.min(current * pageSize, total);
 
   return (
-    <Card aria-busy={loading} className="p-6">
-      <p className="tabular mb-4 text-[13px] text-muted-foreground">
+    <Card aria-busy={loading} className={cn("p-4 md:p-6", loading && "opacity-80 transition-opacity")}>
+      <p role="status" aria-live="polite" className="tabular mb-3 text-[13px] text-muted-foreground">
         {total === 1 ? "1 lead" : `${total} leads`}
+        {failed && " · could not refresh"}
       </p>
       {total === 0 ? (
         <EmptyState
           icon={Users}
-          title="No leads match"
-          description="Clear the stage chip or filters, or add a lead from quick create."
+          title={empty.title}
+          description={empty.description}
           action={
             hasFilters ? (
               <Button variant="outline" size="sm" onClick={onClearFilters}>
@@ -165,170 +175,164 @@ export function LeadsTable({
             ) : undefined
           }
         />
-      ) : (
-        <>
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                {COLUMNS.map((col) => {
-                  if (!col.sortKey) {
-                    return (
-                      <TableHead
-                        key={col.id}
-                        className={col.align === "right" ? "text-right" : undefined}
-                      >
-                        {col.label}
-                      </TableHead>
-                    );
-                  }
-                  const active = sortKey === col.sortKey;
+      ) : wide ? (
+        <Table containerClassName="max-h-[70vh] overflow-y-auto">
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              {COLUMNS.map((col) => {
+                const stick = "sticky top-0 z-10 bg-card";
+                if (!col.sortKey) {
                   return (
-                    <TableHead
-                      key={col.id}
-                      aria-sort={
-                        active
-                          ? sortDir === "asc"
-                            ? "ascending"
-                            : "descending"
-                          : "none"
-                      }
-                      className={col.align === "right" ? "text-right" : undefined}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => toggleSort(col.sortKey!)}
-                        className={cn(
-                          "text-micro inline-flex items-center gap-1 transition-colors duration-150 hover:text-foreground",
-                          active && "text-foreground"
-                        )}
-                      >
-                        {col.label}
-                        {active ? (
-                          sortDir === "asc" ? (
-                            <ArrowUp className="h-3 w-3" aria-hidden />
-                          ) : (
-                            <ArrowDown className="h-3 w-3" aria-hidden />
-                          )
-                        ) : (
-                          <ChevronsUpDown className="h-3 w-3 opacity-50" aria-hidden />
-                        )}
-                      </button>
+                    <TableHead key={col.id} className={stick}>
+                      {col.label}
                     </TableHead>
                   );
-                })}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pageRows.map((lead) => {
-                const agentName =
-                  lead.assignedAgentName ?? agentById.get(lead.assignedAgentId)?.name;
-                const followUp = followUpStatus(lead.nextFollowUpDate);
-                const quiet = noRecentTouch(lead.lastContactDate);
+                }
+                const active = sort === col.sortKey;
                 return (
-                  <TableRow
-                    key={lead.id}
-                    onClick={() => onOpen(lead.id)}
-                    className="cursor-pointer"
+                  <TableHead
+                    key={col.id}
+                    className={stick}
+                    aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
                   >
-                    <TableCell>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpen(lead.id);
-                        }}
-                        className="text-left leading-snug"
-                      >
-                        <span className="block font-semibold hover:underline">
-                          {lead.name}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          {lead.email}
-                        </span>
-                      </button>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">
-                        {LEAD_SOURCE_LABELS[lead.source]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {INTENT_LABELS[lead.intent]}
-                    </TableCell>
-                    <TableCell className="tabular text-right font-semibold">
-                      {lead.budget != null
-                        ? formatCurrencyCompact(lead.budget)
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {lead.neighborhood ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      {agentName ? (
-                        <span className="flex items-center gap-2 whitespace-nowrap">
-                          <Avatar className="h-6 w-6">
-                            <AvatarFallback className="text-[9px]">
-                              {initials(agentName)}
-                            </AvatarFallback>
-                          </Avatar>
-                          {lastName(agentName)}
-                        </span>
-                      ) : (
-                        "—"
+                    <button
+                      type="button"
+                      onClick={() => onSort(col.sortKey!)}
+                      className={cn(
+                        "text-micro inline-flex items-center gap-1 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        active && "text-foreground"
                       )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">
-                        {LEAD_STAGE_LABELS[lead.stage]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell data-testid="lead-follow-up-cell">
-                      {isFollowUpDue(followUp) ? (
-                        <StatusPill tone="warn">{followUpLabel(followUp)}</StatusPill>
-                      ) : followUp.state === "future" ? (
-                        <span className="tabular whitespace-nowrap">{followUpLabel(followUp)}</span>
+                    >
+                      {col.label}
+                      {active ? (
+                        dir === "asc" ? <ArrowUp className="h-3 w-3" aria-hidden /> : <ArrowDown className="h-3 w-3" aria-hidden />
                       ) : (
-                        <span className="text-muted-foreground">—</span>
+                        <ChevronsUpDown className="h-3 w-3 opacity-50" aria-hidden />
                       )}
-                    </TableCell>
-                    <TableCell>
-                      {quiet ? (
-                        <StatusPill tone="neutral">{NO_TOUCH_LABEL}</StatusPill>
-                      ) : (
-                        <span className="tabular text-muted-foreground">
-                          {formatRelative(lead.lastContactDate)}
-                        </span>
-                      )}
-                    </TableCell>
-                  </TableRow>
+                    </button>
+                  </TableHead>
                 );
               })}
-            </TableBody>
-          </Table>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <p className="tabular text-[13px] text-muted-foreground">
-              Showing {start + 1}–{Math.min(start + PAGE_SIZE, total)} of {total}
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage(current - 1)}
-                disabled={current <= 1}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage(current + 1)}
-                disabled={current >= maxPage}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-        </>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((lead) => {
+              const agent = agentLabel(lead, byId);
+              return (
+                <TableRow key={lead.id} onClick={() => onOpen(lead.id)} className="cursor-pointer" data-testid="lead-row">
+                  <TableCell>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpen(lead.id);
+                      }}
+                      className="text-left leading-snug focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <span className="block font-semibold hover:underline">{lead.name}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">{lead.email || lead.phone || " "}</span>
+                    </button>
+                  </TableCell>
+                  <TableCell className={cn(lead.intent === "other" ? "text-muted-foreground/70" : "text-muted-foreground")}>
+                    {lead.intent === "other" ? "—" : INTENT_LABELS[lead.intent]}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">{LEAD_STAGE_LABELS[lead.stage]}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{LEAD_SOURCE_LABELS[lead.source]}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <span className="flex items-center gap-2 whitespace-nowrap">
+                      <Avatar className="h-6 w-6">
+                        <AvatarFallback className="text-[9px]">{initials(agent)}</AvatarFallback>
+                      </Avatar>
+                      <span className={cn(agent === "Unnamed agent" && "text-muted-foreground")}>{agent}</span>
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <LastTouchCell lead={lead} />
+                  </TableCell>
+                  <TableCell>
+                    <FollowUpCell lead={lead} />
+                  </TableCell>
+                  <TableCell className="tabular whitespace-nowrap text-muted-foreground">{formatDate(lead.createdDate)}</TableCell>
+                  <TableCell>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Open ${lead.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpen(lead.id);
+                      }}
+                    >
+                      Open
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      ) : (
+        <ul className="-mx-1 divide-y divide-border" aria-label="Leads">
+          {items.map((lead) => {
+            const agent = agentLabel(lead, byId);
+            return (
+              <li key={lead.id}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(lead.id)}
+                  data-testid="lead-row"
+                  className="flex w-full flex-col gap-1.5 px-1 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="flex items-start justify-between gap-3">
+                    <span className="min-w-0 font-semibold leading-snug">{lead.name}</span>
+                    <Badge variant="secondary" className="shrink-0">
+                      {LEAD_STAGE_LABELS[lead.stage]}
+                    </Badge>
+                  </span>
+                  <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-muted-foreground">Follow-up</span>
+                      <FollowUpCell lead={lead} />
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-muted-foreground">Last touch</span>
+                      <LastTouchCell lead={lead} />
+                    </span>
+                  </span>
+                  {showAgent && (
+                    <span className={cn("text-xs", agent === "Unnamed agent" ? "text-muted-foreground" : "text-muted-foreground")}>
+                      {agent}
+                    </span>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {total > 0 && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="tabular text-[13px] text-muted-foreground">
+            Showing {first}–{last} of {total}
+          </p>
+          <nav aria-label="Pagination" className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => onPage(current - 1)} disabled={current <= 1}>
+              Previous
+            </Button>
+            <span className="tabular text-[13px] text-muted-foreground">
+              Page {current} of {maxPage}
+            </span>
+            <Button variant="outline" size="sm" onClick={() => onPage(current + 1)} disabled={current >= maxPage}>
+              Next
+            </Button>
+          </nav>
+        </div>
       )}
     </Card>
   );

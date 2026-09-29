@@ -216,10 +216,10 @@ check("the primary need is the newest open one",
   check("the private search route authenticates first",
     searchRoute.indexOf("await requireCaller()") < searchRoute.indexOf("request.json()"));
   check("the private search route runs the same authorized service",
-    searchRoute.includes("listContacts(actor.ctx, filters)") &&
+    searchRoute.includes("listContactsPage(actor.ctx, query)") &&
       searchRoute.includes("actorOrResponse(caller.clerkUserId)"));
   check("both paths share one filter validator",
-    listRoute.includes("parseContactFilters") && searchRoute.includes("parseContactFilters"));
+    listRoute.includes("parseContactQuery") && searchRoute.includes("parseContactQuery"));
   check("the private search route accepts no scope from the body",
     !/brokerage|agentId:\s*record|role/i.test(searchRoute.slice(searchRoute.indexOf("export async function POST"))));
   check("the adapter converts a typed budget to cents", adapter.includes("Math.round(input.budget * 100)"));

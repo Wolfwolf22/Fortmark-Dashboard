@@ -33,15 +33,24 @@ import {
   canCreateFor,
   canSee,
   canWrite,
+  planContactEdit,
   resolveFollowUp,
   toLead,
   type ActivityInput,
   type CreateContactInput,
+  type EditContactInput,
   type FollowUpChangeInput,
 } from "./domain.ts";
 import { canTransition } from "./stages.ts";
+import { visibleTo } from "./visibility.ts";
+import { contactOrder, contactWhere, filterPredicates } from "./list-sql.ts";
+import { DEFAULT_PAGE_SIZE, isPaged, MAX_PAGE_SIZE, type ContactQuery } from "./filters.ts";
+import type { LeadPage, LeadSnapshot } from "./windows.ts";
+import { toTimeline, type TimelineItem } from "./timeline.ts";
+import { toInt } from "../metrics/window.ts";
 import { checkFollowUpDay, decideFollowUp, type FollowUpOutcome } from "./follow-up.ts";
 import { businessDayKey } from "../metrics/business-day.ts";
+import { toE164 } from "../profile/normalize.ts";
 
 const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
 
@@ -64,7 +73,9 @@ export type ServiceFailure =
   | "forbidden"
   | "invalid_transition"
   | "invalid_assignee"
-  | "invalid_date";
+  | "invalid_date"
+  | "invalid_name"
+  | "invalid_phone";
 
 export type ServiceResult<T> = { ok: true; value: T } | { ok: false; reason: ServiceFailure };
 
@@ -88,13 +99,7 @@ export async function resolveActor(
   return { ok: true, value: { actor: result.actor, db: result.db } };
 }
 
-/** The visibility predicate, as SQL. Mirrors `canSee` for a query.
- *  Exported so aggregates (lib/contacts/metrics.ts) count exactly the rows
- *  this actor may list — a total is a disclosure like any other. */
-export function visibleTo(actor: Actor) {
-  const tenant = eq(contacts.brokerageKey, actor.brokerageKey);
-  return isPrivileged(actor) ? tenant : and(tenant, eq(contacts.assignedAgentUserId, actor.userId));
-}
+export { visibleTo } from "./visibility.ts";
 
 async function agentNames(db: Db, userIds: string[]): Promise<Map<string, string>> {
   const names = new Map<string, string>();
@@ -142,36 +147,78 @@ async function bundle(ctx: Pick<Ctx, "db" | "actor" | "viewerName">, rows: Conta
 
 export const MAX_LIST_ROWS = 500;
 
-export interface ContactFilters {
-  stage?: LeadStage[];
-  source?: string[];
-  agentId?: string;
-  query?: string;
+/** Kept as a name: the AI tools and older callers pass the same shape. */
+export type ContactFilters = ContactQuery;
+
+/**
+ * The contacts this caller may see, filtered, sorted and — when asked — paged in
+ * SQL. `total` is the number of matches, not the number of rows returned, so a
+ * page can say how many there are.
+ *
+ * Without `page`/`pageSize` it answers as it always has: every match, up to
+ * `MAX_LIST_ROWS`.
+ */
+export async function listContactsPage(ctx: Ctx, query: ContactQuery = {}, now = new Date()): Promise<LeadPage> {
+  const where = contactWhere(ctx.actor, query, now);
+  const paged = isPaged(query);
+  const pageSize = paged ? Math.min(query.pageSize ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE) : MAX_LIST_ROWS;
+  const page = paged ? (query.page ?? 1) : 1;
+
+  const [rows, counted] = await Promise.all([
+    ctx.db
+      .select()
+      .from(contacts)
+      .where(where)
+      .orderBy(...contactOrder(query.sort, query.dir))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    ctx.db.select({ n: sql<number>`count(*)` }).from(contacts).where(where),
+  ]);
+  return { items: await bundle(ctx, rows), total: toInt(counted[0]?.n), page, pageSize };
 }
 
-export async function listContacts(ctx: Ctx, filters: ContactFilters = {}): Promise<Lead[]> {
-  const clauses = [visibleTo(ctx.actor)];
-  if (filters.stage?.length) clauses.push(inArray(contacts.stage, filters.stage));
-  if (filters.source?.length) clauses.push(inArray(contacts.source, filters.source as ContactRow["source"][]));
-  if (filters.agentId && isPrivileged(ctx.actor)) clauses.push(eq(contacts.assignedAgentUserId, filters.agentId));
-  if (filters.query) {
-    const q = `%${filters.query.trim().toLowerCase().replace(/[%_]/g, "")}%`;
-    clauses.push(
-      or(
-        sql`lower(coalesce(${contacts.firstName}, '') || ' ' || coalesce(${contacts.lastName}, '')) like ${q}`,
-        sql`lower(coalesce(${contacts.preferredName}, '')) like ${q}`,
-        sql`lower(coalesce(${contacts.email}, '')) like ${q}`,
-        sql`exists (select 1 from ${contactOpportunities} o where o.contact_id = ${contacts.id} and lower(coalesce(o.area, '')) like ${q})`
-      )!
-    );
-  }
-  const rows = await ctx.db
-    .select()
-    .from(contacts)
-    .where(and(...clauses))
-    .orderBy(sql`${contacts.lastContactAt} desc nulls last`, desc(contacts.createdAt))
-    .limit(MAX_LIST_ROWS);
-  return bundle(ctx, rows);
+export async function listContacts(ctx: Ctx, query: ContactQuery = {}, now = new Date()): Promise<Lead[]> {
+  return (await listContactsPage(ctx, query, now)).items;
+}
+
+/**
+ * The counts behind the Leads snapshot cards: one aggregate over exactly the
+ * contacts this caller may list, each figure computed from the same predicates
+ * the table applies when a card is opened. Nothing here is estimated; a figure
+ * that cannot be computed truthfully is simply not in the result.
+ */
+export async function contactSnapshot(ctx: Ctx, now = new Date()): Promise<LeadSnapshot> {
+  const count = (q: ContactQuery) => {
+    const preds = filterPredicates(ctx.actor, q, now);
+    return preds.length ? sql<number>`count(*) filter (where ${and(...preds)})` : sql<number>`count(*)`;
+  };
+  const scope = visibleTo(ctx.actor);
+  const [agg, byStage] = await Promise.all([
+    ctx.db
+      .select({
+        total: count({}),
+        active: count({ active: true }),
+        newThisWeek: count({ created: "7d" }),
+        dueToday: count({ active: true, followUp: "due_today" }),
+        overdue: count({ active: true, followUp: "overdue" }),
+        noTouch14: count({ active: true, lastTouch: "14d" }),
+      })
+      .from(contacts)
+      .where(scope),
+    ctx.db.select({ stage: contacts.stage, n: sql<number>`count(*)` }).from(contacts).where(scope).groupBy(contacts.stage),
+  ]);
+  const row = agg[0];
+  const stages: Record<string, number> = {};
+  for (const r of byStage) stages[r.stage] = toInt(r.n);
+  return {
+    total: toInt(row?.total),
+    active: toInt(row?.active),
+    newThisWeek: toInt(row?.newThisWeek),
+    dueToday: toInt(row?.dueToday),
+    overdue: toInt(row?.overdue),
+    noTouch14: toInt(row?.noTouch14),
+    byStage: stages,
+  };
 }
 
 export async function getContact(ctx: Ctx, id: string): Promise<Lead | null> {
@@ -239,7 +286,9 @@ export async function createContact(ctx: Ctx, input: CreateContactInput): Promis
       lastName: input.lastName ?? null,
       preferredName: input.preferredName ?? null,
       email: input.email?.toLowerCase() ?? null,
-      phoneE164: input.phone ?? null,
+      // Stored E.164 so a typed number matches by its digits; one that cannot be
+      // read confidently is kept as typed rather than dropped.
+      phoneE164: input.phone ? (toE164(input.phone) ?? input.phone) : null,
       company: input.company ?? null,
       source: input.source ?? "other",
       tags: input.tags ?? [],
@@ -441,6 +490,14 @@ export async function logActivity(ctx: Ctx, id: string, input: ActivityInput, no
     kind: input.kind,
     summary: input.summary,
     occurredAt,
+    // A touch that also moved the reminder says so on its own line of the timeline.
+    safeMetadata:
+      followUp.change === "kept"
+        ? null
+        : {
+            followUp: followUp.change,
+            ...(followUp.value ? { followUpDay: businessDayKey(followUp.value) } : {}),
+          },
   });
   await ctx.db
     .update(contacts)
@@ -518,6 +575,9 @@ export async function changeFollowUp(
             field: "nextFollowUpAt",
             followUp: decided.outcome,
             mechanism: "direct",
+            // The reminder's day is workflow data, not contact data; it is what
+            // lets the timeline say "scheduled for Oct 3".
+            ...(change.action === "schedule" ? { day: change.day } : {}),
           }) ?? { contactId: row.id },
         }),
       ] as unknown as Parameters<Db["batch"]>[0]);
@@ -542,4 +602,196 @@ export async function listAgents(ctx: Ctx): Promise<{ id: string; name: string }
     .filter((u) => u.role !== "member")
     .map((u) => ({ id: u.id, name: names.get(u.id) ?? "Unnamed agent" }))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// --- Edit, reassign, timeline ------------------------------------------------------------
+
+/**
+ * Change how a contact is named and reached, where they came from, or the notes.
+ *
+ * Authorization is the stage change's, in the same order: outside the caller's
+ * scope is `not_found`, visible but not writable is `forbidden`, and both are
+ * decided before the body's content is judged. What may change is
+ * `planContactEdit`'s call, and only real changes are written: the update and
+ * its audit row commit as one transaction, and a request that changes nothing
+ * writes nothing. The audit names the fields that changed — never their values.
+ * It also never touches last contact, the follow-up, the stage or the owner.
+ */
+export async function editContact(
+  ctx: Ctx,
+  id: string,
+  patch: EditContactInput,
+  now = new Date()
+): Promise<ServiceResult<{ lead: Lead; changed: string[] }>> {
+  if (!isRecordId(id)) return { ok: false, reason: "not_found" };
+  const rows = await ctx.db
+    .select()
+    .from(contacts)
+    .where(and(eq(contacts.id, id), visibleTo(ctx.actor)))
+    .limit(1);
+  const row = rows[0];
+  if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
+  if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
+
+  const plan = planContactEdit(row, patch);
+  if (!plan.ok) return { ok: false, reason: plan.field === "phone" ? "invalid_phone" : "invalid_name" };
+
+  if (plan.changed.length > 0) {
+    try {
+      await ctx.db.batch([
+        ctx.db
+          .update(contacts)
+          .set({ ...plan.set, updatedByUserId: ctx.actor.userId, updatedAt: now })
+          .where(eq(contacts.id, row.id)),
+        ctx.db.insert(auditEvents).values({
+          eventType: "contact_updated",
+          actorUserId: ctx.actor.userId,
+          targetUserId: null,
+          safeMetadata: scrub({ contactId: row.id, mechanism: "edit", fields: plan.changed }) ?? { contactId: row.id },
+        }),
+      ] as unknown as Parameters<Db["batch"]>[0]);
+    } catch {
+      return { ok: false, reason: "unavailable" };
+    }
+  }
+
+  const updated = await getContact(ctx, row.id);
+  return updated ? { ok: true, value: { lead: updated, changed: plan.changed } } : { ok: false, reason: "unavailable" };
+}
+
+/**
+ * Hand a contact to another agent.
+ *
+ * Privileged roles only (admin, broker, transaction coordinator): an agent may
+ * see and work their own contacts but does not move them, and a member cannot
+ * write at all. The new owner must be a real, active dashboard user in a role
+ * that owns work — the same test that governs who may be named on creation — so
+ * an MLS listing agent, a suspended account or a member can never be assigned.
+ *
+ * The owner change, its line in the contact's history and its audit event commit
+ * together. It is not a touch: last contact, the follow-up and the stage are not
+ * written. Reassigning to the current owner writes nothing.
+ */
+export async function reassignContact(
+  ctx: Ctx,
+  id: string,
+  toUserId: string,
+  now = new Date()
+): Promise<ServiceResult<{ lead: Lead; changed: boolean }>> {
+  if (!isRecordId(id)) return { ok: false, reason: "not_found" };
+  const rows = await ctx.db
+    .select()
+    .from(contacts)
+    .where(and(eq(contacts.id, id), visibleTo(ctx.actor)))
+    .limit(1);
+  const row = rows[0];
+  if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
+  if (!isPrivileged(ctx.actor) || !canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
+
+  if (row.assignedAgentUserId !== toUserId) {
+    if (!isRecordId(toUserId) || !(await canOwnRecords(ctx.db, toUserId))) {
+      return { ok: false, reason: "invalid_assignee" };
+    }
+    try {
+      await ctx.db.batch([
+        ctx.db
+          .update(contacts)
+          .set({ assignedAgentUserId: toUserId, updatedByUserId: ctx.actor.userId, updatedAt: now })
+          .where(eq(contacts.id, row.id)),
+        ctx.db.insert(contactActivities).values({
+          contactId: row.id,
+          actorUserId: ctx.actor.userId,
+          kind: "system",
+          summary: "Contact reassigned",
+          occurredAt: now,
+          safeMetadata: { event: "reassigned", fromAgentUserId: row.assignedAgentUserId, toAgentUserId: toUserId },
+        }),
+        ctx.db.insert(auditEvents).values({
+          eventType: "contact_updated",
+          actorUserId: ctx.actor.userId,
+          targetUserId: null,
+          safeMetadata: scrub({ contactId: row.id, field: "assignedAgent", mechanism: "reassign" }) ?? { contactId: row.id },
+        }),
+      ] as unknown as Parameters<Db["batch"]>[0]);
+    } catch {
+      return { ok: false, reason: "unavailable" };
+    }
+  }
+
+  const updated = await getContact(ctx, row.id);
+  return updated
+    ? { ok: true, value: { lead: updated, changed: row.assignedAgentUserId !== toUserId } }
+    : { ok: false, reason: "unavailable" };
+}
+
+/**
+ * The people a contact may be reassigned to: the same roster the agent filter
+ * uses — real, active dashboard users who own work, named by profile — for a
+ * privileged caller, and nobody for anyone else.
+ */
+export async function listAssignees(ctx: Ctx): Promise<{ id: string; name: string }[]> {
+  return isPrivileged(ctx.actor) ? listAgents(ctx) : [];
+}
+
+/**
+ * A contact's timeline, scoped like a read of the contact itself: outside the
+ * caller's scope is `not_found`. Interactions and stage moves come from the
+ * activity history; follow-up events come from the audit trail, which is the
+ * only place a reminder change is recorded (see `timeline.ts`). Names are
+ * resolved in one batch — profile name, else nothing — never an id or an email.
+ */
+export async function getTimeline(ctx: Ctx, id: string, limit = 100): Promise<ServiceResult<TimelineItem[]>> {
+  if (!isRecordId(id)) return { ok: false, reason: "not_found" };
+  const rows = await ctx.db
+    .select({ id: contacts.id, brokerageKey: contacts.brokerageKey, assignedAgentUserId: contacts.assignedAgentUserId })
+    .from(contacts)
+    .where(and(eq(contacts.id, id), visibleTo(ctx.actor)))
+    .limit(1);
+  const row = rows[0];
+  if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
+
+  const capped = Math.min(Math.max(limit, 1), 200);
+  const [activities, followUps] = await Promise.all([
+    ctx.db
+      .select({
+        id: contactActivities.id,
+        kind: contactActivities.kind,
+        summary: contactActivities.summary,
+        occurredAt: contactActivities.occurredAt,
+        actorUserId: contactActivities.actorUserId,
+        safeMetadata: contactActivities.safeMetadata,
+      })
+      .from(contactActivities)
+      .where(eq(contactActivities.contactId, id))
+      .orderBy(desc(contactActivities.occurredAt))
+      .limit(capped),
+    ctx.db
+      .select({
+        id: auditEvents.id,
+        createdAt: auditEvents.createdAt,
+        actorUserId: auditEvents.actorUserId,
+        safeMetadata: auditEvents.safeMetadata,
+      })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.eventType, "contact_updated"),
+          sql`${auditEvents.safeMetadata}->>'contactId' = ${id}`,
+          sql`${auditEvents.safeMetadata}->>'field' = 'nextFollowUpAt'`
+        )
+      )
+      .orderBy(desc(auditEvents.createdAt))
+      .limit(capped),
+  ]);
+
+  const userIds = new Set<string>();
+  for (const a of activities) {
+    if (a.actorUserId) userIds.add(a.actorUserId);
+    const to = a.safeMetadata?.toAgentUserId;
+    if (typeof to === "string") userIds.add(to);
+  }
+  for (const e of followUps) if (e.actorUserId) userIds.add(e.actorUserId);
+  const names = await agentNames(ctx.db, Array.from(userIds));
+
+  return { ok: true, value: toTimeline({ activities, followUpEvents: followUps, names, limit: capped }) };
 }

@@ -393,6 +393,9 @@ export const LEAD_SOURCE_LABELS: Record<LeadSource, string> = {
   other: "Other",
 };
 
+/** Every source, in the order a picker lists them. */
+export const LEAD_SOURCES_ORDER = Object.keys(LEAD_SOURCE_LABELS) as LeadSource[];
+
 /** What the person needs, summarised from their open opportunities. */
 export type LeadIntent = "buy" | "sell" | "both" | "lease" | "invest" | "other";
 
@@ -417,9 +420,21 @@ export interface Lead {
   createdDate: string; // ISO
   /** ISO — the latest activity, or creation when there is none. */
   lastContactDate: string;
+  /**
+   * ISO — the last real touch on record. Absent means never touched: unlike
+   * `lastContactDate` it does not fall back to when the person was added.
+   */
+  lastTouchDate?: string;
   nextFollowUpDate?: string; // ISO
   notes: string;
   recordSource: LeadSourceOfRecord;
+  /** Split name parts, for editing. Present on stored contacts only. */
+  editable?: {
+    firstName: string;
+    lastName: string;
+    preferredName: string;
+    company: string;
+  };
 }
 
 // ---------------------------------------------------------------------------

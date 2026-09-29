@@ -3,8 +3,9 @@ import { requireCaller } from "@/lib/auth/require-caller";
 import { listSampleLeads } from "@/lib/data/sample-leads";
 import { createContactSchema } from "@/lib/contacts/domain";
 import { actorOrResponse, contactsSource, failure, NO_STORE, unexpected } from "@/lib/contacts/http";
-import { createContact, listContacts } from "@/lib/contacts/service";
-import { parseContactFilters } from "@/lib/contacts/filters";
+import { createContact, listContactsPage } from "@/lib/contacts/service";
+import { isPaged, parseContactQuery } from "@/lib/contacts/filters";
+import { applyQuery } from "@/lib/contacts/windows";
 
 export const runtime = "nodejs";
 
@@ -18,28 +19,42 @@ export const dynamic = "force-dynamic";
  * puts it in the request line and the request line is what the platform
  * writes to its access logs, so searching from this screen would quietly
  * accumulate a log of the brokerage's clients. Text goes to the POST search
- * route instead; a stage or a source filter is not identifying and stays here.
+ * route instead; a stage, a source or a follow-up filter is not identifying and
+ * stays here.
+ *
+ * An invalid filter is refused (400, naming the parameter — never the value)
+ * rather than ignored: `?stage=garbage` must not become "every contact".
  */
-function parseUrlFilters(params: URLSearchParams) {
-  return parseContactFilters((key) => (key === "q" ? null : params.get(key)));
+function parseUrlQuery(params: URLSearchParams) {
+  return parseContactQuery((key) => (key === "q" ? null : params.get(key)));
 }
 
-/** The caller's contacts — every one they may see. */
+/**
+ * The caller's contacts that match — filtered, sorted and (with `page` /
+ * `pageSize`) paged in the database. `total` is the match count.
+ */
 export async function GET(request: NextRequest) {
   const caller = await requireCaller();
   if (!caller.ok) return caller.response;
 
-  const filters = parseUrlFilters(request.nextUrl.searchParams);
+  const parsed = parseUrlQuery(request.nextUrl.searchParams);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: "invalid", fields: parsed.fields }, { status: 400, headers: NO_STORE });
+  }
+  const query = parsed.query;
 
   if (contactsSource() === "sample") {
-    return NextResponse.json({ items: listSampleLeads(filters) }, { headers: NO_STORE });
+    return NextResponse.json(applyQuery(listSampleLeads(), query, new Date()), { headers: NO_STORE });
   }
 
   const actor = await actorOrResponse(caller.clerkUserId);
   if (!actor.ok) return actor.response;
   try {
-    const items = await listContacts(actor.ctx, filters);
-    return NextResponse.json({ items }, { headers: NO_STORE });
+    const page = await listContactsPage(actor.ctx, query);
+    return NextResponse.json(
+      isPaged(query) ? page : { items: page.items, total: page.total },
+      { headers: NO_STORE }
+    );
   } catch (error) {
     return unexpected(error);
   }

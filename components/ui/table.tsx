@@ -1,9 +1,15 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
-  ({ className, ...props }, ref) => (
-    <div className="relative w-full overflow-x-auto">
+const Table = React.forwardRef<
+  HTMLTableElement,
+  React.HTMLAttributes<HTMLTableElement> & {
+    /** Classes for the scroll container — e.g. a max height, so a header can stick inside it. */
+    containerClassName?: string;
+  }
+>(
+  ({ className, containerClassName, ...props }, ref) => (
+    <div className={cn("relative w-full overflow-x-auto", containerClassName)}>
       <table
         ref={ref}
         className={cn("w-full caption-bottom text-[13px]", className)}

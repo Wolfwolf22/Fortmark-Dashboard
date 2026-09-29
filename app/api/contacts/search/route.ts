@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
 import { listSampleLeads } from "@/lib/data/sample-leads";
 import { actorOrResponse, contactsSource, NO_STORE, unexpected } from "@/lib/contacts/http";
-import { listContacts } from "@/lib/contacts/service";
-import { parseContactFilters } from "@/lib/contacts/filters";
+import { listContactsPage } from "@/lib/contacts/service";
+import { isPaged, parseContactQuery } from "@/lib/contacts/filters";
+import { applyQuery } from "@/lib/contacts/windows";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,20 +40,29 @@ export async function POST(request: Request) {
   }
 
   const record = body as Record<string, unknown>;
-  const filters = parseContactFilters((key) => {
+  const parsed = parseContactQuery((key) => {
     const value = record[key];
-    return typeof value === "string" ? value : null;
+    if (typeof value === "string") return value;
+    // Numbers and booleans arrive in a JSON body as themselves.
+    return typeof value === "number" || typeof value === "boolean" ? String(value) : null;
   });
+  if (!parsed.ok) {
+    return NextResponse.json({ error: "invalid", fields: parsed.fields }, { status: 400, headers: NO_STORE });
+  }
+  const query = parsed.query;
 
   if (contactsSource() === "sample") {
-    return NextResponse.json({ items: listSampleLeads(filters) }, { headers: NO_STORE });
+    return NextResponse.json(applyQuery(listSampleLeads(), query, new Date()), { headers: NO_STORE });
   }
 
   const actor = await actorOrResponse(caller.clerkUserId);
   if (!actor.ok) return actor.response;
   try {
-    const items = await listContacts(actor.ctx, filters);
-    return NextResponse.json({ items }, { headers: NO_STORE });
+    const page = await listContactsPage(actor.ctx, query);
+    return NextResponse.json(
+      isPaged(query) ? page : { items: page.items, total: page.total },
+      { headers: NO_STORE }
+    );
   } catch (error) {
     return unexpected(error);
   }

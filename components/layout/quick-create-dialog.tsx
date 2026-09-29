@@ -29,7 +29,7 @@ import { addDocument } from "@/lib/data/adapters/documents";
 import { getTransactions } from "@/lib/data/adapters/transactions";
 import { useQuery } from "@/lib/data/hooks";
 import { SUBSYSTEM_COPY, unavailableSubsystem } from "@/components/common/subsystem-state";
-import { EventType, PropertyType } from "@/lib/data/types";
+import { EventType, Lead, LEAD_SOURCES_ORDER, LEAD_SOURCE_LABELS, PropertyType } from "@/lib/data/types";
 import { now } from "@/lib/dates";
 import { closeDateFromInput } from "@/lib/transactions/close-date";
 
@@ -48,7 +48,7 @@ const TITLES: Record<QuickCreateKind, { title: string; description: string; cta:
   },
   lead: {
     title: "New lead",
-    description: "Adds a lead at the top of the pipeline.",
+    description: "Adds a lead. It opens right after, ready for a first follow-up.",
     cta: "Add lead",
     goto: "/leads",
   },
@@ -83,6 +83,7 @@ export function QuickCreateDialog() {
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!kind) return;
+    let goto = meta!.goto;
     const form = new FormData(e.currentTarget);
     const get = (name: string) => String(form.get(name) ?? "").trim();
     setBusy(true);
@@ -110,12 +111,15 @@ export function QuickCreateDialog() {
           closeDate: closeDateFromInput(get("closeDate")),
         });
       } else if (kind === "lead") {
-        await createLead({
+        const created = await createLead({
           name: get("name"),
           email: get("email"),
           phone: get("phone"),
           intent: (get("intent") || "buy") as "buy" | "sell" | "both",
+          source: (get("source") || undefined) as Lead["source"] | undefined,
         });
+        // Land on the new person, open, ready to schedule the first follow-up.
+        goto = `/leads?open=${encodeURIComponent(created.id)}`;
       } else if (kind === "event") {
         const date = get("date") || now().toISOString().slice(0, 10);
         const time = get("time") || "10:00";
@@ -140,7 +144,7 @@ export function QuickCreateDialog() {
         });
       }
       close();
-      router.push(meta!.goto);
+      router.push(goto);
     } catch (e) {
       // "Check the fields" is wrong when there is nothing wrong with the
       // fields: an event or a document has nowhere to be saved to here.
@@ -222,16 +226,24 @@ export function QuickCreateDialog() {
                   <Field label="Email" name="email" type="email" placeholder="name@example.com" />
                   <Field label="Phone" name="phone" placeholder="(954) 555-0100" />
                 </div>
-                <SelectField
-                  label="Intent"
-                  name="intent"
-                  defaultValue="buy"
-                  options={[
-                    ["buy", "Buying"],
-                    ["sell", "Selling"],
-                    ["both", "Both"],
-                  ]}
-                />
+                <div className="grid grid-cols-2 gap-3">
+                  <SelectField
+                    label="Intent"
+                    name="intent"
+                    defaultValue="buy"
+                    options={[
+                      ["buy", "Buying"],
+                      ["sell", "Selling"],
+                      ["both", "Both"],
+                    ]}
+                  />
+                  <SelectField
+                    label="Source (optional)"
+                    name="source"
+                    defaultValue="other"
+                    options={LEAD_SOURCES_ORDER.map((s) => [s, LEAD_SOURCE_LABELS[s]] as [string, string])}
+                  />
+                </div>
               </div>
             )}
 

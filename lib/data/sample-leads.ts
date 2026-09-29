@@ -116,3 +116,28 @@ export function setSampleLeadFollowUp(id: string, want: { day?: string; complete
 export function listSampleLeadAgents(): { id: string; name: string }[] {
   return agents.filter((a) => a.role !== "coordinator").map((a) => ({ id: a.id, name: a.name }));
 }
+
+/** Edit a sample row's details in memory, as the database path does for a stored contact. */
+export function editSampleLead(
+  id: string,
+  patch: { name?: string; email?: string; phone?: string; source?: Lead["source"]; notes?: string }
+): Lead | undefined {
+  const lead = leads.find((l) => l.id === id);
+  if (!lead) return undefined;
+  if (patch.name !== undefined && patch.name.trim()) lead.name = patch.name.trim();
+  if (patch.email !== undefined) lead.email = patch.email.trim();
+  if (patch.phone !== undefined) lead.phone = patch.phone.trim();
+  if (patch.source !== undefined) lead.source = patch.source;
+  if (patch.notes !== undefined) lead.notes = patch.notes.trim();
+  bumpDataVersion();
+  return lead;
+}
+
+/** Hand a sample row to another sample agent. */
+export function reassignSampleLead(id: string, agentId: string): Lead | undefined {
+  const lead = leads.find((l) => l.id === id);
+  if (!lead || !agents.some((a) => a.id === agentId)) return lead;
+  lead.assignedAgentId = agentId;
+  bumpDataVersion();
+  return lead;
+}

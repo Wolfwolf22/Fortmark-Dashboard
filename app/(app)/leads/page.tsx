@@ -1,76 +1,112 @@
 "use client";
 
 /**
- * Leads — pipeline summary strip, filterable table, and a detail drawer
- * with stage advancement. ?open=<leadId> deep-links into the drawer.
+ * Leads — the daily CRM workspace.
+ *
+ * A snapshot of what needs attention, quick views over the same contacts, a
+ * filter bar, and one dense table. Every filter, sort and page is a request to
+ * the server; the page keeps no copy of the list to narrow. The filters live in
+ * the URL (`/leads?followUp=overdue&active=1`) so a refresh, the back button and
+ * a link to a colleague all land on the same view. Search text does not: it can
+ * be a client's name, number or email, and a URL is logged.
+ *
+ * `?open=<leadId>` deep-links into the drawer.
  */
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search } from "lucide-react";
+import { Plus } from "lucide-react";
+import { useSessionUser } from "@/components/layout/session-user";
 import { LeadDrawer } from "@/components/leads/lead-drawer";
+import { leadAbilities } from "@/components/leads/lead-shared";
+import { LeadsFilters } from "@/components/leads/leads-filters";
+import { LeadsSnapshotStrip } from "@/components/leads/leads-snapshot";
 import { LeadsTable } from "@/components/leads/leads-table";
-import { PipelineSummary } from "@/components/leads/pipeline-summary";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getLeadAgents, getLeads } from "@/lib/data/adapters/leads";
+import { getLeadAgents, getLeadSnapshot, getLeadsPage, queryFields } from "@/lib/data/adapters/leads";
 import { useQuery } from "@/lib/data/hooks";
-import {
-  LEAD_SOURCE_LABELS,
-  LEAD_STAGES,
-  LeadSource,
-  LeadStage,
-} from "@/lib/data/types";
+import { matchingView, parseContactQuery, type ContactQuery, type SortDir, type SortKey } from "@/lib/contacts/filters";
+import { useUiStore } from "@/lib/stores/ui";
 
-type SourceFilter = "all" | LeadSource;
+const PAGE_SIZE = 25;
 
-const SOURCES = Object.keys(LEAD_SOURCE_LABELS) as LeadSource[];
+/** Read the filters out of the URL, dropping anything invalid rather than failing the page. */
+function readQuery(params: URLSearchParams): ContactQuery {
+  const get = (key: string) => (key === "q" || key === "pageSize" ? null : params.get(key));
+  const first = parseContactQuery(get);
+  if (first.ok) return first.query;
+  const bad = new Set(first.fields);
+  const second = parseContactQuery((key) => (bad.has(key) ? null : get(key)));
+  return second.ok ? second.query : {};
+}
+
+/** How a view is ordered until someone chooses otherwise: the most urgent first. */
+function defaultOrder(query: ContactQuery): { sort: SortKey; dir: SortDir } {
+  if (query.followUp === "overdue" || query.followUp === "due_today") return { sort: "followUp", dir: "asc" };
+  if (query.lastTouch === "14d" || query.lastTouch === "30d" || query.lastTouch === "7d") return { sort: "lastTouch", dir: "asc" };
+  return { sort: "lastTouch", dir: "desc" };
+}
 
 function PageSkeleton() {
   return (
-    <div className="space-y-5">
-      <div className="flex gap-2 overflow-x-hidden pb-1">
-        {LEAD_STAGES.map((stage) => (
-          <Skeleton key={stage} className="h-[4.5rem] w-28 flex-none rounded-panel" />
+    <div className="space-y-4">
+      <Skeleton className="h-9 w-40" />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Skeleton key={i} className="h-[3.75rem] rounded-panel" />
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <Skeleton className="h-9 w-full sm:w-72" />
-        <Skeleton className="h-9 w-40" />
-        <Skeleton className="h-9 w-44" />
-      </div>
+      <Skeleton className="h-9 w-full sm:w-80" />
       <Skeleton className="h-96 w-full rounded-card" />
     </div>
   );
 }
 
+function emptyCopy(query: ContactQuery, narrowing: boolean): { title: string; description: string } {
+  if (!narrowing) {
+    return { title: "No leads yet", description: "Add a lead with New lead to start your book." };
+  }
+  const view = matchingView(query);
+  if (view === "overdue") return { title: "No overdue follow-ups", description: "Nothing you owe a call is past its day." };
+  if (view === "due_today") return { title: "No follow-ups due today", description: "Nothing is scheduled for today." };
+  if (view === "no_touch_14") return { title: "Nobody has gone quiet", description: "Every active lead has been touched in the last 14 days." };
+  return { title: "No leads match these filters", description: "Clear a filter or try a different search." };
+}
+
 function LeadsPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const setQuickCreate = useUiStore((s) => s.setQuickCreate);
+  const abilities = leadAbilities(useSessionUser().role);
+
+  const urlKey = searchParams.toString();
+  const filters = useMemo(() => readQuery(new URLSearchParams(urlKey)), [urlKey]);
+  const openParam = searchParams.get("open");
 
   const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [source, setSource] = useState<SourceFilter>("all");
-  const [agentId, setAgentId] = useState<string>("all");
-  const [stage, setStage] = useState<LeadStage | null>(null);
-
-  const openParam = searchParams.get("open");
-  const [drawerId, setDrawerId] = useState<string | null>(openParam);
-  const [drawerOpen, setDrawerOpen] = useState(openParam !== null);
-
+  const [debounced, setDebounced] = useState("");
   useEffect(() => {
-    const id = window.setTimeout(() => setDebouncedSearch(search), 200);
+    const id = window.setTimeout(() => setDebounced(search.trim()), 250);
     return () => window.clearTimeout(id);
   }, [search]);
 
-  // Deep link: /leads?open=<leadId> opens the drawer on load (and on any
-  // later navigation that sets the param).
+  const order = filters.sort ? { sort: filters.sort, dir: filters.dir ?? "asc" } : defaultOrder(filters);
+  const request: ContactQuery = {
+    ...filters,
+    q: debounced || undefined,
+    sort: order.sort,
+    dir: order.dir,
+    page: filters.page ?? 1,
+    pageSize: PAGE_SIZE,
+  };
+  const requestKey = JSON.stringify(request);
+
+  const list = useQuery(() => getLeadsPage(request), [requestKey]);
+  const snapshot = useQuery(() => getLeadSnapshot(), []);
+  const agents = useQuery(() => getLeadAgents(), []);
+
+  const [drawerId, setDrawerId] = useState<string | null>(openParam);
+  const [drawerOpen, setDrawerOpen] = useState(openParam !== null);
   useEffect(() => {
     if (openParam) {
       setDrawerId(openParam);
@@ -78,119 +114,105 @@ function LeadsPageInner() {
     }
   }, [openParam]);
 
-  // One query without the stage filter: the table slices it client-side so
-  // the summary strip always shows counts for the current search scope.
-  const { data: leads, loading } = useQuery(
-    () =>
-      getLeads({
-        query: debouncedSearch || undefined,
-        source: source === "all" ? undefined : [source],
-        agentId: agentId === "all" ? undefined : agentId,
-      }),
-    [debouncedSearch, source, agentId]
-  );
+  /** Write the filters to the URL. `open` (the drawer) is preserved. */
+  function navigate(next: ContactQuery) {
+    const fields = queryFields({ ...next, pageSize: undefined, page: next.page && next.page > 1 ? next.page : undefined });
+    const sp = new URLSearchParams(fields);
+    const open = searchParams.get("open");
+    if (open) sp.set("open", open);
+    const qs = sp.toString();
+    router.replace(qs ? `/leads?${qs}` : "/leads", { scroll: false });
+  }
 
-  const { data: agents } = useQuery(() => getLeadAgents(), []);
-
-  const counts = useMemo(() => {
-    if (!leads) return undefined;
-    const result = Object.fromEntries(
-      LEAD_STAGES.map((s) => [s, 0])
-    ) as Record<LeadStage, number>;
-    for (const lead of leads) result[lead.stage] += 1;
-    return result;
-  }, [leads]);
-
-  const visible = useMemo(
-    () => (stage && leads ? leads.filter((l) => l.stage === stage) : leads),
-    [leads, stage]
-  );
-
-  const hasFilters =
-    debouncedSearch !== "" || source !== "all" || agentId !== "all" || stage !== null;
-
-  function clearFilters() {
+  const change = (patch: Partial<ContactQuery>) => {
+    const next: ContactQuery = { ...filters, ...patch, page: undefined };
+    for (const k of Object.keys(next) as (keyof ContactQuery)[]) if (next[k] === undefined) delete next[k];
+    navigate(next);
+  };
+  const applyView = (viewFilters: ContactQuery) => navigate({ ...viewFilters });
+  const clear = () => {
     setSearch("");
-    setDebouncedSearch("");
-    setSource("all");
-    setAgentId("all");
-    setStage(null);
-  }
-
-  function openLead(id: string) {
-    setDrawerId(id);
-    setDrawerOpen(true);
-  }
+    setDebounced("");
+    navigate({});
+  };
+  const sortBy = (key: SortKey) => {
+    const dir: SortDir = key === order.sort ? (order.dir === "asc" ? "desc" : "asc") : key === "lastTouch" || key === "created" ? "desc" : "asc";
+    navigate({ ...filters, sort: key, dir, page: undefined });
+  };
+  const goToPage = (n: number) => navigate({ ...filters, page: n });
 
   function handleDrawerOpenChange(nextOpen: boolean) {
     setDrawerOpen(nextOpen);
-    // Drop the deep-link param on close so a refresh does not reopen it.
+    // Drop the deep-link param on close so a refresh does not reopen it, and keep the filters.
     if (!nextOpen && searchParams.get("open")) {
-      router.replace("/leads", { scroll: false });
+      const sp = new URLSearchParams(searchParams.toString());
+      sp.delete("open");
+      const qs = sp.toString();
+      router.replace(qs ? `/leads?${qs}` : "/leads", { scroll: false });
     }
   }
 
+  const narrowing = Boolean(debounced) || Object.keys(filters).some((k) => !["sort", "dir", "page"].includes(k));
+
   return (
-    <div className="space-y-5">
-      <PipelineSummary
-        counts={counts}
-        activeStage={stage}
-        onToggle={(s) => setStage((prev) => (prev === s ? null : s))}
-      />
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative w-full sm:w-72">
-          <Search
-            aria-hidden
-            className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, email, or neighborhood"
-            aria-label="Search leads"
-            className="pl-9"
-          />
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          {/* The section's one heading is the shell's (visually hidden); this is its visible title. */}
+          <p aria-hidden className="text-display text-2xl">
+            Leads
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">Manage relationships, follow-ups and activity.</p>
         </div>
-        <Select value={source} onValueChange={(v) => setSource(v as SourceFilter)}>
-          <SelectTrigger aria-label="Filter by source" className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All sources</SelectItem>
-            {SOURCES.map((s) => (
-              <SelectItem key={s} value={s}>
-                {LEAD_SOURCE_LABELS[s]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={agentId} onValueChange={setAgentId}>
-          <SelectTrigger aria-label="Filter by agent" className="w-44">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All agents</SelectItem>
-            {(agents ?? []).map((a) => (
-              <SelectItem key={a.id} value={a.id}>
-                {a.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {abilities.canWrite && (
+          <Button type="button" onClick={() => setQuickCreate("lead")}>
+            <Plus aria-hidden />
+            New lead
+          </Button>
+        )}
       </div>
+
+      <LeadsSnapshotStrip
+        snapshot={snapshot.data}
+        loading={snapshot.loading}
+        failed={Boolean(snapshot.error)}
+        current={filters}
+        onApply={applyView}
+      />
+
+      <LeadsFilters
+        query={filters}
+        search={search}
+        onSearch={setSearch}
+        onChange={change}
+        onApplyView={applyView}
+        onClear={clear}
+        agents={agents.data ?? []}
+        stageCounts={snapshot.data?.byStage}
+        brokerageWide={abilities.sees === "brokerage"}
+      />
+
       <LeadsTable
-        leads={visible}
-        agents={agents}
-        loading={loading}
-        hasFilters={hasFilters}
-        onClearFilters={clearFilters}
-        onOpen={openLead}
+        page={list.data}
+        loading={list.loading}
+        failed={Boolean(list.error)}
+        onRetry={list.refetch}
+        sort={order.sort}
+        dir={order.dir}
+        onSort={sortBy}
+        onPage={goToPage}
+        hasFilters={narrowing}
+        onClearFilters={clear}
+        empty={emptyCopy(filters, narrowing)}
+        onOpen={(id) => {
+          setDrawerId(id);
+          setDrawerOpen(true);
+        }}
+        agents={agents.data ?? []}
+        showAgent={abilities.sees === "brokerage"}
       />
-      <LeadDrawer
-        leadId={drawerId}
-        open={drawerOpen}
-        onOpenChange={handleDrawerOpenChange}
-      />
+
+      <LeadDrawer leadId={drawerId} open={drawerOpen} onOpenChange={handleDrawerOpenChange} />
     </div>
   );
 }

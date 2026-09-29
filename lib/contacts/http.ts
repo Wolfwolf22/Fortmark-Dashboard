@@ -32,6 +32,11 @@ export function failure(reason: ServiceFailure): NextResponse {
       return NextResponse.json({ error: "invalid_assignee" }, { status: 400, headers: NO_STORE });
     case "invalid_date":
       return NextResponse.json({ error: "invalid_date" }, { status: 400, headers: NO_STORE });
+    // Field names only — never what was typed.
+    case "invalid_name":
+      return NextResponse.json({ error: "invalid", fields: ["firstName"] }, { status: 400, headers: NO_STORE });
+    case "invalid_phone":
+      return NextResponse.json({ error: "invalid", fields: ["phone"] }, { status: 400, headers: NO_STORE });
     case "disabled":
       return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
     default:

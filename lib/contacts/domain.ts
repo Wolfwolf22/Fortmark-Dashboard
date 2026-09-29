@@ -11,6 +11,7 @@ import type { Lead, LeadIntent, LeadSource, LeadStage } from "../data/types.ts";
 import type { ContactActivityRow, ContactOpportunityRow, ContactRow } from "../db/schema.ts";
 import { canCreateOwnedFor, canSeeOwned, canWriteOwned, type Actor } from "../auth/actor.ts";
 import { centsToDollars } from "../transactions/money.ts";
+import { toE164 } from "../profile/normalize.ts";
 import { businessDayKey } from "../metrics/business-day.ts";
 import { decideFollowUp, type FollowUpOutcome } from "./follow-up.ts";
 import { ALL_CONTACT_STAGES } from "./stages.ts";
@@ -128,6 +129,95 @@ export function resolveFollowUp(
   return { value: decided.value, change: decided.outcome };
 }
 
+// --- Editing a contact ---------------------------------------------------------------
+
+const EDITABLE_TEXT = { max: 200 } as const;
+
+/**
+ * What a person may change about a contact they can write to. Only what the
+ * contact row itself holds: how they are named and reached, where they came
+ * from, and the notes. Ownership, tenancy, stage, dates and every identifier are
+ * NOT here — `.strict()` refuses them rather than ignoring them, so a crafted
+ * body that names one is an error, not a silent no-op. An empty string clears a
+ * field.
+ *
+ * Intent is not a contact field: it is summarised from the person's needs
+ * (opportunities), a separate domain that is not editable from Leads.
+ */
+export const editContactSchema = z
+  .object({
+    firstName: z.string().trim().max(100).optional(),
+    lastName: z.string().trim().max(100).optional(),
+    preferredName: z.string().trim().max(100).optional(),
+    email: z.union([z.literal(""), z.string().trim().email().max(320)]).optional(),
+    phone: z.string().trim().max(40).optional(),
+    company: z.string().trim().max(EDITABLE_TEXT.max).optional(),
+    source: z.enum(SOURCES).optional(),
+    notes: z.string().trim().max(5000).optional(),
+  })
+  .strict()
+  .refine((body) => Object.keys(body).length > 0, { message: "nothing to change" });
+
+export type EditContactInput = z.infer<typeof editContactSchema>;
+
+export const reassignContactSchema = z.object({ agentId: z.string().uuid() }).strict();
+
+export type ContactEditField = "name" | "email" | "phone" | "company" | "source" | "notes";
+
+export type ContactEditPlan =
+  | { ok: true; set: Partial<Pick<ContactRow, "firstName" | "lastName" | "preferredName" | "email" | "phoneE164" | "company" | "source" | "notes">>; changed: ContactEditField[] }
+  | { ok: false; field: "name" | "phone" };
+
+const blankToNull = (v: string | undefined | null): string | null => {
+  const t = (v ?? "").trim();
+  return t === "" ? null : t;
+};
+
+/**
+ * What an edit would change, decided without a database.
+ *
+ * Compares the request against the stored row so only real changes are written
+ * and audited — saving an unchanged form is a no-op, not a history line. A name
+ * is still required afterwards (first, last or preferred), a phone number that
+ * cannot be read confidently is refused rather than stored half-parsed, and an
+ * email is stored lower-case as it is on creation.
+ */
+export function planContactEdit(
+  row: Pick<ContactRow, "firstName" | "lastName" | "preferredName" | "email" | "phoneE164" | "company" | "source" | "notes">,
+  patch: EditContactInput
+): ContactEditPlan {
+  const set: Extract<ContactEditPlan, { ok: true }>["set"] = {};
+  const changed = new Set<ContactEditField>();
+  const apply = <K extends keyof typeof set>(key: K, value: (typeof set)[K], field: ContactEditField, current: unknown) => {
+    if (value !== current) {
+      set[key] = value;
+      changed.add(field);
+    }
+  };
+
+  if (patch.firstName !== undefined) apply("firstName", blankToNull(patch.firstName), "name", row.firstName ?? null);
+  if (patch.lastName !== undefined) apply("lastName", blankToNull(patch.lastName), "name", row.lastName ?? null);
+  if (patch.preferredName !== undefined) apply("preferredName", blankToNull(patch.preferredName), "name", row.preferredName ?? null);
+  if (patch.email !== undefined) apply("email", blankToNull(patch.email)?.toLowerCase() ?? null, "email", row.email ?? null);
+  if (patch.phone !== undefined) {
+    const raw = blankToNull(patch.phone);
+    const phone = raw === null ? null : toE164(raw);
+    if (raw !== null && phone === null) return { ok: false, field: "phone" };
+    apply("phoneE164", phone, "phone", row.phoneE164 ?? null);
+  }
+  if (patch.company !== undefined) apply("company", blankToNull(patch.company), "company", row.company ?? null);
+  if (patch.source !== undefined) apply("source", patch.source, "source", row.source);
+  if (patch.notes !== undefined) apply("notes", blankToNull(patch.notes), "notes", row.notes ?? null);
+
+  const after = {
+    firstName: "firstName" in set ? set.firstName : row.firstName,
+    lastName: "lastName" in set ? set.lastName : row.lastName,
+    preferredName: "preferredName" in set ? set.preferredName : row.preferredName,
+  };
+  if (!after.firstName && !after.lastName && !after.preferredName) return { ok: false, field: "name" };
+  return { ok: true, set, changed: Array.from(changed) };
+}
+
 // --- Row → screen -----------------------------------------------------------------
 
 export function displayName(row: Pick<ContactRow, "firstName" | "lastName" | "preferredName">): string {
@@ -191,8 +281,15 @@ export function toLead(bundle: ContactBundle): Lead {
     assignedAgentName: bundle.agentName,
     createdDate: row.createdAt.toISOString(),
     lastContactDate: lastContact.toISOString(),
+    lastTouchDate: row.lastContactAt?.toISOString(),
     nextFollowUpDate: row.nextFollowUpAt?.toISOString(),
     notes: row.notes ?? "",
     recordSource: "db",
+    editable: {
+      firstName: row.firstName ?? "",
+      lastName: row.lastName ?? "",
+      preferredName: row.preferredName ?? "",
+      company: row.company ?? "",
+    },
   };
 }

@@ -415,12 +415,16 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
   check("atomic control: with no failure both writes land in one batch", ok.result.ok && writesTo(ok.m, contacts).length === 1 && writesTo(ok.m, auditEvents).length === 1 && ok.m.batchCount() === 1);
 }
 
-// Audit content: field and kind, never the date, the name, or contact details.
+// Audit content: field, outcome and — for a scheduled reminder — the day it was set for (workflow
+// data, and what lets the timeline say "scheduled for Oct 9"). Never the name or contact details.
 {
   const r = await direct(AGENT, noon("2026-09-24"), { action: "schedule", day: "2026-10-09" });
   const meta = JSON.stringify(auditOf(r.m));
-  check("audit: contact id, field and kind only", Object.keys(auditOf(r.m) ?? {}).sort().join(",") === "contactId,field,followUp,mechanism");
-  check("audit: no date, name or contact detail", !/2026|Synthetic|Lead|@|\+1/.test(meta.replace(ID, "")));
+  check("audit: contact id, field, outcome, mechanism and the reminder's day", Object.keys(auditOf(r.m) ?? {}).sort().join(",") === "contactId,day,field,followUp,mechanism");
+  check("audit: the only date is the reminder's own day", (meta.match(/\d{4}-\d{2}-\d{2}/g) ?? []).join() === "2026-10-09");
+  check("audit: no name or contact detail", !/Synthetic|Lead|@|\+1/.test(meta.replace(ID, "")));
+  const done = await direct(AGENT, noon("2026-09-24"), { action: "complete" });
+  check("audit: completing a reminder records no date at all", Object.keys(auditOf(done.m) ?? {}).sort().join(",") === "contactId,field,followUp,mechanism");
 }
 
 // Assigned agent: profile name → the caller's own name → neutral. Never an id or email.
