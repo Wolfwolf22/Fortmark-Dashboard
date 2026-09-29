@@ -9,7 +9,7 @@
  * dates are not here — each has its own control in the drawer — and intent is a
  * summary of the person's needs, which is a different part of the CRM.
  */
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -57,6 +57,13 @@ export function LeadEditForm({
   const [source, setSource] = useState<Lead["source"]>(lead.source);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // Focus the first field that needs attention — once the form is enabled again. A field that is
+  // still disabled while the request is in flight cannot take focus.
+  useEffect(() => {
+    const first = Object.keys(errors)[0];
+    if (first && !saving) document.getElementById(`lead-edit-${first === "firstName" ? "first-name" : first}`)?.focus();
+  }, [errors, saving]);
+
   const set = (field: Field) => (e: { target: { value: string } }) => setValues((v) => ({ ...v, [field]: e.target.value }));
 
   async function submit(e: FormEvent) {
@@ -70,7 +77,6 @@ export function LeadEditForm({
     const after = { ...start, ...patch } as typeof start;
     if (!after.firstName.trim() && !after.lastName.trim() && !after.preferredName.trim()) {
       setErrors({ firstName: MESSAGES.firstName });
-      document.getElementById("lead-edit-first-name")?.focus();
       return;
     }
     if (Object.keys(patch).length === 0) {
@@ -86,8 +92,6 @@ export function LeadEditForm({
         const next: Record<string, string> = {};
         for (const f of error.fields) next[f] = MESSAGES[f] ?? "Check this field.";
         setErrors(next);
-        const first = error.fields[0];
-        document.getElementById(`lead-edit-${first === "firstName" ? "first-name" : first}`)?.focus();
         return;
       }
       throw error;

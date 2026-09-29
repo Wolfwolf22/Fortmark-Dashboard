@@ -109,6 +109,7 @@ test.beforeAll(async ({ browser }) => {
 
 test.afterAll(async () => {
   say(`platform error-page reloads=${platformReloads}, uncaught=${uncaught.length}, console errors=${consoleErrors.length}`);
+  if (uncaught.length || consoleErrors.length) say(`detail: ${JSON.stringify([...uncaught, ...consoleErrors]).slice(0, 600)}`);
   await page?.close();
 });
 
@@ -527,8 +528,13 @@ test("desktop: search is literal, filters compose, sort and pages are requests",
   await expect(page).toHaveURL(/sort=followUp/);
   await page.getByRole("button", { name: "Name" }).click();
   await expect(page.getByRole("columnheader", { name: "Name" })).toHaveAttribute("aria-sort", "ascending", { timeout: 20_000 });
-  const firstNames = (await page.getByTestId("lead-row").locator("td:first-child button span:first-child").allInnerTexts()).map((n) => n.toLowerCase());
-  expect(firstNames).toEqual([...firstNames].sort());
+  // The list is a fresh server answer: wait for it (a full page of 25) rather than read the rows of the request before.
+  await expect
+    .poll(async () => {
+      const n = (await page.getByTestId("lead-row").locator("td:first-child button span:first-child").allInnerTexts()).map((x) => x.toLowerCase());
+      return n.length === 25 && JSON.stringify(n) === JSON.stringify([...n].sort());
+    }, { timeout: 20_000, message: "25 rows, in name order" })
+    .toBe(true);
   await page.getByRole("button", { name: "Name" }).click();
   await expect(page.getByRole("columnheader", { name: "Name" })).toHaveAttribute("aria-sort", "descending", { timeout: 20_000 });
 
