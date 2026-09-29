@@ -253,3 +253,88 @@ Ready for **human authorization** to run a small, code-only Production promotion
 fast-forward the Production branch to `a221c21`, then run the smoke above. Stop
 and roll back to `dpl_7piwwZL9G17nn7LsVs1bxByv3UmQ` on any source-state change or
 5xx.
+
+---
+
+# PRODUCTION EXECUTION
+
+Executed 2026-09-29, after the audit above was approved.
+
+| | |
+|---|---|
+| Source | `a221c21` |
+| Previous Production | `f39c0dd` · `dpl_7piwwZL9G17nn7LsVs1bxByv3UmQ` |
+| Action | Production branch `claude/fortmark-dashboard-build-v39u96` fast-forwarded `f39c0dd` → `a221c21` (plain push; no merge, no force, no conflict) |
+| New deployment | `dpl_JDgtuMgnyZmb2mN5TtLeBcNzWvPn` — built fresh by Vercel from the branch, target production, **READY** (created about 15:06 UTC, ready about a minute later), aliased to `fortmark-dashboard.vercel.app` |
+| Rollback target | `dpl_7piwwZL9G17nn7LsVs1bxByv3UmQ` — verified READY and previously live before the push; **not needed** |
+
+## Gates before the push
+
+Rollback target READY · health identical to the audit (`f39c0dd`, `contacts=db`,
+`transactions=db`, `listings=mls`, `homeMetrics=real-only`, `no_credential`,
+`actions=disabled`) · Production branch tip still `f39c0dd` (clean fast-forward) ·
+delta re-verified: 18 runtime files, **0** files under `lib/db`, `lib/mls`,
+`lib/mls-identity`, `lib/auth`, `lib/ai`, `lib/flags.ts`, `middleware.ts`,
+`next.config.ts`, `vercel.json`, `package-lock.json`; `package.json` changes are only
+two `test:*` script entries.
+
+## Health gate (after)
+
+`GET /dashboard/api/health` → 200, `no-store`:
+`revision=a221c21`, `transactions=db`, `contacts=db`, `listings=mls`,
+`homeMetrics=real-only`, assistant `openai` / `no_credential`, `actions=disabled`.
+**Only `revision` changed.**
+
+## Unauthenticated safety
+
+- `/dashboard`, `/leads`, `/transactions`, `/listings`, `/settings` → 307 to the sign-in page, with the return path; no loop.
+- `/dashboard/api/{contacts,metrics,transactions,team,brokerage,listings}` → 401, `no-store`.
+- The new `POST /dashboard/api/contacts/<id>/follow-up` → 401, `no-store` (refused before anything else).
+- No 5xx observed on any probe; no record data exposed.
+
+## Database (read-only, after)
+
+Migrations **11** (unchanged) · contacts **1** · activities **6** · transactions **0** ·
+deadlines **0** · users 1 · profiles 1 · brokerage identities 1 · MLS links 1 ·
+prepared actions **0** · contacts with a follow-up **0** · audit events in the last
+30 minutes **0**. Nothing changed: the deployment wrote nothing.
+
+## Logs
+
+The runtime-log tool available to this session is bound to a different Vercel
+project, so it could not return this project's logs (a grouped query for the new
+deployment came back empty, and earlier queries timed out). This is **not**
+evidence of a clean log. The evidence in hand: the probes above (200 / 307 / 401
+only), health after the build, and unchanged database counts. **Check the
+dashboard project's runtime logs in Vercel** for 5xx, 503, database errors,
+Bridge 401/429/5xx, contact follow-up route errors and Home metrics errors,
+after the operator's smoke. Anonymous 401 probes are expected, not errors.
+
+## Human signed-in smoke — PENDING (operator)
+
+Not run by me (no Production session was minted or impersonated). To record:
+
+1. Home · 2. Leads (new Follow-up column, also at a narrow width) · 3. the existing
+contact's "Next follow-up" region · 4. Transactions (quick-create shows "Close date
+(optional)", nothing pre-filled; do not create a deal) · 5. Listings · 6. My Listings ·
+7. FortMark Listings · 8. ⌘K with an exact MLS number · 9. Team · 10. Brokerage
+settings · 11. one non-Home page: a screen reader's "next heading" finds the section name.
+
+Follow-up dates in the drawer and on Leads are now judged on the Eastern business
+day; transaction deadlines, metric windows and the AI follow-up validator still use
+UTC days (M-12). Do not read this release as "all dashboard dates are Eastern".
+
+## Optional real follow-up test — SKIPPED
+
+Not run. It writes to the one real contact and is the operator's choice. If chosen:
+schedule a **future** day through the UI; expect the follow-up to change, **last
+contact unchanged**, **no new activity** (still 6), **one** audit event, and Home /
+Leads / drawer to agree. Before: 1 contact, 6 activities, last contact unchanged
+since the audit.
+
+## Status and change log
+
+**FOLLOW-UP RELEASE LIVE** (deployment verified; operator smoke outstanding).
+Production changes: (1) Production branch fast-forward `f39c0dd` → `a221c21`;
+(2) one fresh Vercel Production deployment. Nothing else: no environment variable,
+Bridge, Clerk, AI, flag, migration or data change. AI unchanged.
