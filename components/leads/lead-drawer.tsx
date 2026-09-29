@@ -186,9 +186,10 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
   const agentName = lead?.assignedAgentName ?? agent?.name;
 
   const abilities = leadAbilities(useSessionUser().role);
+  // The roster is only needed once a drawer is actually open.
   const { data: roster } = useQuery(
-    () => (abilities.canReassign ? getLeadAgents() : Promise.resolve([] as { id: string; name: string }[])),
-    [abilities.canReassign]
+    () => (abilities.canReassign && open ? getLeadAgents() : Promise.resolve([] as { id: string; name: string }[])),
+    [abilities.canReassign, open]
   );
 
   const [saving, setSaving] = useState(false);

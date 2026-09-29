@@ -30,6 +30,9 @@ const SUSPENDED_USER = "99999999-9999-4999-8999-999999999999";
 const C = (n: number) => `aaaaaaaa-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const ALPHA = C(1), BRAVO = C(2), CHARLIE = C(3), DELTA = C(4), ECHO = C(5), GOLF = C(7), HOTEL = C(8), INDIA = C(11), JULIET = C(12), KILO = C(13);
 const NOWHERE = "00000000-0000-4000-8000-000000000000";
+/** Unique to this run, so a repeat run still changes what it says it changes. */
+const STAMP = String(Date.now()).slice(-6);
+const PHONE_TAIL = String(Date.now()).slice(-4);
 
 let page: Page;
 let api: ReturnType<typeof refreshingApiFor>;
@@ -76,7 +79,7 @@ async function pick(p: Page, label: string, option: string | RegExp) {
 const rows = (p: Page) => p.getByTestId("lead-row");
 const drawer = (p: Page) => p.getByRole("dialog");
 const overflows = (p: Page) => p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
-const leadsReady = (p: Page) => p.getByRole("button", { name: /^All leads$|^My leads$/ });
+const leadsReady = (p: Page) => p.getByTestId("view-all");
 
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(180_000);
@@ -273,17 +276,17 @@ test("edit: authorized, validated, audited by field name, and it touches nothing
     expect(((await api(`/dashboard/api/contacts/${ECHO}`)).body.contact as { notes: string }).notes).toBe(before.notes);
     return;
   }
-  const ok = await patch(`/dashboard/api/contacts/${ECHO}`, { company: "Lv2 Realty", email: "Echo@Example.Test", phone: "(305) 555-0177", notes: "edited by the certification" });
+  const ok = await patch(`/dashboard/api/contacts/${ECHO}`, { company: `Lv2 Realty ${STAMP}`, email: `Echo${STAMP}@Example.Test`, phone: `(305) 555-${PHONE_TAIL}`, notes: `edited by the certification ${STAMP}` });
   expect(ok.status).toBe(200);
   expect((ok.body.changed as string[]).sort()).toEqual(["company", "email", "notes", "phone"]);
   const after = ok.body.contact as Row & { email: string; phone: string; editable: { company: string } };
-  expect(after.email).toBe("echo@example.test");
-  expect(after.phone).toBe("+13055550177");
-  expect(after.editable.company).toBe("Lv2 Realty");
+  expect(after.email).toBe(`echo${STAMP}@example.test`);
+  expect(after.phone).toBe(`+1305555${PHONE_TAIL}`);
+  expect(after.editable.company).toBe(`Lv2 Realty ${STAMP}`);
   expect(after.lastTouchDate, "an edit is not a touch").toBeUndefined();
   expect(after.stage).toBe(before.stage);
   expect(after.assignedAgentId).toBe(before.assignedAgentId);
-  const same = await patch(`/dashboard/api/contacts/${ECHO}`, { company: "Lv2 Realty" });
+  const same = await patch(`/dashboard/api/contacts/${ECHO}`, { company: `Lv2 Realty ${STAMP}` });
   expect(same.body.changed, "an unchanged save writes nothing").toEqual([]);
   // Refusals, each with the field named and never the value.
   for (const [body, fields] of [
@@ -313,6 +316,7 @@ test("edit: authorized, validated, audited by field name, and it touches nothing
 });
 
 test("reassign: privileged only, to a real roster member, and it is not a touch", async () => {
+  const before = (await api(`/dashboard/api/contacts/${DELTA}`)).body.contact as Row;
   const res = await post(`/dashboard/api/contacts/${DELTA}/reassign`, { agentId: OTHER_AGENT });
   if (!PRIVILEGED) {
     expect(res.status, WRITER ? "an agent may not hand a contact away" : "a member is forbidden").toBe(403);
@@ -320,7 +324,6 @@ test("reassign: privileged only, to a real roster member, and it is not a touch"
     expect(((await api(`/dashboard/api/contacts/${DELTA}`)).body.contact as Row).assignedAgentId).not.toBe(OTHER_AGENT);
     return;
   }
-  const before = (await api(`/dashboard/api/contacts/${DELTA}`)).body.contact as Row;
   expect(res.status).toBe(200);
   expect(res.body.changed).toBe(true);
   const moved = res.body.contact as Row;
@@ -465,7 +468,7 @@ test("desktop: views and cards apply the same query, and the URL carries it", as
   await page.goto("/dashboard/leads?stage=garbage&followUp=overdue", { waitUntil: "domcontentloaded" });
   await expect(leadsReady(page)).toBeVisible({ timeout: 30_000 });
   await expect(rows(page).first()).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("view-all").or(page.getByTestId("view-mine"))).toBeVisible();
+  await expect(page.getByTestId("view-all")).toBeVisible();
   say("views, cards, reload, back/forward and a bad URL all behave");
 });
 
@@ -568,16 +571,16 @@ test("desktop: the drawer is the workspace — sections, edit, stage, follow-up,
   await expect(form.getByLabel("Email")).toBeFocused();
   await form.getByLabel("First name").fill("");
   await form.getByLabel("Last name").fill("");
-  await form.getByLabel("Email").fill("echo@example.test");
+  await form.getByLabel("Email").fill(`echo${STAMP}@example.test`);
   await form.getByRole("button", { name: "Save changes" }).click();
   await expect(form.getByRole("alert")).toContainText("Add at least a first name");
   await expect(form.getByLabel("First name")).toBeFocused();
   await form.getByLabel("First name").fill("LV2");
   await form.getByLabel("Last name").fill("Echo Never");
-  await form.getByLabel("Company").fill("Lv2 Realty Group");
+  await form.getByLabel("Company").fill(`Lv2 Realty Group ${STAMP}`);
   await form.getByRole("button", { name: "Save changes" }).click();
   await expect(d.getByText("Contact details saved.")).toBeVisible({ timeout: 20_000 });
-  await expect(d.getByText("Lv2 Realty Group")).toBeVisible();
+  await expect(d.getByText(`Lv2 Realty Group ${STAMP}`)).toBeVisible();
   await expect(d.getByText("Never", { exact: true }).first(), "editing is not a touch").toBeVisible();
 
   // Stage.
