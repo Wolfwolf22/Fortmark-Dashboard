@@ -632,7 +632,7 @@ const reassign = (actor: Actor, to: string, opts: { failOn?: unknown; row?: Reco
   check("ui: the page filters nothing itself — no local filter, sort or slice of the list", !/\.(filter|sort|slice)\(/.test(page.replace(/Object\.keys\(filters\)\.some[^;]*;/, "").replace(/Object\.keys\(next\)[^;]*;/, "")) && !table.match(/\b(items|leads|rows)\.(filter|sort)\(/) && !table.includes("PAGE_SIZE"));
   check("ui: the page never reads the sample set or the whole list", !page.includes("listSampleLeads") && !page.includes("getLeads(") && page.includes("getLeadsPage("));
   check("ui: search text is never written to the URL", !/set\(["']q["']/.test(page) && page.includes('key === "q"'));
-  check("ui: filters live in the URL and survive the drawer opening", page.includes("router.replace") && page.includes('sp.set("open"'));
+  check("ui: filters live in the URL and survive the drawer opening", page.includes("router.push") && page.includes('sp.set("open"'));
   check("ui: sorting is a request", page.includes("sortBy") && table.includes("onSort(col.sortKey!)"));
   check("ui: sortable headers announce their state", table.includes("aria-sort") && (table.match(/aria-sort/g) ?? []).length >= 1);
   check("ui: every filter control has an accessible name", ["Filter by stage", "Filter by source", "Filter by intent", "Filter by agent", "Filter by follow-up", "Filter by last touch", "Filter by date added", "Search leads"].every((l) => filters.includes(l)));

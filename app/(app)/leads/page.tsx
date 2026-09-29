@@ -121,7 +121,8 @@ function LeadsPageInner() {
     const open = searchParams.get("open");
     if (open) sp.set("open", open);
     const qs = sp.toString();
-    router.replace(qs ? `/leads?${qs}` : "/leads", { scroll: false });
+    // A push, so back and forward step through the views a person has visited.
+    router.push(qs ? `/leads?${qs}` : "/leads", { scroll: false });
   }
 
   const change = (patch: Partial<ContactQuery>) => {
