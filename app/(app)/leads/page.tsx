@@ -12,7 +12,7 @@
  *
  * `?open=<leadId>` deep-links into the drawer.
  */
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
 import { useSessionUser } from "@/components/layout/session-user";
@@ -83,6 +83,14 @@ function LeadsPageInner() {
   const filters = useMemo(() => readQuery(new URLSearchParams(urlKey)), [urlKey]);
   const openParam = searchParams.get("open");
 
+  // The filters as of the last thing the person did. The URL is the source of truth, but it
+  // lands a moment after a click; a second click in that moment must build on the first, not
+  // on the stale render, or a quick "clear, then sort" would quietly bring the filter back.
+  const latest = useRef(filters);
+  useEffect(() => {
+    latest.current = filters;
+  }, [filters]);
+
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   useEffect(() => {
@@ -116,6 +124,7 @@ function LeadsPageInner() {
 
   /** Write the filters to the URL. `open` (the drawer) is preserved. */
   function navigate(next: ContactQuery) {
+    latest.current = next;
     const fields = queryFields({ ...next, pageSize: undefined, page: next.page && next.page > 1 ? next.page : undefined });
     const sp = new URLSearchParams(fields);
     const open = searchParams.get("open");
@@ -126,7 +135,7 @@ function LeadsPageInner() {
   }
 
   const change = (patch: Partial<ContactQuery>) => {
-    const next: ContactQuery = { ...filters, ...patch, page: undefined };
+    const next: ContactQuery = { ...latest.current, ...patch, page: undefined };
     for (const k of Object.keys(next) as (keyof ContactQuery)[]) if (next[k] === undefined) delete next[k];
     navigate(next);
   };
@@ -138,9 +147,9 @@ function LeadsPageInner() {
   };
   const sortBy = (key: SortKey) => {
     const dir: SortDir = key === order.sort ? (order.dir === "asc" ? "desc" : "asc") : key === "lastTouch" || key === "created" ? "desc" : "asc";
-    navigate({ ...filters, sort: key, dir, page: undefined });
+    navigate({ ...latest.current, sort: key, dir, page: undefined });
   };
-  const goToPage = (n: number) => navigate({ ...filters, page: n });
+  const goToPage = (n: number) => navigate({ ...latest.current, page: n });
 
   function handleDrawerOpenChange(nextOpen: boolean) {
     setDrawerOpen(nextOpen);

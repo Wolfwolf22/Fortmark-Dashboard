@@ -510,7 +510,7 @@ test("desktop: search is literal, filters compose, sort and pages are requests",
   await pick(page, "Filter by last touch", "Never");
   await expect(rows(page)).toHaveCount(1, { timeout: 20_000 });
   await expect(rows(page).first()).toContainText("LV2 Echo Never");
-  await expect(rows(page).first().getByText("Never")).toBeVisible();
+  await expect(rows(page).first().getByText("Never", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Clear", exact: true }).click();
   if (PRIVILEGED) {
     await pick(page, "Filter by agent", "Lv2 Otheragent");
@@ -533,12 +533,12 @@ test("desktop: search is literal, filters compose, sort and pages are requests",
   await expect(page.getByRole("columnheader", { name: "Name" })).toHaveAttribute("aria-sort", "descending", { timeout: 20_000 });
 
   // Pagination survives a reload.
-  await page.getByRole("button", { name: "Next" }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.getByText(/Page 2 of \d+/)).toBeVisible({ timeout: 20_000 });
   await expect(page).toHaveURL(/page=2/);
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByText(/Page 2 of \d+/)).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("button", { name: "Previous" }).click();
+  await page.getByRole("button", { name: "Previous", exact: true }).click();
   await expect(page.getByText(/Page 1 of \d+/)).toBeVisible({ timeout: 20_000 });
   say("search, filters, sort and pagination verified through the UI");
 });
