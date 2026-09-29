@@ -159,7 +159,7 @@ test.describe("agent workday", () => {
 
   test("3. create a contact through the interface", async () => {
     // The table header only exists once there is a lead; the search box is there in the empty state too.
-    await gotoReady(page, "/dashboard/leads", page.getByPlaceholder("Search name, email, or neighborhood"));
+    await gotoReady(page, "/dashboard/leads", page.getByPlaceholder("Search name, email, phone or area"));
     const dlg = await openQuickCreate("Lead");
     await dlg.getByLabel("Name").fill(`WDAY Jane ${TAG}`);
     await dlg.getByLabel("Email").fill("wday.jane@example.test");

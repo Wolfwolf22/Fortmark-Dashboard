@@ -109,7 +109,7 @@ async function openDrawer(p: Page, id: string) {
 }
 /** One row, found through the list's own search (the table pages at 12 rows). */
 async function listRow(p: Page, label: string) {
-  await p.getByPlaceholder("Search name, email, or neighborhood").fill(name(label));
+  await p.getByPlaceholder("Search name, email, phone or area").fill(name(label));
   const row = p.getByRole("row", { name: new RegExp(name(label)) });
   await expect(row).toHaveCount(1, { timeout: 20_000 });
   return row;
@@ -188,14 +188,16 @@ test.describe("member: every write is refused, nothing changes", () => {
     expect(await snap(id)).toEqual(before);
   });
 
-  test("UI: the drawer explains the refusal; the follow-up stays", async () => {
+  test("UI: the drawer is read-only and says so; the follow-up stays", async () => {
     const id = need("FU Today");
     await openDrawer(page, id);
     await expect(page.getByTestId("lead-next-follow-up")).toHaveText(`Due today · ${pretty(TODAY)}`);
-    await followRegion(page).getByRole("button", { name: "Change" }).click();
-    await followRegion(page).locator("#lead-follow-up-day").fill(addDays(TODAY, 4));
-    await followRegion(page).getByRole("button", { name: "Save follow-up" }).click();
-    await expect(drawer(page).getByRole("alert")).toHaveText("You do not have permission to change this contact.");
+    // Leads V2 does not offer a member controls that can only answer "forbidden": the drawer names the
+    // access it has, and the write controls are not there. (The API refusals are asserted above.)
+    await expect(drawer(page).getByText("You have read-only access to this contact.")).toBeVisible();
+    for (const control of ["Change", "Schedule", "Mark complete", "Edit contact", "Log touch", "Archive"]) {
+      await expect(drawer(page).getByRole("button", { name: control })).toHaveCount(0);
+    }
     await expect(page.getByTestId("lead-next-follow-up")).toHaveText(`Due today · ${pretty(TODAY)}`);
     await page.screenshot({ path: `${SHOTS}/member-refused.png` });
   });

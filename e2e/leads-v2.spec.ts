@@ -38,6 +38,8 @@ let page: Page;
 let api: ReturnType<typeof refreshingApiFor>;
 let platformReloads = 0;
 const uncaught: string[] = [];
+/** "Loading chunk N failed": the platform failed to deliver an asset that exists (verified served afterwards). Counted, never hidden. */
+const chunkErrors: string[] = [];
 const consoleErrors: string[] = [];
 const requests: string[] = [];
 const apiProblems: string[] = [];
@@ -56,20 +58,28 @@ function businessDay(offset = 0): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(Date.now() + offset * 86_400_000));
 }
 
-async function gotoReady(p: Page, path: string, ready: Locator, timeout = 30_000) {
+/** Show `ready`, reloading (counted) when the platform served the page but dropped an asset or showed its own error page. */
+async function settle(p: Page, load: () => Promise<unknown>, ready: Locator, what: string, timeout = 30_000) {
   for (let attempt = 1; ; attempt += 1) {
-    await p.goto(path, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    const chunksBefore = chunkErrors.length;
+    await load();
     try {
       await expect(ready).toBeVisible({ timeout });
       return;
     } catch (error) {
-      const platform = p.getByText(/Application error: a client-side exception|upstream request failed/);
-      if ((await platform.count()) === 0 || attempt >= 4) throw error;
+      const platformPage = (await p.getByText(/Application error: a client-side exception|upstream request failed/).count()) > 0;
+      const lostChunk = chunkErrors.length > chunksBefore;
+      if ((!platformPage && !lostChunk) || attempt >= 4) throw error;
       platformReloads += 1;
-      console.log(`[leads-v2] platform error page at ${path}; reloading (${platformReloads} so far)`);
+      console.log(`[leads-v2] platform ${lostChunk ? "dropped a chunk" : "error page"} at ${what}; reloading (${platformReloads} so far)`);
     }
   }
 }
+
+const gotoReady = (p: Page, path: string, ready: Locator, timeout = 30_000) =>
+  settle(p, () => p.goto(path, { waitUntil: "domcontentloaded", timeout: 60_000 }), ready, path, timeout);
+const reloadReady = (p: Page, ready: Locator, timeout = 30_000) =>
+  settle(p, () => p.reload({ waitUntil: "domcontentloaded", timeout: 60_000 }), ready, "reload", timeout);
 
 /** Open a Radix select by its accessible name and choose an option. */
 async function pick(p: Page, label: string, option: string | RegExp) {
@@ -86,7 +96,7 @@ test.beforeAll(async ({ browser }) => {
   test.setTimeout(180_000);
   expect(ROLES, "LV2_ROLE must be set").toContain(ROLE);
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  page.on("pageerror", (e) => uncaught.push(e.message.slice(0, 200)));
+  page.on("pageerror", (e) => (/Loading chunk \d+ failed|ChunkLoadError/.test(e.message) ? chunkErrors : uncaught).push(e.message.slice(0, 200)));
   page.on("console", (m) => {
     if (m.type() === "error" && !PLATFORM.test(m.text())) consoleErrors.push(m.text().slice(0, 200));
   });
@@ -118,7 +128,7 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test.afterAll(async () => {
-  say(`platform error-page reloads=${platformReloads}, uncaught=${uncaught.length}, console errors=${consoleErrors.length}`);
+  say(`platform reloads=${platformReloads} (dropped chunks seen=${chunkErrors.length}), product uncaught=${uncaught.length}, console errors=${consoleErrors.length}`);
   if (apiProblems.length) say(`API problems seen by the browser: ${JSON.stringify(apiProblems).slice(0, 700)}`);
   if (uncaught.length || consoleErrors.length) say(`detail: ${JSON.stringify([...uncaught, ...consoleErrors]).slice(0, 600)}`);
   await page?.close();
@@ -455,7 +465,7 @@ test("desktop: views and cards apply the same query, and the URL carries it", as
   expect(shown).toEqual(apiOverdue);
   await expect(page.getByRole("columnheader", { name: "Next follow-up" })).toHaveAttribute("aria-sort", "ascending");
   // Reload: the view survives.
-  await page.reload({ waitUntil: "domcontentloaded" });
+  await reloadReady(page, page.getByTestId("view-overdue"));
   await expect(page.getByTestId("view-overdue")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
   // A card is the same shortcut.
   await page.getByTestId("snapshot-due").click();
@@ -477,16 +487,13 @@ test("desktop: views and cards apply the same query, and the URL carries it", as
   await page.getByTestId(PRIVILEGED ? "view-all" : "view-all").click();
   await expect(page).not.toHaveURL(/followUp|mine|active/);
   // An invalid filter typed into the URL is dropped, not fatal.
-  await page.goto("/dashboard/leads?stage=garbage&followUp=overdue", { waitUntil: "domcontentloaded" });
-  await expect(leadsReady(page)).toBeVisible({ timeout: 30_000 });
-  await expect(rows(page).first()).toBeVisible({ timeout: 30_000 });
+  await gotoReady(page, "/dashboard/leads?stage=garbage&followUp=overdue", rows(page).first());
   await expect(page.getByTestId("view-all")).toBeVisible();
   say("views, cards, reload, back/forward and a bad URL all behave");
 });
 
 test("desktop: search is literal, filters compose, sort and pages are requests", async () => {
-  await page.goto("/dashboard/leads", { waitUntil: "domcontentloaded" });
-  await expect(rows(page).first()).toBeVisible({ timeout: 30_000 });
+  await gotoReady(page, "/dashboard/leads", rows(page).first());
   const search = page.getByLabel("Search leads");
   await search.fill("%");
   await expect(rows(page)).toHaveCount(1, { timeout: 20_000 });
@@ -553,17 +560,15 @@ test("desktop: search is literal, filters compose, sort and pages are requests",
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.getByText(/Page 2 of \d+/)).toBeVisible({ timeout: 20_000 });
   await expect(page).toHaveURL(/page=2/);
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page.getByText(/Page 2 of \d+/)).toBeVisible({ timeout: 30_000 });
+  await reloadReady(page, page.getByText(/Page 2 of \d+/));
   await page.getByRole("button", { name: "Previous", exact: true }).click();
   await expect(page.getByText(/Page 1 of \d+/)).toBeVisible({ timeout: 20_000 });
   say("search, filters, sort and pagination verified through the UI");
 });
 
 test("desktop: the drawer is the workspace — sections, edit, stage, follow-up, touch, timeline", async () => {
-  await page.goto(`/dashboard/leads?open=${ECHO}`, { waitUntil: "domcontentloaded" });
   const d = drawer(page);
-  await expect(d.getByRole("heading", { name: "LV2 Echo Never" })).toBeVisible({ timeout: 30_000 });
+  await gotoReady(page, `/dashboard/leads?open=${ECHO}`, d.getByRole("heading", { name: "LV2 Echo Never" }));
   const before = requests.length;
   for (const h of ["Contact", "Relationship", "Next follow-up", "Activity", "Notes"]) await expect(d.getByRole("heading", { name: h })).toBeVisible();
   await expect(d.getByText("Never", { exact: true }).first()).toBeVisible();
@@ -653,8 +658,7 @@ test("desktop: the drawer is the workspace — sections, edit, stage, follow-up,
 
 test("desktop: creating a lead is fast and lands on the new person", async () => {
   test.skip(!WRITER, "a member cannot create");
-  await page.goto("/dashboard/leads", { waitUntil: "domcontentloaded" });
-  await expect(rows(page).first()).toBeVisible({ timeout: 30_000 });
+  await gotoReady(page, "/dashboard/leads", rows(page).first());
   await page.getByRole("button", { name: "New lead" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Name").fill("LV2 Zulu Created");
@@ -669,8 +673,7 @@ test("desktop: creating a lead is fast and lands on the new person", async () =>
 
 test("desktop: 1280 wide fits and keeps every column", async () => {
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/dashboard/leads", { waitUntil: "domcontentloaded" });
-  await expect(rows(page).first()).toBeVisible({ timeout: 30_000 });
+  await gotoReady(page, "/dashboard/leads", rows(page).first());
   expect(await overflows(page), "no horizontal page overflow").toBe(false);
   await expect(page.getByRole("columnheader", { name: "Next follow-up" })).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -679,8 +682,7 @@ test("desktop: 1280 wide fits and keeps every column", async () => {
 for (const width of [430, 390]) {
   test(`mobile ${width}: a compact list, filters behind a toggle, the drawer holds every action`, async () => {
     await page.setViewportSize({ width, height: 900 });
-    await page.goto("/dashboard/leads", { waitUntil: "domcontentloaded" });
-    await expect(page.locator('button[data-testid="lead-row"]').first()).toBeVisible({ timeout: 30_000 });
+    await gotoReady(page, "/dashboard/leads", page.locator('button[data-testid="lead-row"]').first());
     expect(await overflows(page), "no horizontal page overflow").toBe(false);
     await expect(page.getByRole("columnheader")).toHaveCount(0);
     await expect(page.getByRole("list", { name: "Leads" })).toBeVisible();
@@ -721,8 +723,7 @@ for (const width of [430, 390]) {
 test("reduced motion and keyboard: every control is reachable without a mouse", async () => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/dashboard/leads", { waitUntil: "domcontentloaded" });
-  await expect(rows(page).first()).toBeVisible({ timeout: 30_000 });
+  await gotoReady(page, "/dashboard/leads", rows(page).first());
   // Tab to the first row's open button and press Enter.
   const open = page.getByRole("button", { name: /^Open LV2 / }).first();
   await open.focus();
@@ -732,7 +733,7 @@ test("reduced motion and keyboard: every control is reachable without a mouse", 
   await page.keyboard.press("Escape");
   await expect(drawer(page)).toHaveCount(0);
   // Sort header by keyboard.
-  const header = page.getByRole("button", { name: "Created" });
+  const header = page.getByRole("columnheader", { name: "Created" }).getByRole("button");
   await header.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("columnheader", { name: "Created" })).toHaveAttribute("aria-sort", /ascending|descending/, { timeout: 20_000 });

@@ -375,7 +375,7 @@ test("rendered pages: every section loads for this role, with one heading and no
   record("pagesLoaded", Object.keys(seen));
   // The Leads and Transactions screens show the same rows the API does.
   await gotoReady(page, "/dashboard/leads", page.getByRole("columnheader", { name: /Follow-up/ }));
-  await page.getByPlaceholder("Search name, email, or neighborhood").fill("SYSVERIFY Delta");
+  await page.getByPlaceholder("Search name, email, phone or area").fill("SYSVERIFY Delta");
   await page.waitForTimeout(1500);
   const seesColleagueInUi = (await page.getByText("SYSVERIFY Delta AgentB").count()) > 0;
   record("leadsUiSeesColleague", seesColleagueInUi);
