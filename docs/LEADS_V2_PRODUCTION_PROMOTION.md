@@ -282,3 +282,82 @@ only. Nothing is mutated automatically.
 Ready for **human authorization** to promote Leads V2: a code-only fast-forward of the
 Production branch from `01f7f94` to the certified runtime, then the smoke above.
 Nothing has been deployed or merged.
+
+---
+
+# PRODUCTION EXECUTION
+
+Executed 2026-09-30, after the audit above was approved.
+
+| | |
+|---|---|
+| Source | `74ff9d4` (the certified runtime; **not** the docs-only `ef815b9`) |
+| Previous Production | `01f7f94` · `dpl_JE8Sch3v753t68tyEbNJqB7ckJ2L` |
+| Action | Production/default branch `claude/fortmark-dashboard-build-v39u96` fast-forwarded `01f7f94` → `74ff9d4` (plain push at 02:42:23 UTC; no merge, no cherry-pick, no force, no conflict) |
+| New deployment | `dpl_HHsoeTDXVxGoZFbAg5CZ7vdQ8z6L` — built by Vercel from the branch, target production, **READY** at 2026-09-30 02:43:22 UTC (created 02:42:24), aliased to `fortmark-dashboard.vercel.app` |
+| Rollback target | `dpl_JE8Sch3v753t68tyEbNJqB7ckJ2L` (`01f7f94`) — READY before the push and **not needed**; `dpl_JDgtuMgnyZmb2mN5TtLeBcNzWvPn` (`a221c21`) also READY |
+
+## Gates before the push
+Working tree clean · default tip `01f7f94` · `01f7f94` an ancestor of `74ff9d4` (clean
+fast-forward) · nine commits, all Leads V2 · **0** changes under `lib/db`, `lib/mls*`,
+`lib/ai`, `lib/auth`, `lib/search`, `lib/transactions`, `lib/metrics`, `lib/brokerage`,
+`lib/team`, `lib/profile`, `lib/flags.ts`, `middleware.ts`, `next.config.ts`,
+`vercel.json`, `package-lock.json`, the listing/AI/chat/transactions/metrics/team/
+brokerage/profile/search routes, Home or the app shell · **0** migration files · the
+two commits after `74ff9d4` on the dev branch are documentation only and were not promoted.
+
+## Health gate (after)
+`GET /dashboard/api/health` → 200, `no-store`: `revision=74ff9d4`, `transactions=db`,
+`contacts=db`, `listings=mls`, `homeMetrics=real-only`, assistant `openai` /
+`no_credential`, `actions=disabled`. **Only `revision` changed.**
+
+## Unauthenticated security smoke
+- `/dashboard`, `/leads`, `/leads?followUp=overdue`, `/transactions`, `/listings`,
+  `/settings` → 307 to sign-in with the return path; no loop.
+- Anonymous `GET` on contacts, summary, agents, one contact, its timeline, metrics,
+  transactions, team and listings → **401**, `no-store`; anonymous `PATCH` a contact,
+  `POST` reassign and `POST` search → **401**, `no-store`. No record data, no 500.
+- The authenticated safe probes (a `%` / `_` search, an invalid stage / follow-up /
+  sort) need a Production session, which is not minted here; they were certified live on
+  Preview and are on the operator's checklist.
+
+## Database (read-only, counts only)
+Migrations **11** (unchanged) · contacts **1** · activities **6** · opportunities **1** ·
+transactions **1** (the operator's real deal, unchanged) · prepared actions **0** · users
+1 · profiles 1 · brokerages 1. Contacts, activities and transactions are exactly as
+before the deployment: it wrote nothing.
+
+## Logs
+**NOT VERIFIED.** The runtime-log tool available to this session is bound to a different
+Vercel project (`i-dx-server`) and returned nothing for this deployment; that is not
+evidence of a clean log. Evidence in hand: the probes above (200 / 307 / 401 only), the
+health gate and unchanged counts. Please check the dashboard project's runtime logs for
+5xx, 503, database, contacts / follow-up / Leads-query, Home-metrics and Bridge errors
+after the signed-in smoke. Anonymous 401s are expected.
+
+## Human signed-in smoke — PENDING (operator)
+Not run by me (no Production session was minted or impersonated). Checklist: Home ·
+Leads · the five snapshot cards (a nonzero card should equal the rows of the view it
+opens; zero is acceptable when true) · My leads · Due today · Overdue · No touch 14+ ·
+search · a filter combination · sorting · paging (only if the data reaches a second
+page) · the existing contact's drawer and Activity timeline (plain-language lines, no
+raw JSON or ids) · Edit contact · Reassign (only if your role is privileged) ·
+follow-up controls · Transactions (the real deal renders; do not edit) · Listings · My
+Listings · FortMark Listings · ⌘K with an exact MLS number · Team · Brokerage · Leads at
+a narrow width.
+
+## Optional real-contact mutation — SKIPPED
+Not run; it is the operator's choice. Either schedule a real future follow-up (expect: the
+reminder changes, last contact does **not**, no new touch activity, the timeline names
+it, one audit event with field names and the day) or edit a harmless field (expect: only
+that field changes; audit records the field name, never the value). Do not reassign
+merely to test.
+
+## Status and change log
+**LEADS V2 LIVE** (deployment verified; the operator's signed-in smoke is outstanding).
+Production changes: (1) default branch fast-forward `01f7f94` → `74ff9d4`; (2) one fresh
+Vercel Production deployment. Nothing else — no environment variable, Bridge, Clerk, AI,
+flag, migration or data change.
+
+Known limitation recorded: there is no user-to-brokerage membership model (single
+brokerage), so a reassignment target is "any active work-owning dashboard user".
