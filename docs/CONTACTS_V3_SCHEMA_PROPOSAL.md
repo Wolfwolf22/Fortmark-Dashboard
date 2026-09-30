@@ -40,7 +40,15 @@ an agent with only undated deals sees an empty page too.
 **Fix — application code only, no migration (implemented in this branch):** the
 Transactions page no longer sends the reporting period. It is a work list, not a
 report. The server-side window support is kept for callers that pass one.
-Regression checks are in `scripts/test_transactions.ts` (171/171).
+Regression checks are in `scripts/test_transactions.ts` (171/171). The board and
+table empty-state copy no longer claims "in this period".
+
+**Preview certification (`e18615a`, `e2e/transactions-visibility.spec.ts`, 4/4 per role):**
+two synthetic undated opportunity deals (one owned by the certification identity, one
+by a synthetic colleague). At the default Month period, no `from`/`to` sent:
+admin sees both on the board, the table and the API (colleague's deal opens, 200);
+agent sees only their own, and the colleague's deal is 404. Fixture removed; Preview
+returned to 0 transactions, 1 user, role `member`, 11 migrations.
 
 ---
 
