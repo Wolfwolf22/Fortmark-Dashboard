@@ -754,7 +754,7 @@ export const notifications: AppNotification[] = [
     detail: "Referral from the Kaplan closing",
     date: iso(daysAgo(2)),
     read: true,
-    href: "/leads",
+    href: "/contacts",
   },
   {
     id: "notif-6",

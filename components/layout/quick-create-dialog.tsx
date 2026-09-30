@@ -23,7 +23,7 @@ import {
 import { useUiStore, QuickCreateKind } from "@/lib/stores/ui";
 import { createListing } from "@/lib/data/adapters/listings";
 import { createTransaction } from "@/lib/data/adapters/transactions";
-import { createLead } from "@/lib/data/adapters/leads";
+import { createLead, LeadsError } from "@/lib/data/adapters/leads";
 import { createEvent } from "@/lib/data/adapters/calendar";
 import { addDocument } from "@/lib/data/adapters/documents";
 import { getTransactions } from "@/lib/data/adapters/transactions";
@@ -32,6 +32,11 @@ import { SUBSYSTEM_COPY, unavailableSubsystem } from "@/components/common/subsys
 import { EventType, Lead, LEAD_SOURCES_ORDER, LEAD_SOURCE_LABELS, PropertyType } from "@/lib/data/types";
 import { now } from "@/lib/dates";
 import { closeDateFromInput } from "@/lib/transactions/close-date";
+import { isValidBirthday, MONTH_NAMES } from "@/lib/contacts/birthday";
+import { ContactPicker } from "./contact-picker";
+
+/** A birthday half-picked, or one that is not a real day. Raised before anything is sent. */
+class BirthdayInputError extends Error {}
 
 const TITLES: Record<QuickCreateKind, { title: string; description: string; cta: string; goto: string }> = {
   listing: {
@@ -47,10 +52,10 @@ const TITLES: Record<QuickCreateKind, { title: string; description: string; cta:
     goto: "/transactions",
   },
   lead: {
-    title: "New lead",
-    description: "Adds a lead. It opens right after, ready for a first follow-up.",
-    cta: "Add lead",
-    goto: "/leads",
+    title: "New contact",
+    description: "Adds a person to your contacts. It opens right after, ready for a first follow-up and their needs.",
+    cta: "Add contact",
+    goto: "/contacts",
   },
   event: {
     title: "New event",
@@ -69,6 +74,10 @@ const TITLES: Record<QuickCreateKind, { title: string; description: string; cta:
 export function QuickCreateDialog() {
   const kind = useUiStore((s) => s.quickCreate);
   const setKind = useUiStore((s) => s.setQuickCreate);
+  const fromContact = useUiStore((s) => s.quickCreateContact);
+  // A side is suggested only when the chosen contact's active need states one explicitly.
+  const [side, setSide] = React.useState<"listing" | "buyer">("listing");
+  const suggestSide = React.useCallback((s: "listing" | "buyer" | null) => setSide(s ?? "listing"), []);
   const router = useRouter();
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -104,6 +113,7 @@ export function QuickCreateDialog() {
           address: get("address"),
           city: get("city") || "Fort Lauderdale",
           clientName: get("client"),
+          contactId: get("contactId") || undefined,
           side: (get("side") || "listing") as "listing" | "buyer",
           contractPrice: Number(get("price")) || 0,
           // Blank stays unset: no invented closing date, so no invented
@@ -111,15 +121,21 @@ export function QuickCreateDialog() {
           closeDate: closeDateFromInput(get("closeDate")),
         });
       } else if (kind === "lead") {
+        const month = Number(get("birthdayMonth") || 0);
+        const day = Number(get("birthdayDay") || 0);
+        // Both or neither, and a day that exists in that month (February 29 is fine — no year is kept).
+        if ((month || day) && !isValidBirthday(month, day)) {
+          throw new BirthdayInputError();
+        }
         const created = await createLead({
           name: get("name"),
           email: get("email"),
           phone: get("phone"),
-          intent: (get("intent") || "buy") as "buy" | "sell" | "both",
           source: (get("source") || undefined) as Lead["source"] | undefined,
+          birthday: month && day ? { month, day } : undefined,
         });
         // Land on the new person, open, ready to schedule the first follow-up.
-        goto = `/leads?open=${encodeURIComponent(created.id)}`;
+        goto = `/contacts?open=${encodeURIComponent(created.id)}`;
       } else if (kind === "event") {
         const date = get("date") || now().toISOString().slice(0, 10);
         const time = get("time") || "10:00";
@@ -150,9 +166,13 @@ export function QuickCreateDialog() {
       // fields: an event or a document has nowhere to be saved to here.
       const missing = unavailableSubsystem(e);
       setError(
-        missing
-          ? SUBSYSTEM_COPY[missing].title
-          : "Could not save. Check the fields and try again."
+        e instanceof BirthdayInputError
+          ? "Pick a real birthday date (month and day), or leave both empty."
+          : missing
+            ? SUBSYSTEM_COPY[missing].title
+            : e instanceof LeadsError && e.status === 400 && e.fields.includes("contactId")
+              ? "That contact is no longer eligible for a new transaction."
+              : "Could not save. Check the fields and try again."
       );
     } finally {
       setBusy(false);
@@ -199,18 +219,17 @@ export function QuickCreateDialog() {
             {kind === "transaction" && (
               <div className="grid gap-3">
                 <Field label="Property address" name="address" required placeholder="2416 NE 26th St" />
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="City" name="city" placeholder="Fort Lauderdale" />
-                  <Field label="Client" name="client" required placeholder="Client name" />
-                </div>
+                <Field label="City" name="city" placeholder="Fort Lauderdale" />
+                <ContactPicker preselected={fromContact} onSuggestSide={suggestSide} />
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Contract price" name="price" type="number" required placeholder="1185000" />
                   <Field label="Close date (optional)" name="closeDate" type="date" />
                 </div>
                 <SelectField
+                  key={side}
                   label="Side"
                   name="side"
-                  defaultValue="list"
+                  defaultValue={side}
                   options={[
                     ["listing", "Listing side"],
                     ["buyer", "Buyer side"],
@@ -226,22 +245,24 @@ export function QuickCreateDialog() {
                   <Field label="Email" name="email" type="email" placeholder="name@example.com" />
                   <Field label="Phone" name="phone" placeholder="(954) 555-0100" />
                 </div>
+                <SelectField
+                  label="Source (optional)"
+                  name="source"
+                  defaultValue="other"
+                  options={LEAD_SOURCES_ORDER.map((s) => [s, LEAD_SOURCE_LABELS[s]] as [string, string])}
+                />
                 <div className="grid grid-cols-2 gap-3">
                   <SelectField
-                    label="Intent"
-                    name="intent"
-                    defaultValue="buy"
-                    options={[
-                      ["buy", "Buying"],
-                      ["sell", "Selling"],
-                      ["both", "Both"],
-                    ]}
+                    label="Birthday month (optional)"
+                    name="birthdayMonth"
+                    defaultValue="0"
+                    options={[["0", "Not set"], ...MONTH_NAMES.map((n, i) => [String(i + 1), n] as [string, string])]}
                   />
                   <SelectField
-                    label="Source (optional)"
-                    name="source"
-                    defaultValue="other"
-                    options={LEAD_SOURCES_ORDER.map((s) => [s, LEAD_SOURCE_LABELS[s]] as [string, string])}
+                    label="Birthday day"
+                    name="birthdayDay"
+                    defaultValue="0"
+                    options={[["0", "Not set"], ...Array.from({ length: 31 }, (_, i) => [String(i + 1), String(i + 1)] as [string, string])]}
                   />
                 </div>
               </div>

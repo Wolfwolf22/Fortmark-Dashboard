@@ -98,7 +98,7 @@ export function sampleBrokerageMetrics(at: Date = sampleNow()): BrokerageMetrics
       subject: l.name,
       dueDate: followUpStatus(l.nextFollowUpDate, at).day as string,
       daysAway: followUpStatus(l.nextFollowUpDate, at).daysAway as number,
-      href: `/leads?open=${encodeURIComponent(l.id)}`,
+      href: `/contacts?open=${encodeURIComponent(l.id)}`,
     })),
   ].sort((a, b) => a.daysAway - b.daysAway || a.subject.localeCompare(b.subject));
 
@@ -106,6 +106,7 @@ export function sampleBrokerageMetrics(at: Date = sampleNow()): BrokerageMetrics
     source: "sample",
     generatedAt: at.toISOString(),
     scope: "brokerage",
+    contactsScope: "brokerage",
     monthStart: month.start,
     transactions: available({
       activeCount: active.length,

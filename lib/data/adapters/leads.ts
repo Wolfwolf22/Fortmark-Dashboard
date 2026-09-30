@@ -11,7 +11,6 @@ import {
   createSampleLead,
   editSampleLead,
   getSampleLead,
-  reassignSampleLead,
   listSampleLeadAgents,
   markSampleLeadContacted,
   setSampleLeadFollowUp,
@@ -26,6 +25,10 @@ import { followUpInstant, type FollowUpOutcome } from "../../contacts/follow-up.
 import type { ContactQuery } from "../../contacts/filters.ts";
 import { applyQuery, snapshotOf, type LeadPage, type LeadSnapshot } from "../../contacts/windows.ts";
 import type { TimelineItem } from "../../contacts/timeline.ts";
+import type { NoteView } from "../../contacts/notes.ts";
+import type { CreateNeedInput, NeedView, UpdateNeedInput } from "../../contacts/needs.ts";
+import type { LinkedTransaction } from "../../contacts/linked.ts";
+import type { Birthday } from "../../contacts/birthday.ts";
 
 export type { LeadFilters };
 
@@ -142,15 +145,24 @@ export async function getLead(id: string): Promise<Lead | undefined> {
   }
 }
 
-/** A move the lifecycle refuses throws `invalid_transition`; never silent. */
-export async function updateLeadStage(id: string, stage: LeadStage): Promise<Lead | undefined> {
+/**
+ * A move the lifecycle refuses throws `invalid_transition`; never silent.
+ * `engagementAcknowledged` records that the person confirmed the engagement notice
+ * when moving into Representation or Active client — it is a confirmation, not a
+ * claim that a document exists.
+ */
+export async function updateLeadStage(
+  id: string,
+  stage: LeadStage,
+  options: { engagementAcknowledged?: boolean } = {}
+): Promise<Lead | undefined> {
   if ((await getLeadSource()) === "sample") {
     await delay(150);
     return updateSampleLeadStage(id, stage);
   }
   const { contact } = await request<{ contact: Lead }>(
     `/api/contacts/${encodeURIComponent(id)}/stage`,
-    { method: "POST", body: JSON.stringify({ stage }) }
+    { method: "POST", body: JSON.stringify({ stage, ...(options.engagementAcknowledged ? { engagementAcknowledged: true } : {}) }) }
   );
   bumpDataVersion();
   return contact;
@@ -160,8 +172,11 @@ export interface QuickCreateLeadInput {
   name: string;
   email: string;
   phone: string;
-  intent: Lead["intent"];
+  /** No longer asked at quick create: what a person wants is a client need, added after. */
+  intent?: Lead["intent"];
   source?: Lead["source"];
+  /** Optional month and day; never a year. */
+  birthday?: Birthday;
   /** Dollars, as typed. */
   budget?: number;
   neighborhood?: string;
@@ -171,10 +186,11 @@ export interface QuickCreateLeadInput {
 export async function createLead(input: QuickCreateLeadInput): Promise<Lead> {
   if ((await getLeadSource()) === "sample") {
     await delay(220);
-    return createSampleLead(input);
+    return createSampleLead({ ...input, intent: input.intent ?? "other" });
   }
   const [firstName, ...rest] = input.name.trim().split(/\s+/);
   const kinds =
+    !input.intent ? [] :
     input.intent === "both" ? ["buyer", "seller"] :
     input.intent === "buy" ? ["buyer"] :
     input.intent === "sell" ? ["seller"] :
@@ -189,6 +205,7 @@ export async function createLead(input: QuickCreateLeadInput): Promise<Lead> {
       phone: input.phone.trim() || undefined,
       source: input.source,
       notes: input.notes || undefined,
+      birthday: input.birthday,
       opportunities: kinds.map((kind) => ({
         kind,
         area: input.neighborhood || undefined,
@@ -341,6 +358,8 @@ export interface ContactEdit {
   company?: string;
   source?: Lead["source"];
   notes?: string;
+  /** A real month and day, or null to clear. Never a year. */
+  birthday?: Birthday | null;
 }
 
 /** Edit a contact's details. Empty text clears a field. Refusals throw `LeadsError`. */
@@ -358,23 +377,81 @@ export async function updateContact(id: string, patch: ContactEdit): Promise<{ l
   return { lead: contact, changed };
 }
 
-/** Hand a contact to another agent from the brokerage's own roster. */
-export async function reassignLead(id: string, agentId: string): Promise<{ lead: Lead | undefined; changed: boolean }> {
-  if ((await getLeadSource()) === "sample") {
-    await delay(150);
-    return { lead: reassignSampleLead(id, agentId), changed: true };
-  }
-  const { contact, changed } = await request<{ contact: Lead; changed: boolean }>(
-    `/api/contacts/${encodeURIComponent(id)}/reassign`,
-    { method: "POST", body: JSON.stringify({ agentId }) }
-  );
-  bumpDataVersion();
-  return { lead: contact, changed };
-}
-
 /** What happened with a person, newest first, in the domain's words. */
 export async function getTimeline(id: string): Promise<TimelineItem[]> {
   if ((await getLeadSource()) === "sample") return [];
   const { items } = await request<{ items: TimelineItem[] }>(`/api/contacts/${encodeURIComponent(id)}/timeline`);
+  return items;
+}
+
+// --- Contacts V3: notes, client needs, eligible contacts, linked deals ---------------------
+
+export type { NoteView, NeedView, LinkedTransaction };
+
+/** A contact's live notes, newest first. Private CRM data; nothing is cached client-side. */
+export async function getNotes(id: string): Promise<NoteView[]> {
+  if ((await getLeadSource()) === "sample") return [];
+  const { items } = await request<{ items: NoteView[] }>(`/api/contacts/${encodeURIComponent(id)}/notes`);
+  return items;
+}
+
+export async function addNote(id: string, body: string): Promise<NoteView> {
+  const { note } = await request<{ note: NoteView }>(`/api/contacts/${encodeURIComponent(id)}/notes`, {
+    method: "POST",
+    body: JSON.stringify({ body }),
+  });
+  // The timeline reads the same history, so let it refetch.
+  bumpDataVersion();
+  return note;
+}
+
+/** Removes the note's text. There is no edit: a correction is a new note. */
+export async function deleteNote(id: string, noteId: string): Promise<void> {
+  await request<{ deleted: boolean }>(`/api/contacts/${encodeURIComponent(id)}/notes/${encodeURIComponent(noteId)}`, { method: "DELETE" });
+  bumpDataVersion();
+}
+
+export async function getNeeds(id: string): Promise<NeedView[]> {
+  if ((await getLeadSource()) === "sample") return [];
+  const { items } = await request<{ items: NeedView[] }>(`/api/contacts/${encodeURIComponent(id)}/needs`);
+  return items;
+}
+
+export async function createNeed(id: string, input: CreateNeedInput): Promise<NeedView> {
+  const { need } = await request<{ need: NeedView }>(`/api/contacts/${encodeURIComponent(id)}/needs`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  bumpDataVersion();
+  return need;
+}
+
+export async function updateNeed(id: string, needId: string, patch: UpdateNeedInput): Promise<{ need: NeedView; changed: string[] }> {
+  const result = await request<{ need: NeedView; changed: string[] }>(
+    `/api/contacts/${encodeURIComponent(id)}/needs/${encodeURIComponent(needId)}`,
+    { method: "PATCH", body: JSON.stringify(patch) }
+  );
+  bumpDataVersion();
+  return result;
+}
+
+/**
+ * Contacts a new transaction may be opened for — Representation only, within the
+ * caller's own scope, at most 25. The typed name travels in a POST body, never a URL.
+ */
+export async function getEligibleContacts(q?: string): Promise<{ id: string; name: string }[]> {
+  if ((await getLeadSource()) === "sample") return [];
+  const { items } = await request<{ items: { id: string; name: string }[] }>(
+    "/api/contacts/eligible",
+    { method: "POST", body: JSON.stringify(q ? { q } : {}) },
+    { read: true }
+  );
+  return items;
+}
+
+/** The deals this contact is on, limited to the ones the viewer may see. */
+export async function getLinkedTransactions(id: string): Promise<LinkedTransaction[]> {
+  if ((await getLeadSource()) === "sample") return [];
+  const { items } = await request<{ items: LinkedTransaction[] }>(`/api/contacts/${encodeURIComponent(id)}/transactions`);
   return items;
 }

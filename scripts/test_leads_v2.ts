@@ -1,5 +1,5 @@
 /**
- * Leads V2 — the query layer, editing, reassignment and the timeline.
+ * Leads V2 — the query layer, editing and the timeline (reassignment was removed in Contacts V3).
  *
  * Three kinds of evidence, none of which contacts a database:
  *
@@ -17,7 +17,7 @@
  *
  * Run: npm run test:leads
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { Actor } from "../lib/auth/actor.ts";
 import {
@@ -43,8 +43,9 @@ import {
 import { businessDayStart } from "../lib/metrics/business-day.ts";
 import { followUpStatus, noRecentTouch } from "../lib/contacts/follow-up.ts";
 import { applyQuery, leadMatches, queryWindows, snapshotOf } from "../lib/contacts/windows.ts";
-import { editContactSchema, planContactEdit, reassignContactSchema, toLead } from "../lib/contacts/domain.ts";
-import { editContact, getTimeline, reassignContact } from "../lib/contacts/service.ts";
+import { createContactSchema, editContactSchema, planContactEdit, toLead } from "../lib/contacts/domain.ts";
+import * as contactsService from "../lib/contacts/service.ts";
+import { editContact, getTimeline } from "../lib/contacts/service.ts";
 import { toTimeline } from "../lib/contacts/timeline.ts";
 import { auditEvents, contactActivities, contacts, dashboardUsers, professionalProfiles } from "../lib/db/schema.ts";
 import type { Lead } from "../lib/data/types.ts";
@@ -103,15 +104,17 @@ const render = (sqlObject: Parameters<PgDialect["sqlToQuery"]>[0]) => dialect.sq
 
 // --- Quick views ---------------------------------------------------------------------
 {
-  check("quick views: All, My, Due today, Overdue, No touch 14+", QUICK_VIEWS.map((v) => v.id).join() === "all,mine,due_today,overdue,no_touch_14");
+  check("quick views: All, My leads, Representation, Active clients, Due today, Overdue, No touch 14+", QUICK_VIEWS.map((v) => v.id).join() === "all,mine,representation,active_clients,due_today,overdue,no_touch_14");
+  check("quick views: Active clients is exactly the active_client stage and Representation its own", JSON.stringify((QUICK_VIEWS.find((v) => v.id === "active_clients")!.filters as ContactQuery).stage) === '["active_client"]' && JSON.stringify((QUICK_VIEWS.find((v) => v.id === "representation")!.filters as ContactQuery).stage) === '["representation"]');
+  check("quick views: My leads is the earlier stages only", (QUICK_VIEWS.find((v) => v.id === "mine")!.filters as ContactQuery).stage?.join() === "lead,contacted,qualified,appointment");
   check("there is no 'Unassigned' view: every contact has an owner", !QUICK_VIEWS.some((v) => /unassigned/i.test(v.id + v.label)));
   for (const v of QUICK_VIEWS) {
     const q = v.filters as ContactQuery;
     check(`view ${v.id}: recognised from its own filters`, matchingView(q) === v.id);
     check(`view ${v.id}: sort and paging do not stop it being recognised`, matchingView({ ...q, sort: "name", dir: "desc", page: 3, pageSize: 50, q: "x" }) === v.id);
   }
-  check("a view plus one more filter is no longer that view", matchingView({ mine: true, source: ["referral"] }) === null);
-  check("views over follow-up and no-touch are scoped to the open pipeline", QUICK_VIEWS.filter((v) => v.id !== "all" && v.id !== "mine").every((v) => (v.filters as ContactQuery).active === true));
+  check("a view plus one more filter is no longer that view", matchingView({ mine: true, stage: ["lead", "contacted", "qualified", "appointment"], source: ["referral"] }) === null);
+  check("views over follow-up and no-touch are scoped to the open pipeline", QUICK_VIEWS.filter((v) => ["due_today", "overdue", "no_touch_14"].includes(v.id)).every((v) => (v.filters as ContactQuery).active === true));
   check("filterCount counts filters and the search once", filterCount({ stage: ["lead"], followUp: "none", q: "x", sort: "name", page: 2 }) === 3);
 }
 
@@ -291,9 +294,11 @@ const NOW = new Date("2026-09-28T16:00:00.000Z");
     check(`sql: ${label}: the brokerage boundary is in the query`, /"brokerage_key" = \$\d+/.test(r.sql) && r.params.includes(actor.brokerageKey));
   }
   check("sql: an agent is restricted to their own contacts in SQL", where(AGENT, {}).sql.includes('"assigned_agent_user_id"') && where(AGENT, {}).params.includes(AGENT.userId));
-  check("sql: a privileged caller is not", !where(BROKER, {}).sql.includes('"assigned_agent_user_id"'));
+  check("sql: an admin is not — the whole brokerage", !where(ADMIN, {}).sql.includes('"assigned_agent_user_id"'));
+  check("sql: a broker and a coordinator are restricted to their own book too", [BROKER, COORDINATOR].every((a) => where(a, {}).sql.includes('"assigned_agent_user_id"') && where(a, {}).params.includes(a.userId)));
   check("sql: an agent cannot filter to a colleague's book", !where(AGENT, { agentId: OTHER_AGENT.userId }).params.includes(OTHER_AGENT.userId));
-  check("sql: a broker can", where(BROKER, { agentId: OTHER_AGENT.userId }).params.includes(OTHER_AGENT.userId));
+  check("sql: an admin can", where(ADMIN, { agentId: OTHER_AGENT.userId }).params.includes(OTHER_AGENT.userId));
+  check("sql: a broker and a coordinator cannot either", [BROKER, COORDINATOR].every((a) => !where(a, { agentId: OTHER_AGENT.userId }).params.includes(OTHER_AGENT.userId)));
   check("sql: 'mine' is the caller, resolved on the server", where(BROKER, { mine: true }).params.includes(BROKER.userId));
   check("sql: no filter can remove the brokerage boundary", ["overdue", "due_today", "upcoming", "none"].every((f) => /"brokerage_key" = \$\d+/.test(where(AGENT, { followUp: f as never, q: "x" }).sql)));
 
@@ -404,11 +409,6 @@ const edit = (actor: Actor, patch: Record<string, unknown>, opts: { failOn?: unk
   const m = memory(tables, opts.failOn);
   return editContact({ actor, db: m.db as never }, ID, patch as never, NOW).then((result) => ({ m, result, row: tables.get(contacts)![0] }));
 };
-const reassign = (actor: Actor, to: string, opts: { failOn?: unknown; row?: Record<string, unknown>; owner?: [unknown, Record<string, unknown>[]] } = {}) => {
-  const tables = world(contactRow(opts.row), [opts.owner ?? owners("agent")]);
-  const m = memory(tables, opts.failOn);
-  return reassignContact({ actor, db: m.db as never }, ID, to, NOW).then((result) => ({ m, result, row: tables.get(contacts)![0] }));
-};
 
 // --- The request shape ----------------------------------------------------------------
 {
@@ -419,7 +419,6 @@ const reassign = (actor: Actor, to: string, opts: { failOn?: unknown; row?: Reco
   check("edit schema refuses an empty body", !editContactSchema.safeParse({}).success);
   check("edit schema refuses a bad email and an unknown source", !editContactSchema.safeParse({ email: "nope" }).success && !editContactSchema.safeParse({ source: "pigeon" }).success);
   check("edit schema lets an empty string clear the email", editContactSchema.safeParse({ email: "" }).success);
-  check("reassign schema wants exactly one id", reassignContactSchema.safeParse({ agentId: NEW_OWNER }).success && !reassignContactSchema.safeParse({ agentId: "not-a-uuid" }).success && !reassignContactSchema.safeParse({ agentId: NEW_OWNER, role: "admin" }).success && !reassignContactSchema.safeParse({}).success);
 }
 
 // --- Edit -----------------------------------------------------------------------------
@@ -456,10 +455,13 @@ const reassign = (actor: Actor, to: string, opts: { failOn?: unknown; row?: Reco
   // Authorization: each refusal beside the same request succeeding.
   const roles = {
     agent: await edit(AGENT, { notes: "x" }), broker: await edit(BROKER, { notes: "x" }), admin: await edit(ADMIN, { notes: "x" }), coordinator: await edit(COORDINATOR, { notes: "x" }),
+    brokerOwn: await edit(BROKER, { notes: "x" }, { row: { assignedAgentUserId: BROKER.userId } }), coordinatorOwn: await edit(COORDINATOR, { notes: "x" }, { row: { assignedAgentUserId: COORDINATOR.userId } }),
     member: await edit(MEMBER, { notes: "x" }), otherAgent: await edit(OTHER_AGENT, { notes: "x" }), outsider: await edit(OUTSIDER, { notes: "x" }),
     foreignRow: await edit(BROKER, { notes: "x" }, { row: { brokerageKey: "elsewhere" } }),
   };
-  check("edit authz: agent (owner), broker, admin and coordinator may", [roles.agent, roles.broker, roles.admin, roles.coordinator].every((r) => r.result.ok));
+  check("edit authz: the owner and an admin may", [roles.agent, roles.admin].every((r) => r.result.ok));
+  check("edit authz: a broker or coordinator may edit their OWN contact", [roles.brokerOwn, roles.coordinatorOwn].every((r) => r.result.ok));
+  check("edit authz: …but not an agent's — not found, like a stranger", [roles.broker, roles.coordinator].every((r) => !r.result.ok && r.result.reason === "not_found" && r.m.applied.length === 0));
   check("edit authz: a member who owns it is forbidden (visible, not writable)", !roles.member.result.ok && roles.member.result.reason === "forbidden" && roles.member.m.applied.length === 0);
   check("edit authz: another agent's contact is not found", !roles.otherAgent.result.ok && roles.otherAgent.result.reason === "not_found" && roles.otherAgent.m.applied.length === 0);
   check("edit authz: another brokerage is not found, even for an admin", !roles.outsider.result.ok && roles.outsider.result.reason === "not_found");
@@ -485,44 +487,15 @@ const reassign = (actor: Actor, to: string, opts: { failOn?: unknown; row?: Reco
   check("plan: several name parts are one 'name' change", r.ok && r.changed.join() === "name");
 }
 
-// --- Reassign -------------------------------------------------------------------------
+// --- Reassignment is gone ---------------------------------------------------------------
 {
-  const ok = await reassign(BROKER, NEW_OWNER);
-  check("reassign: a broker reassigns", ok.result.ok && ok.result.value.changed);
-  check("reassign: the owner changes", ok.row.assignedAgentUserId === NEW_OWNER);
-  check("reassign: update, history line and audit commit in one batch", ok.m.batches() === 1 && count(ok.m, contacts) === 1 && count(ok.m, contactActivities) === 1 && count(ok.m, auditEvents) === 1);
-  const activity = ok.m.applied.find((w) => w.table === contactActivities)!.values;
-  check("reassign: the history line is a system event, not a touch", activity.kind === "system" && (activity.safeMetadata as Record<string, unknown>).event === "reassigned" && (activity.safeMetadata as Record<string, unknown>).toAgentUserId === NEW_OWNER);
-  const update = ok.m.applied.find((w) => w.table === contacts)!.values;
-  check("reassign: last contact, follow-up and stage are not written", !("lastContactAt" in update) && !("nextFollowUpAt" in update) && !("stage" in update));
-  const audit = ok.m.applied.find((w) => w.table === auditEvents)!.values.safeMetadata as Record<string, unknown>;
-  check("reassign: the audit records the mechanism, and no ids beyond the contact's", audit.mechanism === "reassign" && audit.field === "assignedAgent" && Object.keys(audit).sort().join() === "contactId,field,mechanism" && !JSON.stringify(audit).includes(NEW_OWNER));
-
-  const same = await reassign(BROKER, AGENT.userId);
-  check("reassign: to the current owner is a no-op that writes nothing", same.result.ok && !same.result.value.changed && same.m.applied.length === 0);
-
-  const roles = {
-    broker: await reassign(BROKER, NEW_OWNER), admin: await reassign(ADMIN, NEW_OWNER), coordinator: await reassign(COORDINATOR, NEW_OWNER),
-    agentOwner: await reassign(AGENT, NEW_OWNER), member: await reassign(MEMBER, NEW_OWNER), otherAgent: await reassign(OTHER_AGENT, NEW_OWNER), outsider: await reassign(OUTSIDER, NEW_OWNER),
-  };
-  check("reassign authz: broker, admin and coordinator may", [roles.broker, roles.admin, roles.coordinator].every((r) => r.result.ok));
-  check("reassign authz: an agent may not hand their own contact away (403)", !roles.agentOwner.result.ok && roles.agentOwner.result.reason === "forbidden" && roles.agentOwner.m.applied.length === 0);
-  check("reassign authz: a member is forbidden", !roles.member.result.ok && roles.member.result.reason === "forbidden");
-  check("reassign authz: another agent's contact is not found (no existence leak)", !roles.otherAgent.result.ok && roles.otherAgent.result.reason === "not_found");
-  check("reassign authz: another brokerage is not found", !roles.outsider.result.ok && roles.outsider.result.reason === "not_found");
-
-  for (const [label, owner] of [["a member", owners("member")], ["a suspended user", owners("agent", "suspended")], ["a pending user", owners("agent", "pending")], ["nobody", [dashboardUsers, []] as [unknown, Record<string, unknown>[]]]] as const) {
-    const bad = await reassign(BROKER, NEW_OWNER, { owner });
-    check(`reassign: ${label} cannot be assigned`, !bad.result.ok && bad.result.reason === "invalid_assignee" && bad.m.applied.length === 0 && bad.row.assignedAgentUserId === AGENT.userId);
-  }
-  check("reassign: an id that is not a user id is refused", await (async () => { const r = await reassign(BROKER, "MLS-AGENT-12345"); return !r.result.ok && r.result.reason === "invalid_assignee" && r.m.applied.length === 0; })());
-  check("reassign: an MLS listing agent id can never be a dashboard user", await (async () => { const r = await reassign(BROKER, "a1b2c3d4-0000-4000-8000-00000000abcd", { owner: [dashboardUsers, []] }); return !r.result.ok && r.result.reason === "invalid_assignee"; })());
-
-  for (const [label, table] of [["the update", contacts], ["the history line", contactActivities], ["the audit", auditEvents]] as const) {
-    const bad = await reassign(BROKER, NEW_OWNER, { failOn: table });
-    check(`reassign rollback: when ${label} fails the request fails`, !bad.result.ok && bad.result.reason === "unavailable");
-    check("reassign rollback: …the owner is unchanged and nothing survives", bad.row.assignedAgentUserId === AGENT.userId && bad.m.applied.length === 0);
-  }
+  check("reassign: the service no longer exports a way to hand a contact to someone else", !("reassignContact" in contactsService) && !("listAssignees" in contactsService));
+  check("reassign: the domain has no reassign request shape", !readFileSync(new URL("../lib/contacts/domain.ts", import.meta.url), "utf8").includes("reassignContactSchema"));
+  check("reassign: the endpoint is removed, not merely hidden", !existsSync(new URL("../app/api/contacts/[id]/reassign/route.ts", import.meta.url)));
+  check("reassign: the browser adapter has no reassign call", !readFileSync(new URL("../lib/data/adapters/leads.ts", import.meta.url), "utf8").includes("reassign"));
+  check("reassign: creating a contact cannot name another owner", !createContactSchema.safeParse({ firstName: "A", assignedAgentUserId: NEW_OWNER }).success || (createContactSchema.parse({ firstName: "A", assignedAgentUserId: NEW_OWNER }) as Record<string, unknown>).assignedAgentUserId === undefined);
+  check("reassign: the old history label still reads, so past rows are not broken", toTimeline({ names: new Map([[NEW_OWNER, "Nia New"]]), activities: [{ id: "h", kind: "system", summary: "Contact reassigned", occurredAt: new Date("2026-09-15T10:00:00Z"), actorUserId: null, safeMetadata: { event: "reassigned", toAgentUserId: NEW_OWNER } }], followUpEvents: [] })[0]?.title === "Assigned to Nia New");
+  check("reassign: an admin's owner list is read-only and nobody else gets a roster", (await contactsService.listAgents({ actor: AGENT, db: memory(new Map()).db as never })).length === 0);
 }
 
 // --- Timeline ---------------------------------------------------------------------------
@@ -578,7 +551,7 @@ const reassign = (actor: Actor, to: string, opts: { failOn?: unknown; row?: Reco
   const owner = await getTimeline(ctx(AGENT), ID);
   check("timeline service: the owner gets activities and follow-up events, newest first", owner.ok && owner.value.length === 2 && owner.value[0].type === "follow_up_scheduled" && owner.value[1].type === "call");
   check("timeline service: names come from the profile", owner.ok && owner.value.every((i) => i.by === "Ada Agent"));
-  check("timeline service: a broker may read it", (await getTimeline(ctx(BROKER), ID)).ok);
+  check("timeline service: an admin may read it; a broker who is not its owner may not", (await getTimeline(ctx(ADMIN), ID)).ok && !(await getTimeline(ctx(BROKER), ID)).ok);
   check("timeline service: another agent, another brokerage: not found", ["OTHER_AGENT", "OUTSIDER"].every((k) => { void k; return true; }) && !(await getTimeline(ctx(OTHER_AGENT), ID)).ok && !(await getTimeline(ctx(OUTSIDER), ID)).ok);
   const denied = await getTimeline(ctx(OTHER_AGENT), ID);
   check("timeline service: …and it says not found, like a missing id", !denied.ok && denied.reason === "not_found" && (() => { const r = getTimeline(ctx(BROKER), "nope"); return r instanceof Promise; })());
@@ -603,24 +576,22 @@ const reassign = (actor: Actor, to: string, opts: { failOn?: unknown; row?: Reco
   const list = src("app/api/contacts/route.ts");
   const search = src("app/api/contacts/search/route.ts");
   const patch = src("app/api/contacts/[id]/route.ts");
-  const reassignRoute = src("app/api/contacts/[id]/reassign/route.ts");
   const timeline = src("app/api/contacts/[id]/timeline/route.ts");
   const summary = src("app/api/contacts/summary/route.ts");
 
-  check("routes: every new route authenticates before it reads anything", [[patch.slice(patch.indexOf("export async function PATCH")), "request.json()"], [reassignRoute, "request.json()"], [timeline, "await actorOrResponse"], [summary, "await actorOrResponse"]].every(([t, later]) => t.indexOf("requireCaller()") >= 0 && t.indexOf("requireCaller()") < t.indexOf(later)));
+  check("routes: every new route authenticates before it reads anything", [[patch.slice(patch.indexOf("export async function PATCH")), "request.json()"], [timeline, "await actorOrResponse"], [summary, "await actorOrResponse"]].every(([t, later]) => t.indexOf("requireCaller()") >= 0 && t.indexOf("requireCaller()") < t.indexOf(later)));
   check("routes: an invalid query is a 400 that names parameters", list.includes("parsed.fields") && search.includes("parsed.fields") && list.includes("status: 400"));
   check("routes: the GET path still never reads the search text", list.includes('key === "q" ? null'));
   check("routes: the search text stays in a POST body", search.includes("export async function POST") && !search.includes("export async function GET"));
   check("routes: PATCH judges authorization before content", order(patch.slice(patch.indexOf("export async function PATCH")), "requireCaller", "ID_SHAPE", "editContactSchema.safeParse", "actorOrResponse", "editContact("));
-  check("routes: every mutation is no-store", [patch, reassignRoute].every((t) => t.includes("NO_STORE")) && timeline.includes("NO_STORE") && summary.includes("NO_STORE"));
-  check("routes: reassign takes only an agent id from the body", reassignRoute.includes("reassignContactSchema") && !/brokerage|role/i.test(reassignRoute.replace(/\/\*[\s\S]*?\*\//g, "")));
+  check("routes: every mutation is no-store", [patch].every((t) => t.includes("NO_STORE")) && timeline.includes("NO_STORE") && summary.includes("NO_STORE"));
   check("routes: the timeline never returns raw audit rows", !timeline.includes("auditEvents") && !timeline.includes("safeMetadata"));
-  check("service: list, edit and reassign go through visibleTo", ["listContactsPage", "editContact", "reassignContact", "getTimeline"].every((fn) => { const body = src("lib/contacts/service.ts"); const i = body.indexOf(`export async function ${fn}`); return i >= 0 && /visibleTo|contactWhere/.test(body.slice(i, i + 900)); }));
-  check("service: edit and reassign commit through db.batch", (() => { const body = src("lib/contacts/service.ts"); const e = body.slice(body.indexOf("export async function editContact"), body.indexOf("export async function reassignContact")); const r = body.slice(body.indexOf("export async function reassignContact"), body.indexOf("export async function listAssignees")); return e.includes("ctx.db.batch(") && r.includes("ctx.db.batch("); })());
+  check("service: list, edit and timeline go through visibleTo", ["listContactsPage", "editContact", "getTimeline"].every((fn) => { const body = src("lib/contacts/service.ts"); const i = body.indexOf(`export async function ${fn}`); return i >= 0 && /visibleTo|contactWhere/.test(body.slice(i, i + 900)); }));
+  check("service: edit commits through db.batch", (() => { const body = src("lib/contacts/service.ts"); const e = body.slice(body.indexOf("export async function editContact"), body.indexOf("export async function getTimeline")); return e.includes("ctx.db.batch("); })());
   check("sql: nothing user-typed is concatenated into SQL text", !/\$\{[^}]*\bq\b[^}]*\}\s*['"`]/.test(src("lib/contacts/list-sql.ts")) && !src("lib/contacts/list-sql.ts").includes("sql.raw"));
   // The screen.
   const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-  const page = strip(src("app/(app)/leads/page.tsx"));
+  const page = strip(src("app/(app)/contacts/page.tsx"));
   const table = strip(src("components/leads/leads-table.tsx"));
   const filters = strip(src("components/leads/leads-filters.tsx"));
   const snapshot = strip(src("components/leads/leads-snapshot.tsx"));
@@ -635,28 +606,27 @@ const reassign = (actor: Actor, to: string, opts: { failOn?: unknown; row?: Reco
   check("ui: filters live in the URL and survive the drawer opening", page.includes("router.push") && page.includes('sp.set("open"'));
   check("ui: sorting is a request", page.includes("sortBy") && table.includes("onSort(col.sortKey!)"));
   check("ui: sortable headers announce their state", table.includes("aria-sort") && (table.match(/aria-sort/g) ?? []).length >= 1);
-  check("ui: every filter control has an accessible name", ["Filter by stage", "Filter by source", "Filter by intent", "Filter by agent", "Filter by follow-up", "Filter by last touch", "Filter by date added", "Search leads"].every((l) => filters.includes(l)));
+  check("ui: every filter control has an accessible name", ["Filter by stage", "Filter by source", "Filter by intent", "Filter by agent", "Filter by follow-up", "Filter by last touch", "Filter by date added", "Search contacts"].every((l) => filters.includes(l)));
   check("ui: quick views are toggle buttons that say when they are on", filters.includes("aria-pressed") && snapshot.includes("aria-pressed"));
   check("ui: the filter panel is disclosed accessibly on small screens", filters.includes("aria-expanded") && filters.includes("aria-controls"));
   check("ui: there is no 'Unassigned' anywhere — every contact has an owner", !/unassigned/i.test(ui));
   check("ui: a failed count says so, it never shows a zero it did not measure", snapshot.includes("unavailable") && !snapshot.match(/\?\?\s*0|\|\|\s*0/));
   check("ui: nothing from the opportunity or AI domains", !/probability|forecast|pipeline value|lead score|scor(e|ing)|opportunit|recommend|summari[sz]e with/i.test(ui));
   check("ui: no raw ids on screen — an unnamed agent is 'Unnamed agent'", (table + drawer).includes("Unnamed agent") && !/assignedAgentId\}|\{lead\.assignedAgentId/.test(table + drawer));
-  check("ui: a member is offered no write control", ["Edit contact", "Log a touch", "Archive", "Schedule"].every((w) => drawer.split(w)[0].length > 0) && drawer.includes("abilities.canWrite") && drawer.includes("abilities.canReassign") && drawer.includes("read-only access"));
-  check("ui: the drawer is sectioned and each section is named", ["lead-identity-heading", "lead-relationship-heading", "follow-up-heading", "log-touch-heading", "lead-notes-heading"].every((id) => drawer.includes(id)) && timelineUi.includes("lead-activity-heading"));
-  check("ui: the edit form labels every field and names refused fields", ["First name", "Last name", "Preferred name", "Company", "Email", "Phone", "Source", "Notes"].every((l) => edit.includes(l)) && edit.includes("aria-invalid") && edit.includes('role="alert"'));
+  check("ui: a member is offered no write control", ["Edit contact", "Log touch", "Archive"].every((w) => drawer.split(w)[0].length > 0) && drawer.includes("abilities.canWrite") && !drawer.includes("canReassign") && drawer.includes("read-only access"));
+  check("ui: the drawer is sectioned and each section is named", ["lead-details-heading", "follow-up-heading", "log-touch-heading", "lead-representation-heading", "lead-transactions-heading"].every((id) => drawer.includes(id)) && timelineUi.includes("lead-activity-heading") && strip(src("components/leads/lead-notes.tsx")).includes("lead-notes-heading") && strip(src("components/leads/lead-needs.tsx")).includes("lead-needs-heading"));
+  check("ui: the edit form labels every field and names refused fields", ["First name", "Last name", "Preferred name", "Company", "Email", "Phone", "Source"].every((l) => edit.includes(l)) && !edit.includes("lead-edit-notes") && edit.includes("aria-invalid") && edit.includes('role="alert"'));
   check("ui: the edit form sends only what changed and cannot name an owner, stage or date", edit.includes("patch[key]") && !/stage|assignedAgent|nextFollowUp|lastContact|brokerage/i.test(edit));
   check("ui: archive asks first, and restore is available", drawer.includes("Archive this contact?") && drawer.includes("Restore to Lead"));
-  check("ui: reassign offers the brokerage's own roster and excludes the current owner", drawer.includes("getLeadAgents") && drawer.includes("a.id !== lead?.assignedAgentId"));
   check("ui: the timeline loads with the drawer, not with the list", timelineUi.includes("getTimeline(leadId)") && !table.includes("getTimeline"));
-  check("ui: the mobile list is one button per person with the actions in the drawer", table.includes("useMinWidth(768)") && table.includes('aria-label="Leads"'));
-  check("ui: the follow-up and touch controls kept their names", drawer.includes("Mark complete") && drawer.includes("Save follow-up") && drawer.includes("Log touch") && drawer.includes('aria-label="Lead stage"') && drawer.includes("A reminder only. It does not count as a touch."));
+  check("ui: the mobile list is one button per person with the actions in the drawer", table.includes("useMinWidth(768)") && table.includes('aria-label="Contacts"'));
+  check("ui: the follow-up and touch controls kept their names", drawer.includes("Mark complete") && drawer.includes("Save follow-up") && drawer.includes("Log touch") && drawer.includes('aria-label="Contact stage"') && drawer.includes("A reminder only. It does not count as a touch."));
   check("ui: the shell's heading is the page's only h1", !/<h1/.test(ui));
 
   const adapter = strip(src("lib/data/adapters/leads.ts"));
   check("adapter: a read that got no answer is retried once; a write never is", adapter.includes("async function fetchOnce") && adapter.includes("if (!read) return send();") && adapter.includes("first.status !== 502 && first.status !== 504") && adapter.includes("init?.method === undefined || init.method === \"GET\""));
-  check("adapter: only the search POST is declared a read", (adapter.match(/read: true/g) ?? []).length === 1);
-  check("no migration was added for Leads V2", !src("lib/db/migrations/meta/_journal.json").includes("0011"));
+  check("adapter: only the two name-search POSTs (contacts list, eligible contacts) are declared reads", (adapter.match(/read: true/g) ?? []).length === 2);
+  check("the only migrations after Leads V2 are Contacts V3's three additive ones", (() => { const j = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] }; return j.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs"; })());
 }
 
 console.log(`\n${passed}/${passed + failures.length} Leads V2 checks passed`);

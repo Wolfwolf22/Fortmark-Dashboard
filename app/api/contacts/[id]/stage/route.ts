@@ -40,7 +40,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const actor = await actorOrResponse(caller.clerkUserId);
   if (!actor.ok) return actor.response;
   try {
-    const result = await changeStage(actor.ctx, id, parsed.data.stage);
+    const result = await changeStage(actor.ctx, id, parsed.data.stage, new Date(), {
+      engagementAcknowledged: parsed.data.engagementAcknowledged,
+    });
     if (!result.ok) return failure(result.reason);
     return NextResponse.json({ contact: result.value }, { headers: NO_STORE });
   } catch (error) {

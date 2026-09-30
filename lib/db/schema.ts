@@ -8,6 +8,7 @@
  * later release behind `DATABASE_ACCESS_CONTROL_ENABLED`.
  */
 import { sql } from "drizzle-orm";
+import { CONTACT_NOTE_MAX_LENGTH } from "../contacts/notes.ts";
 import {
   type AnyPgColumn,
   bigint,
@@ -17,8 +18,10 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -277,6 +280,14 @@ export const RELEASE_1_AUDIT_EVENTS = [
   "contact_created",
   "contact_updated",
   "contact_stage_changed",
+  // Contacts V3 — ids, field names and state words only; never note text,
+  // need values or a birthday.
+  "contact_note_created",
+  "contact_note_deleted",
+  "contact_need_created",
+  "contact_need_updated",
+  "contact_need_status_changed",
+  "contact_transaction_linked",
   // Core V1 — brokerage identity. Field NAMES only in metadata, never values.
   "brokerage_identity_created",
   "brokerage_identity_updated",
@@ -625,6 +636,14 @@ export const contacts = pgTable(
     /** Normalised to E.164 on write. */
     phoneE164: text("phone_e164"),
     company: text("company"),
+    /**
+     * Birthday, month and day only. A year is deliberately never stored: it is
+     * not needed to remember a birthday, it would invite an age calculation
+     * nobody asked for, and a `date` column would need a made-up year. Both are
+     * set or both are null (see the check below).
+     */
+    birthdayMonth: smallint("birthday_month"),
+    birthdayDay: smallint("birthday_day"),
     source: contactSource("source").notNull().default("other"),
     stage: contactStage("stage").notNull().default("lead"),
     /** Free-form labels, trimmed strings. */
@@ -641,6 +660,12 @@ export const contacts = pgTable(
     index("contacts_agent_idx").on(t.assignedAgentUserId),
     index("contacts_last_contact_idx").on(t.lastContactAt),
     index("contacts_email_idx").on(t.email),
+    // Both null, or a real calendar day. February 29 is allowed because the
+    // year is unknown; February 30 and April 31 are not.
+    check(
+      "contacts_birthday_check",
+      sql`(${t.birthdayMonth} is null and ${t.birthdayDay} is null) or (${t.birthdayMonth} is not null and ${t.birthdayDay} is not null and ${t.birthdayMonth} between 1 and 12 and ${t.birthdayDay} between 1 and (case ${t.birthdayMonth} when 2 then 29 when 4 then 30 when 6 then 30 when 9 then 30 when 11 then 30 else 31 end))`
+    ),
   ]
 );
 
@@ -689,6 +714,117 @@ export const contactActivities = pgTable(
   },
   (t) => [index("contact_activities_contact_occurred_idx").on(t.contactId, t.occurredAt)]
 );
+
+// ===========================================================================
+// Contacts V3 — notes
+//
+// A note is something a person wrote about a relationship, on a timestamp, by
+// a named author. Add and delete only: a correction is a new note, so history
+// is never silently rewritten. Deleting a note REMOVES its text — the row stays
+// as a tombstone (who deleted it and when) so counts and audit still reconcile,
+// but the body no longer exists anywhere. The check makes that a database
+// fact rather than a service convention: a live note has a body, a deleted one
+// has none.
+//
+// Notes are deliberately not `contact_activities`: an activity's one-line
+// summary feeds the timeline and its metadata surfaces, and a note's body must
+// never travel through them. Notes are not searchable and never appear in audit.
+// ===========================================================================
+
+
+export const contactNotes = pgTable(
+  "contact_notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    /** Shown by profile name, never as an id. A removed user leaves the note unattributed. */
+    authorUserId: uuid("author_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+    /** Null exactly when the note has been deleted. */
+    body: text("body"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedByUserId: uuid("deleted_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    index("contact_notes_contact_created_idx").on(t.contactId, t.createdAt.desc()),
+    check(
+      "contact_notes_body_check",
+      sql`(${t.deletedAt} is null and ${t.body} is not null and char_length(${t.body}) between 1 and ${sql.raw(String(CONTACT_NOTE_MAX_LENGTH))}) or (${t.deletedAt} is not null and ${t.body} is null)`
+    ),
+  ]
+);
+
+export type ContactNoteRow = typeof contactNotes.$inferSelect;
+
+// ===========================================================================
+// Contacts V3 — client needs
+//
+// What a person is trying to accomplish, as structured requirements a future
+// service can hand to an MLS search without interpreting a paragraph. It is
+// NOT an opportunity (no forecast, no won/lost) and NOT a deal: the two older
+// tables keep their meaning, and this one holds only what the client asked for.
+//
+// Many needs per contact — the same person may buy one home and sell another.
+// Fields are FortMark's own vocabulary; nothing here is a Bridge/RESO key, and
+// any translation to an MLS query belongs to an adapter, not to this table.
+//
+// The free-text fields are the most likely place for something sensitive, so
+// they are bounded here and never searched, logged or written to audit.
+// ===========================================================================
+
+export const contactNeedKind = pgEnum("contact_need_kind", ["buy", "sell", "rent", "lease", "other"]);
+export const contactNeedStatus = pgEnum("contact_need_status", ["active", "paused", "fulfilled", "archived"]);
+export const contactNeedFinancing = pgEnum("contact_need_financing", [
+  "cash",
+  "conventional",
+  "fha",
+  "va",
+  "other",
+  "unknown",
+]);
+
+export const contactNeeds = pgTable(
+  "contact_needs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: contactNeedKind("kind").notNull(),
+    status: contactNeedStatus("status").notNull().default("active"),
+    /** FortMark property-type values, validated by the service. */
+    propertyTypes: text("property_types").array().notNull().default(sql`'{}'::text[]`),
+    /** Cities / neighbourhoods as FortMark names them. */
+    areas: text("areas").array().notNull().default(sql`'{}'::text[]`),
+    priceMinCents: bigint("price_min_cents", { mode: "number" }),
+    priceMaxCents: bigint("price_max_cents", { mode: "number" }),
+    minBeds: smallint("min_beds"),
+    /** Half baths are real (2.5), so an exact numeric, never a float. */
+    minBaths: numeric("min_baths", { precision: 3, scale: 1 }),
+    minSqft: integer("min_sqft"),
+    targetDate: date("target_date"),
+    timelineNote: text("timeline_note"),
+    /** Null when it does not apply (a seller, a lessor) or was not asked. */
+    financing: contactNeedFinancing("financing"),
+    mustHaves: text("must_haves").array().notNull().default(sql`'{}'::text[]`),
+    avoid: text("avoid").array().notNull().default(sql`'{}'::text[]`),
+    additionalRequirements: text("additional_requirements"),
+    createdByUserId: uuid("created_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+    updatedByUserId: uuid("updated_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("contact_needs_contact_status_idx").on(t.contactId, t.status),
+    check("contact_needs_price_check", sql`(${t.priceMinCents} is null or ${t.priceMinCents} >= 0) and (${t.priceMaxCents} is null or ${t.priceMaxCents} >= 0) and (${t.priceMinCents} is null or ${t.priceMaxCents} is null or ${t.priceMaxCents} >= ${t.priceMinCents})`),
+    check("contact_needs_size_check", sql`(${t.minBeds} is null or ${t.minBeds} between 0 and 30) and (${t.minBaths} is null or (${t.minBaths} between 0 and 30 and (${t.minBaths} * 2) = trunc(${t.minBaths} * 2))) and (${t.minSqft} is null or ${t.minSqft} >= 0)`),
+    check("contact_needs_bounds_check", sql`cardinality(${t.propertyTypes}) <= 8 and cardinality(${t.areas}) <= 12 and cardinality(${t.mustHaves}) <= 20 and cardinality(${t.avoid}) <= 20 and (${t.timelineNote} is null or char_length(${t.timelineNote}) <= 200) and (${t.additionalRequirements} is null or char_length(${t.additionalRequirements}) <= 2000)`),
+  ]
+);
+
+export type ContactNeedRow = typeof contactNeeds.$inferSelect;
 
 export type ContactRow = typeof contacts.$inferSelect;
 export type ContactOpportunityRow = typeof contactOpportunities.$inferSelect;

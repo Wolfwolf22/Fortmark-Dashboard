@@ -1,29 +1,31 @@
 "use client";
 
 /**
- * Lead detail drawer — the workspace for one relationship. Sections, in the
- * order a person works: who they are (and editing that), where the relationship
- * stands (stage, owner, last touch), the follow-up, logging a touch, what has
- * happened, and notes. Controls a role cannot use are not offered; the server
- * still decides.
+ * Contact drawer — the workspace for one relationship.
  *
- * Two separate things people do about a
- * contact:
+ * One calm hierarchy, top to bottom: who they are (name, stage, source, and — for
+ * an admin looking at a colleague's contact — whose it is), the things you do
+ * (quick actions), what they want (client needs), what you have written
+ * (notes, always there), what has happened (the latest few items, the rest on
+ * request), where the relationship is formal (representation) and the deals they
+ * are on. Controls a role cannot use are not offered; the server still decides.
  *
- *   - the FOLLOW-UP: a reminder. Schedule, change or mark it complete on its
- *     own; nothing about it says the contact was reached, and last contact is
- *     left alone.
- *   - a TOUCH: something that happened (a call, a showing). Logging one moves
- *     last contact, and may also set the next follow-up in the same step —
- *     "I called Jane today, call again Friday."
+ * Two separate things people do about a contact, kept apart on purpose:
+ *
+ *   - the FOLLOW-UP: a reminder. Schedule, change or complete it on its own;
+ *     nothing about it says the contact was reached, and last contact is left alone.
+ *   - a TOUCH: something that happened (a call, a showing). Logging one moves last
+ *     contact, and may set the next follow-up in the same step.
  *
  * Logging a touch never clears a follow-up on its own — an attempted call may
- * complete nothing. The reminder changes only when the person picks a date or
- * asks to complete it.
+ * complete nothing. Moving a contact into Active client or Representation asks
+ * for an acknowledgement first (see `EngagementNotice`). There is no reassignment:
+ * a contact belongs to the person who created it.
  *
- * Mutations go through the adapter, which bumps the data version so every
- * open list refetches on its own.
+ * Mutations go through the adapter, which bumps the data version so every open
+ * list refetches on its own.
  */
+import Link from "next/link";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Pencil } from "lucide-react";
 import { useSessionUser } from "@/components/layout/session-user";
@@ -33,57 +35,38 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/ui/status-pill";
 import { SampleDataNotice } from "@/components/listings/sample-data-notice";
 import { getAgent } from "@/lib/data/adapters/agents";
 import {
-  getLead,
-  getLeadAgents,
-  LeadsError,
   changeFollowUp,
+  getLead,
+  getLinkedTransactions,
+  LeadsError,
   logTouch,
   markContacted,
-  reassignLead,
   updateContact,
   updateLeadStage,
   type ContactEdit,
   type TouchKind,
 } from "@/lib/data/adapters/leads";
 import { useQuery } from "@/lib/data/hooks";
-import {
-  Lead,
-  LeadStage,
-  LEAD_SOURCE_LABELS,
-  LEAD_STAGES,
-  LEAD_STAGE_LABELS,
-} from "@/lib/data/types";
-import { cn, formatCurrency, formatDate, formatRelative, initials } from "@/lib/utils";
+import { Lead, LeadStage, LEAD_SOURCE_LABELS, LEAD_STAGES, LEAD_STAGE_LABELS, TRANSACTION_STAGE_LABELS, type TransactionStage } from "@/lib/data/types";
+import { cn, formatDate, formatRelative, initials } from "@/lib/utils";
 import { businessDayKey } from "@/lib/metrics/business-day";
-import {
-  followUpLabel,
-  followUpStatus,
-  formatFollowUpDay,
-  isFollowUpDue,
-  noRecentTouch,
-  NO_TOUCH_LABEL,
-} from "@/lib/contacts/follow-up";
-import { INTENT_LABELS, leadAbilities } from "./lead-shared";
+import { followUpLabel, followUpStatus, formatFollowUpDay, isFollowUpDue, noRecentTouch, NO_TOUCH_LABEL } from "@/lib/contacts/follow-up";
+import { requiresEngagementNotice } from "@/lib/contacts/stages";
+import type { Birthday } from "@/lib/contacts/birthday";
+import { useUiStore } from "@/lib/stores/ui";
+import { leadAbilities } from "./lead-shared";
+import { EngagementNotice } from "./engagement-notice";
+import { LeadBirthday } from "./lead-birthday";
 import { LeadEditForm } from "./lead-edit-form";
+import { LeadNeeds } from "./lead-needs";
+import { LeadNotes } from "./lead-notes";
 import { LeadTimeline } from "./lead-timeline";
 
 const TOUCH_KINDS: { value: TouchKind; label: string }[] = [
@@ -110,21 +93,13 @@ export interface LeadDrawerProps {
   onOpenChange: (open: boolean) => void;
 }
 
-function Fact({
-  label,
-  value,
-  numeric,
-}: {
-  label: string;
-  value: ReactNode;
-  numeric?: boolean;
-}) {
+type Panel = "touch" | "followUp" | "stage" | "edit" | null;
+
+function Fact({ label, value, numeric }: { label: string; value: ReactNode; numeric?: boolean }) {
   return (
     <div>
       <p className="text-micro">{label}</p>
-      <p className={cn("mt-1 text-sm font-semibold", numeric && "tabular")}>
-        {value}
-      </p>
+      <p className={cn("mt-1 text-sm font-semibold", numeric && "tabular")}>{value}</p>
     </div>
   );
 }
@@ -133,10 +108,8 @@ function DrawerSkeleton() {
   return (
     <>
       <SheetHeader>
-        <SheetTitle className="sr-only">Loading lead</SheetTitle>
-        <SheetDescription className="sr-only">
-          Lead details are loading
-        </SheetDescription>
+        <SheetTitle className="sr-only">Loading contact</SheetTitle>
+        <SheetDescription className="sr-only">Contact details are loading</SheetDescription>
       </SheetHeader>
       <div className="space-y-2">
         <Skeleton className="h-6 w-3/5" />
@@ -163,50 +136,37 @@ function describe(error: unknown): string {
     if (error.status === 403) return "You do not have permission to change this contact.";
     if (error.status === 404) return "This contact is no longer available.";
     if (error.code === "invalid_date") return "Pick today or a later date.";
-    if (error.code === "invalid_assignee") return "That person cannot be assigned contacts.";
   }
   return "The change could not be saved. Try again.";
 }
 
 export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
-  const { data, loading } = useQuery<Lead | undefined>(
-    () => (leadId ? getLead(leadId) : Promise.resolve(undefined)),
-    [leadId]
-  );
+  const { data, loading } = useQuery<Lead | undefined>(() => (leadId ? getLead(leadId) : Promise.resolve(undefined)), [leadId]);
   // Guard against stale data from a previously opened lead.
   const lead = data && data.id === leadId ? data : undefined;
+  const sample = lead?.recordSource === "sample";
 
-  // A stored contact carries its agent's name; only the sample roster needs
-  // the agents adapter looked up by id.
-  const sampleAgentId = lead?.recordSource === "sample" ? lead.assignedAgentId : null;
-  const { data: agent } = useQuery(
-    () => (sampleAgentId ? getAgent(sampleAgentId) : Promise.resolve(undefined)),
-    [sampleAgentId]
-  );
-  const agentName = lead?.assignedAgentName ?? agent?.name;
+  // A stored contact carries its owner's name; only the sample roster needs the agents adapter.
+  const sampleAgentId = sample ? lead?.assignedAgentId : null;
+  const { data: agent } = useQuery(() => (sampleAgentId ? getAgent(sampleAgentId) : Promise.resolve(undefined)), [sampleAgentId]);
+  const ownerName = lead?.assignedAgentName ?? agent?.name;
 
   const abilities = leadAbilities(useSessionUser().role);
-  // The roster is only needed once a drawer is actually open.
-  const { data: roster } = useQuery(
-    () => (abilities.canReassign && open ? getLeadAgents() : Promise.resolve([] as { id: string; name: string }[])),
-    [abilities.canReassign, open]
-  );
+  const setQuickCreate = useUiStore((s) => s.setQuickCreate);
+
+  const linked = useQuery(() => (leadId && lead && !sample ? getLinkedTransactions(leadId) : Promise.resolve([])), [leadId, lead?.id, sample]);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-
-  // Editing the details, reassigning the owner, and confirming an archive.
-  const [editing, setEditing] = useState(false);
-  const [reassigning, setReassigning] = useState(false);
-  const [newOwner, setNewOwner] = useState("");
+  const [panel, setPanel] = useState<Panel>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [pendingStage, setPendingStage] = useState<LeadStage | null>(null);
 
   // The direct follow-up control (no touch involved).
-  const [editingFollowUp, setEditingFollowUp] = useState(false);
   const [followUpDay, setFollowUpDay] = useState("");
 
-  // The "Log a touch" form. Reset whenever a different lead opens.
+  // The "Log a touch" form. Reset whenever a different contact opens.
   const [touchKind, setTouchKind] = useState<TouchKind>("call");
   const [summary, setSummary] = useState("");
   const [nextDay, setNextDay] = useState("");
@@ -218,14 +178,12 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     setSummary("");
     setNextDay("");
     setComplete(false);
-    setEditingFollowUp(false);
     setFollowUpDay("");
     setError(null);
     setNotice(null);
-    setEditing(false);
-    setReassigning(false);
-    setNewOwner("");
+    setPanel(null);
     setConfirmArchive(false);
+    setPendingStage(null);
   }
 
   async function run(action: () => Promise<unknown>): Promise<boolean> {
@@ -246,9 +204,28 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     }
   }
 
+  function togglePanel(next: Exclude<Panel, null>) {
+    setError(null);
+    setNotice(null);
+    setPanel((current) => (current === next ? null : next));
+  }
+
+  /** Moving into a formally-engaged stage asks first; anything else goes straight through. */
   function changeStage(stage: LeadStage) {
     if (!lead || stage === lead.stage) return;
+    if (requiresEngagementNotice(lead.stage, stage)) {
+      setPendingStage(stage);
+      return;
+    }
     void run(() => updateLeadStage(lead.id, stage));
+  }
+
+  async function confirmEngagement() {
+    if (!lead || !pendingStage) return;
+    const stage = pendingStage;
+    const ok = await run(() => updateLeadStage(lead.id, stage, { engagementAcknowledged: true }));
+    setPendingStage(null);
+    if (ok) setNotice(`Stage changed to ${LEAD_STAGE_LABELS[stage]}.`);
   }
 
   async function saveEdit(patch: ContactEdit): Promise<boolean> {
@@ -260,7 +237,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     setNotice(null);
     try {
       const { changed } = await updateContact(lead.id, patch);
-      setEditing(false);
+      setPanel(null);
       setNotice(changed.length > 0 ? "Contact details saved." : "No changes to save.");
       return true;
     } catch (e) {
@@ -272,14 +249,11 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     }
   }
 
-  async function confirmReassign() {
-    if (!lead || !newOwner) return;
-    const target = roster?.find((a) => a.id === newOwner)?.name ?? "the new agent";
-    const ok = await run(() => reassignLead(lead.id, newOwner));
-    if (!ok) return;
-    setReassigning(false);
-    setNewOwner("");
-    setNotice(`Reassigned to ${target}.`);
+  async function saveBirthday(next: Birthday | null): Promise<boolean> {
+    if (!lead) return false;
+    const ok = await run(() => updateContact(lead.id, { birthday: next }));
+    if (ok) setNotice(next ? "Birthday saved." : "Birthday cleared.");
+    return ok;
   }
 
   async function archive(to: LeadStage) {
@@ -301,15 +275,18 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     const rescheduling = hasFollowUp;
     const ok = await run(() => changeFollowUp(lead.id, { action: "schedule", day }));
     if (!ok) return;
-    setEditingFollowUp(false);
     setFollowUpDay("");
+    setPanel(null);
     setNotice(`Follow-up ${rescheduling ? "changed to" : "set for"} ${formatFollowUpDay(day)}.`);
   }
 
   async function completeCurrentFollowUp() {
     if (!lead) return;
     const ok = await run(() => changeFollowUp(lead.id, { action: "complete" }));
-    if (ok) setNotice("Follow-up marked complete.");
+    if (ok) {
+      setPanel(null);
+      setNotice("Follow-up marked complete.");
+    }
   }
 
   async function submitTouch(e: FormEvent) {
@@ -322,13 +299,12 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     }
     const day = nextDay || undefined;
     const completing = !day && complete && hasFollowUp;
-    const ok = await run(() =>
-      logTouch(lead.id, { kind: touchKind, summary: text, nextFollowUpDay: day, completeFollowUp: completing })
-    );
+    const ok = await run(() => logTouch(lead.id, { kind: touchKind, summary: text, nextFollowUpDay: day, completeFollowUp: completing }));
     if (!ok) return;
     setSummary("");
     setNextDay("");
     setComplete(false);
+    setPanel(null);
     setNotice(
       day
         ? `Touch logged. Next follow-up set for ${formatFollowUpDay(day)}.`
@@ -341,9 +317,26 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
   }
 
   const heading = "text-micro";
-  const ownerName = agentName ?? (lead?.recordSource === "sample" ? undefined : "Unnamed agent");
-  const otherAgents = (roster ?? []).filter((a) => a.id !== lead?.assignedAgentId);
+  const shownOwner = ownerName ?? (sample ? undefined : "Unnamed agent");
   const stageChoices = lead && !LEAD_STAGES.includes(lead.stage) ? [...LEAD_STAGES, lead.stage] : LEAD_STAGES;
+  const linkedDeals = linked.data ?? [];
+  const engaged = lead?.stage === "representation" || lead?.stage === "active_client";
+
+  const actionButton = (id: Exclude<Panel, null>, label: string, icon?: ReactNode) => (
+    <Button
+      key={id}
+      type="button"
+      size="sm"
+      variant={panel === id ? "secondary" : "outline"}
+      aria-expanded={panel === id}
+      aria-controls={`lead-panel-${id}`}
+      disabled={saving}
+      onClick={() => togglePanel(id)}
+    >
+      {icon}
+      {label}
+    </Button>
+  );
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -352,29 +345,40 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
           <>
             <SheetHeader className="pr-8">
               <SheetTitle>{lead.name}</SheetTitle>
-              {/* Only what exists: a contact with no email or phone has no
-                  subtitle, not a lone separator. */}
+              {/* Only what exists: a contact with no email or phone has no subtitle, not a lone separator. */}
               {[lead.email, lead.phone].filter(Boolean).length > 0 ? (
                 <SheetDescription>{[lead.email, lead.phone].filter(Boolean).join(" · ")}</SheetDescription>
               ) : (
                 <SheetDescription className="sr-only">Contact details</SheetDescription>
               )}
             </SheetHeader>
-            {lead.recordSource === "sample" && (
+            {sample && (
               <div className="mt-3">
                 <SampleDataNotice subject="This contact is generated for development and is not a real person." />
               </div>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              <Badge variant="secondary" data-testid="lead-stage-badge">
+                {LEAD_STAGE_LABELS[lead.stage]}
+              </Badge>
               <Badge variant="outline">{LEAD_SOURCE_LABELS[lead.source]}</Badge>
-              <Badge variant="secondary">{LEAD_STAGE_LABELS[lead.stage]}</Badge>
               {isFollowUpDue(followUp) && (
-                <StatusPill tone="warn">
-                  {followUp.state === "overdue" ? "Follow-up overdue" : "Follow-up due today"}
-                </StatusPill>
+                <StatusPill tone="warn">{followUp.state === "overdue" ? "Follow-up overdue" : "Follow-up due today"}</StatusPill>
               )}
               {quiet && <StatusPill tone="neutral">{NO_TOUCH_LABEL}</StatusPill>}
             </div>
+            {/* An admin looking at a colleague's contact is told whose it is. Read-only: never a control. */}
+            {lead.ownedByViewer === false && shownOwner && (
+              <p className="mt-2 flex items-center gap-2 text-[13px] text-muted-foreground" data-testid="lead-owner">
+                Owner:
+                {shownOwner !== "Unnamed agent" && (
+                  <Avatar className="h-5 w-5">
+                    <AvatarFallback className="text-[9px]">{initials(shownOwner)}</AvatarFallback>
+                  </Avatar>
+                )}
+                <span className={cn("font-medium", shownOwner === "Unnamed agent" ? "text-muted-foreground" : "text-foreground")}>{shownOwner}</span>
+              </p>
+            )}
 
             {!abilities.canWrite && (
               <p role="note" className="mt-4 rounded-panel bg-tint px-3 py-2 text-[13px] text-muted-foreground">
@@ -383,312 +387,134 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
             )}
 
             <div className="flex-1 space-y-6">
-              {/* --- Identity ------------------------------------------------ */}
-              <section aria-labelledby="lead-identity-heading" className="mt-6">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 id="lead-identity-heading" className={heading}>
-                    Contact
-                  </h3>
-                  {abilities.canWrite && !editing && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={saving}
-                      onClick={() => {
-                        setError(null);
-                        setNotice(null);
-                        setEditing(true);
-                      }}
-                    >
-                      <Pencil aria-hidden />
-                      Edit contact
-                    </Button>
-                  )}
-                </div>
-                {editing ? (
-                  <div className="mt-3">
-                    <LeadEditForm lead={lead} saving={saving} onSave={saveEdit} onCancel={() => setEditing(false)} />
+              {/* --- Quick actions -------------------------------------------- */}
+              {abilities.canWrite && (
+                <div className="mt-5" role="group" aria-label="Contact actions">
+                  <div className="flex flex-wrap gap-2">
+                    {actionButton("touch", "Log touch")}
+                    {actionButton("followUp", "Follow-up")}
+                    {actionButton("stage", "Change stage")}
+                    {actionButton("edit", "Edit contact", <Pencil aria-hidden />)}
                   </div>
-                ) : (
-                  <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-4 rounded-panel bg-tint p-4">
-                    <Fact label="Email" value={lead.email || "—"} />
-                    <Fact label="Phone" numeric value={lead.phone || "—"} />
-                    <Fact label="Company" value={lead.editable?.company || "—"} />
-                    <Fact label="Source" value={LEAD_SOURCE_LABELS[lead.source]} />
-                    <Fact label="Intent" value={lead.intent === "other" ? "Not stated" : INTENT_LABELS[lead.intent]} />
-                    <Fact label="Budget" numeric value={lead.budget != null ? formatCurrency(lead.budget) : "—"} />
-                    <Fact label="Neighborhood" value={lead.neighborhood ?? "—"} />
-                    <Fact label="Created" numeric value={formatDate(lead.createdDate)} />
-                  </div>
-                )}
-              </section>
 
-              {/* --- Relationship -------------------------------------------- */}
-              <section aria-labelledby="lead-relationship-heading">
-                <h3 id="lead-relationship-heading" className={heading}>
-                  Relationship
-                </h3>
-                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-4 rounded-panel bg-tint p-4">
-                  <Fact
-                    label="Assigned agent"
-                    value={
-                      ownerName ? (
-                        <span className="flex items-center gap-2" data-testid="lead-assigned-agent">
-                          {/* Initials of a placeholder would be a made-up person: no avatar for an unnamed agent. */}
-                          {ownerName !== "Unnamed agent" && (
-                            <Avatar className="h-5 w-5">
-                              <AvatarFallback className="text-[9px]">{initials(ownerName)}</AvatarFallback>
-                            </Avatar>
-                          )}
-                          <span className={cn(ownerName === "Unnamed agent" && "font-normal text-muted-foreground")}>{ownerName}</span>
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )
-                    }
-                  />
-                  <Fact
-                    label="Last touch"
-                    numeric
-                    value={
-                      lead.lastTouchDate || lead.recordSource === "sample" ? formatRelative(lead.lastContactDate) : "Never"
-                    }
-                  />
-                </div>
-                {abilities.canReassign && (
-                  <div className="mt-3">
-                    {reassigning ? (
-                      <div className="flex flex-wrap items-end gap-2">
-                        <div className="grid gap-1.5">
-                          <Label htmlFor="lead-reassign-agent">Reassign to</Label>
-                          <Select value={newOwner} onValueChange={setNewOwner} disabled={saving}>
-                            <SelectTrigger id="lead-reassign-agent" aria-label="New assigned agent" className="w-56">
-                              <SelectValue placeholder="Choose an agent" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {otherAgents.map((a) => (
-                                <SelectItem key={a.id} value={a.id}>
-                                  {a.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <Button type="button" size="sm" disabled={saving || !newOwner} onClick={() => void confirmReassign()}>
-                          Reassign
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          disabled={saving}
-                          onClick={() => {
-                            setReassigning(false);
-                            setNewOwner("");
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                        {otherAgents.length === 0 && (
-                          <p className="basis-full text-xs text-muted-foreground">There is no one else on your team to assign this to.</p>
-                        )}
-                      </div>
-                    ) : (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={saving}
-                        onClick={() => {
-                          setError(null);
-                          setNotice(null);
-                          setReassigning(true);
-                        }}
-                      >
-                        Reassign agent
-                      </Button>
-                    )}
-                  </div>
-                )}
-                <div className="mt-4">
-                  <p className={heading}>Stage</p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <Select value={lead.stage} onValueChange={(v) => changeStage(v as LeadStage)} disabled={saving || !abilities.canWrite}>
-                      <SelectTrigger aria-label="Lead stage" className="w-full sm:w-56">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {stageChoices.map((stage) => (
-                          <SelectItem key={stage} value={stage}>
-                            {LEAD_STAGE_LABELS[stage]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {abilities.canWrite &&
-                      (lead.stage === "archived" ? (
-                        <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => void archive("lead")}>
-                          Restore to Lead
-                        </Button>
-                      ) : confirmArchive ? (
-                        <span role="group" aria-label="Confirm archive" className="flex flex-wrap items-center gap-2">
-                          <span className="text-[13px] text-muted-foreground">Archive this contact?</span>
-                          <Button type="button" size="sm" disabled={saving} onClick={() => void archive("archived")}>
-                            Archive
-                          </Button>
-                          <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => setConfirmArchive(false)}>
-                            Cancel
-                          </Button>
-                        </span>
-                      ) : (
-                        <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => setConfirmArchive(true)}>
-                          Archive
-                        </Button>
-                      ))}
-                  </div>
-                </div>
-              </section>
-
-              {/* --- Follow-up ------------------------------------------------ */}
-              <section aria-labelledby="follow-up-heading" className="rounded-panel border border-border p-4">
-                <h3 id="follow-up-heading" className={heading}>
-                  Next follow-up
-                </h3>
-                <p
-                  data-testid="lead-next-follow-up"
-                  className={cn(
-                    "mt-1 text-sm font-semibold tabular",
-                    followUp.state === "none" && "font-normal text-muted-foreground",
-                    isFollowUpDue(followUp) && "text-status-warn"
-                  )}
-                >
-                  {followUpLabel(followUp, { withDate: true })}
-                </p>
-                {abilities.canWrite &&
-                  (editingFollowUp ? (
-                    <form onSubmit={saveFollowUp} className="mt-3 flex flex-wrap items-end gap-2">
-                      <div className="grid gap-1.5">
-                        <Label htmlFor="lead-follow-up-day">{hasFollowUp ? "New date" : "Date"}</Label>
+                  {panel === "touch" && (
+                    <form id="lead-panel-touch" aria-labelledby="log-touch-heading" onSubmit={submitTouch} className="mt-3 space-y-3 rounded-panel border border-border p-4">
+                      <h3 id="log-touch-heading" className={heading}>
+                        Log a touch
+                      </h3>
+                      <div className="grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)]">
+                        <Select value={touchKind} onValueChange={(v) => setTouchKind(v as TouchKind)} disabled={saving}>
+                          <SelectTrigger aria-label="Touch type">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {TOUCH_KINDS.map((k) => (
+                              <SelectItem key={k.value} value={k.value}>
+                                {k.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <Input
-                          id="lead-follow-up-day"
-                          type="date"
-                          min={businessToday()}
-                          value={followUpDay}
-                          onChange={(e) => setFollowUpDay(e.target.value)}
+                          aria-label="Touch summary"
+                          placeholder="What happened — e.g. left a voicemail"
+                          value={summary}
+                          onChange={(e) => setSummary(e.target.value)}
+                          maxLength={1000}
                           disabled={saving}
-                          className="w-44"
+                          autoFocus
                         />
                       </div>
-                      <Button type="submit" size="sm" disabled={saving || !followUpDay}>
-                        Save follow-up
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        disabled={saving}
-                        onClick={() => {
-                          setEditingFollowUp(false);
-                          setFollowUpDay("");
-                        }}
-                      >
-                        Cancel
+                      <div className="grid gap-1.5">
+                        <Label htmlFor="lead-next-follow-up-day">{hasFollowUp ? "Also change the follow-up (optional)" : "Also set a follow-up (optional)"}</Label>
+                        <Input id="lead-next-follow-up-day" type="date" min={businessToday()} value={nextDay} onChange={(e) => setNextDay(e.target.value)} disabled={saving} className="w-full sm:w-48" />
+                      </div>
+                      {hasFollowUp && (
+                        <div className="flex items-center gap-2">
+                          <Checkbox id="lead-complete-follow-up" checked={complete && !nextDay} onCheckedChange={(v) => setComplete(v === true)} disabled={saving || Boolean(nextDay)} />
+                          <Label htmlFor="lead-complete-follow-up" className="font-normal">
+                            Mark current follow-up complete
+                          </Label>
+                        </div>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        {hasFollowUp ? "This touch updates last contact. Leave both empty to keep the current follow-up." : "This touch updates last contact. Add a date to be reminded."}
+                      </p>
+                      <Button type="submit" disabled={saving || !summary.trim()}>
+                        Log touch
                       </Button>
                     </form>
-                  ) : (
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={saving}
-                        onClick={() => {
-                          setError(null);
-                          setNotice(null);
-                          setEditingFollowUp(true);
-                        }}
-                      >
-                        {hasFollowUp ? "Change" : "Schedule"}
-                      </Button>
-                      {hasFollowUp && (
-                        <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => void completeCurrentFollowUp()}>
-                          Mark complete
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                <p className="mt-3 text-xs text-muted-foreground">A reminder only. It does not count as a touch.</p>
-              </section>
+                  )}
 
-              {/* --- Log a touch ---------------------------------------------- */}
-              {abilities.canWrite && (
-                <form
-                  aria-labelledby="log-touch-heading"
-                  onSubmit={submitTouch}
-                  className="space-y-3 rounded-panel border border-border p-4"
-                >
-                  <h3 id="log-touch-heading" className={heading}>
-                    Log a touch
-                  </h3>
-                  <div className="grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)]">
-                    <Select value={touchKind} onValueChange={(v) => setTouchKind(v as TouchKind)} disabled={saving}>
-                      <SelectTrigger aria-label="Touch type">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TOUCH_KINDS.map((k) => (
-                          <SelectItem key={k.value} value={k.value}>
-                            {k.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      aria-label="Touch summary"
-                      placeholder="What happened — e.g. left a voicemail"
-                      value={summary}
-                      onChange={(e) => setSummary(e.target.value)}
-                      maxLength={1000}
-                      disabled={saving}
-                    />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="lead-next-follow-up-day">
-                      {hasFollowUp ? "Also change the follow-up (optional)" : "Also set a follow-up (optional)"}
-                    </Label>
-                    <Input
-                      id="lead-next-follow-up-day"
-                      type="date"
-                      min={businessToday()}
-                      value={nextDay}
-                      onChange={(e) => setNextDay(e.target.value)}
-                      disabled={saving}
-                      className="w-full sm:w-48"
-                    />
-                  </div>
-                  {hasFollowUp && (
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="lead-complete-follow-up"
-                        checked={complete && !nextDay}
-                        onCheckedChange={(v) => setComplete(v === true)}
-                        disabled={saving || Boolean(nextDay)}
-                      />
-                      <Label htmlFor="lead-complete-follow-up" className="font-normal">
-                        Mark current follow-up complete
-                      </Label>
+                  {panel === "followUp" && (
+                    <div id="lead-panel-followUp" className="mt-3 rounded-panel border border-border p-4">
+                      <h3 id="follow-up-heading" className={heading}>
+                        Next follow-up
+                      </h3>
+                      <p className="mt-1 text-sm">{followUpLabel(followUp, { withDate: true })}</p>
+                      <form onSubmit={saveFollowUp} className="mt-3 flex flex-wrap items-end gap-2">
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="lead-follow-up-day">{hasFollowUp ? "New date" : "Date"}</Label>
+                          <Input id="lead-follow-up-day" type="date" min={businessToday()} value={followUpDay} onChange={(e) => setFollowUpDay(e.target.value)} disabled={saving} className="w-44" autoFocus />
+                        </div>
+                        <Button type="submit" size="sm" disabled={saving || !followUpDay}>
+                          Save follow-up
+                        </Button>
+                        {hasFollowUp && (
+                          <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => void completeCurrentFollowUp()}>
+                            Mark complete
+                          </Button>
+                        )}
+                      </form>
+                      <p className="mt-3 text-xs text-muted-foreground">A reminder only. It does not count as a touch.</p>
                     </div>
                   )}
-                  <p className="text-xs text-muted-foreground">
-                    {hasFollowUp
-                      ? "This touch updates last contact. Leave both empty to keep the current follow-up."
-                      : "This touch updates last contact. Add a date to be reminded."}
-                  </p>
-                  <Button type="submit" disabled={saving || !summary.trim()}>
-                    Log touch
-                  </Button>
-                </form>
+
+                  {panel === "stage" && (
+                    <div id="lead-panel-stage" className="mt-3 rounded-panel border border-border p-4">
+                      <p className={heading}>Stage</p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <Select value={lead.stage} onValueChange={(v) => changeStage(v as LeadStage)} disabled={saving}>
+                          <SelectTrigger aria-label="Contact stage" className="w-full sm:w-56">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {stageChoices.map((stage) => (
+                              <SelectItem key={stage} value={stage}>
+                                {LEAD_STAGE_LABELS[stage]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {lead.stage === "archived" ? (
+                          <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => void archive("lead")}>
+                            Restore to Lead
+                          </Button>
+                        ) : confirmArchive ? (
+                          <span role="group" aria-label="Confirm archive" className="flex flex-wrap items-center gap-2">
+                            <span className="text-[13px] text-muted-foreground">Archive this contact?</span>
+                            <Button type="button" size="sm" disabled={saving} onClick={() => void archive("archived")}>
+                              Archive
+                            </Button>
+                            <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => setConfirmArchive(false)}>
+                              Cancel
+                            </Button>
+                          </span>
+                        ) : (
+                          <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => setConfirmArchive(true)}>
+                            Archive
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {panel === "edit" && (
+                    <div id="lead-panel-edit" className="mt-3">
+                      <LeadEditForm lead={lead} saving={saving} onSave={saveEdit} onCancel={() => setPanel(null)} />
+                    </div>
+                  )}
+                </div>
               )}
 
               {error && (
@@ -702,18 +528,84 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 </p>
               )}
 
-              {/* --- Activity ------------------------------------------------- */}
+              {/* --- Details -------------------------------------------------- */}
+              <section aria-labelledby="lead-details-heading" className={abilities.canWrite ? undefined : "mt-6"}>
+                <h3 id="lead-details-heading" className={heading}>
+                  Details
+                </h3>
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-4 rounded-panel bg-tint p-4">
+                  <Fact label="Company" value={lead.editable?.company || "—"} />
+                  <Fact label="Last touch" numeric value={lead.lastTouchDate || sample ? formatRelative(lead.lastContactDate) : "Never"} />
+                  <div>
+                    <p className="text-micro">Next follow-up</p>
+                    <p
+                      data-testid="lead-next-follow-up"
+                      className={cn("mt-1 text-sm font-semibold tabular", followUp.state === "none" && "font-normal text-muted-foreground", isFollowUpDue(followUp) && "text-status-warn")}
+                    >
+                      {followUpLabel(followUp, { withDate: true })}
+                    </p>
+                  </div>
+                  <Fact label="Created" numeric value={formatDate(lead.createdDate)} />
+                  <div className="col-span-2">
+                    {sample ? (
+                      <Fact label="Birthday" value={<span className="font-normal text-muted-foreground">Not available with sample data</span>} />
+                    ) : (
+                      <LeadBirthday value={lead.birthday} canWrite={abilities.canWrite} saving={saving} onSave={saveBirthday} />
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              {/* --- Client needs --------------------------------------------- */}
+              <LeadNeeds leadId={lead.id} canWrite={abilities.canWrite} available={!sample} />
+
+              {/* --- Notes ----------------------------------------------------- */}
+              <LeadNotes leadId={lead.id} legacyNote={lead.notes} canWrite={abilities.canWrite} available={!sample} />
+
+              {/* --- Activity --------------------------------------------------- */}
               <LeadTimeline leadId={lead.id} />
 
-              {/* --- Notes ---------------------------------------------------- */}
-              <section aria-labelledby="lead-notes-heading">
-                <h3 id="lead-notes-heading" className={heading}>
-                  Notes
-                </h3>
-                <p className={cn("mt-2 whitespace-pre-wrap text-sm leading-6", lead.notes ? "text-foreground" : "text-muted-foreground")}>
-                  {lead.notes || "No notes yet."}
-                </p>
-              </section>
+              {/* --- Representation -------------------------------------------- */}
+              {engaged && (
+                <section aria-labelledby="lead-representation-heading" data-testid="lead-representation">
+                  <h3 id="lead-representation-heading" className={heading}>
+                    Representation
+                  </h3>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Engagement documents are not stored in FortMark yet. Confirm an active brokerage engagement is in place before you open a deal.
+                  </p>
+                  {lead.stage === "representation" && abilities.canWrite && !sample && (
+                    <Button type="button" size="sm" className="mt-3" onClick={() => setQuickCreate("transaction", { id: lead.id, name: lead.name })}>
+                      Create transaction
+                    </Button>
+                  )}
+                </section>
+              )}
+
+              {/* --- Transactions ----------------------------------------------- */}
+              {linkedDeals.length > 0 && (
+                <section aria-labelledby="lead-transactions-heading" data-testid="lead-transactions">
+                  <h3 id="lead-transactions-heading" className={heading}>
+                    Transactions
+                  </h3>
+                  <ul className="mt-2 divide-y divide-border">
+                    {linkedDeals.map((t) => (
+                      <li key={t.id}>
+                        <Link
+                          href={`/transactions?open=${encodeURIComponent(t.id)}`}
+                          className="flex items-baseline justify-between gap-3 py-2 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <span className="min-w-0 break-words font-medium">
+                            {t.address}
+                            <span className="font-normal text-muted-foreground">, {t.city}</span>
+                          </span>
+                          <span className="flex-none text-xs text-muted-foreground">{TRANSACTION_STAGE_LABELS[t.stage as TransactionStage] ?? t.stage}</span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
             </div>
             {abilities.canWrite && (
               <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border pt-4">
@@ -723,16 +615,17 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 <p className="text-xs text-muted-foreground">Sets last contact to now. The follow-up is kept.</p>
               </div>
             )}
+            <EngagementNotice target={pendingStage} busy={saving} onCancel={() => setPendingStage(null)} onContinue={() => void confirmEngagement()} />
           </>
         ) : loading && leadId ? (
           <DrawerSkeleton />
         ) : (
           <>
             <SheetHeader>
-              <SheetTitle className="sr-only">Lead</SheetTitle>
-              <SheetDescription className="sr-only">Lead details</SheetDescription>
+              <SheetTitle className="sr-only">Contact</SheetTitle>
+              <SheetDescription className="sr-only">Contact details</SheetDescription>
             </SheetHeader>
-            <p className="mt-8 text-sm text-muted-foreground">This lead is no longer available.</p>
+            <p className="mt-8 text-sm text-muted-foreground">This contact is no longer available.</p>
           </>
         )}
       </SheetContent>

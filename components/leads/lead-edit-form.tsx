@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Edit a contact's details: name, email, phone, company, source, notes.
+ * Edit a contact's details: name, email, phone, company, source.
  *
  * Only what changed is sent, so saving an untouched form asks for nothing. The
  * server decides what is valid and names the fields it refused; this form says
@@ -14,18 +14,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { LeadsError, type ContactEdit } from "@/lib/data/adapters/leads";
 import { LEAD_SOURCE_LABELS, LEAD_SOURCES_ORDER, type Lead } from "@/lib/data/types";
 
-type Field = "firstName" | "lastName" | "preferredName" | "email" | "phone" | "company" | "notes";
+type Field = "firstName" | "lastName" | "preferredName" | "email" | "phone" | "company";
 
 const MESSAGES: Record<string, string> = {
   firstName: "Add at least a first name, a last name or a preferred name.",
   email: "Enter a valid email address, or leave it empty.",
   phone: "That phone number could not be read. Use a 10-digit US number.",
   company: "Company is too long.",
-  notes: "Notes are too long.",
 };
 
 function initial(lead: Lead) {
@@ -36,7 +34,6 @@ function initial(lead: Lead) {
     email: lead.email,
     phone: lead.phone,
     company: lead.editable?.company ?? "",
-    notes: lead.notes,
   };
 }
 
@@ -160,11 +157,6 @@ export function LeadEditForm({
             ))}
           </SelectContent>
         </Select>
-      </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor="lead-edit-notes">Notes</Label>
-        <Textarea {...props("notes", "lead-edit-notes")} rows={4} maxLength={5000} />
-        <Msg field="notes" id="lead-edit-notes" />
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" size="sm" disabled={saving}>

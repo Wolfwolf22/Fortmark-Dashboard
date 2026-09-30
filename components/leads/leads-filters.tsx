@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Quick views, search and filters for the Leads workspace.
+ * Quick views, search and filters for the Contacts workspace.
  *
  * A quick view is a preset over the same query — choosing one sets exactly its
  * filters and nothing else, and the filters stay visible and editable, so a view
@@ -114,7 +114,7 @@ export function LeadsFilters({
   // same list: show one, and call it what it is.
   const views = QUICK_VIEWS.filter((v) => brokerageWide || v.id !== "mine").map((v) => ({
     ...v,
-    label: !brokerageWide && v.id === "all" ? "My leads" : v.label,
+    label: !brokerageWide && v.id === "all" ? "My contacts" : v.label,
   }));
   const narrowing =
     Boolean(search) ||
@@ -152,7 +152,7 @@ export function LeadsFilters({
             value={search}
             onChange={(e) => onSearch(e.target.value)}
             placeholder="Search name, email, phone or area"
-            aria-label="Search leads"
+            aria-label="Search contacts"
             className="pl-9"
             maxLength={120}
           />

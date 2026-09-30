@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The Leads table — dense, sortable, paged by the server.
+ * The Contacts table — dense, sortable, paged by the server.
  *
  * Nothing here filters, sorts or pages data: the page asks the server for one
  * page in one order and this component draws it. Sorting is a request, not a
@@ -137,7 +137,7 @@ export function LeadsTable({
       <Card className="p-6">
         <EmptyState
           icon={Users}
-          title="Leads could not be loaded"
+          title="Contacts could not be loaded"
           description="Something went wrong reaching your contacts. Nothing has been changed."
           action={
             <Button variant="outline" size="sm" onClick={onRetry}>
@@ -159,7 +159,7 @@ export function LeadsTable({
   return (
     <Card aria-busy={loading} className={cn("p-4 md:p-6", loading && "opacity-80 transition-opacity")}>
       <p role="status" aria-live="polite" className="tabular mb-3 text-[13px] text-muted-foreground">
-        {total === 1 ? "1 lead" : `${total} leads`}
+        {total === 1 ? "1 contact" : `${total} contacts`}
         {failed && " · could not refresh"}
       </p>
       {total === 0 ? (
@@ -280,7 +280,7 @@ export function LeadsTable({
           </TableBody>
         </Table>
       ) : (
-        <ul className="-mx-1 divide-y divide-border" aria-label="Leads">
+        <ul className="-mx-1 divide-y divide-border" aria-label="Contacts">
           {items.map((lead) => {
             const agent = agentLabel(lead, byId);
             return (

@@ -14,8 +14,12 @@
 import { readFileSync } from "node:fs";
 import {
   canCreateOwnedFor,
+  canCreatePersonalFor,
   canSeeOwned,
+  canSeePersonal,
   canWriteOwned,
+  canWritePersonal,
+  isBrokerageAdmin,
   isPrivileged,
   PRIVILEGED_ROLES,
   type Actor,
@@ -71,6 +75,26 @@ check("the brokerage boundary comes first", !canSeeOwned(OUTSIDER, { brokerageKe
 check("a member may not write", !canWriteOwned(MEMBER, { brokerageKey: "fortmark", ownerUserId: "u-m" }));
 check("a broker may create for anyone; an agent only for themselves",
   canCreateOwnedFor(BROKER, "u-a") && canCreateOwnedFor(AGENT, "u-a") && !canCreateOwnedFor(AGENT, "u-b"));
+
+// --- The personal book (contacts): admin sees the brokerage, everyone else their own -----
+{
+  const roles = ["admin", "broker", "transaction_coordinator", "agent", "member"] as const;
+  const a = (role: (typeof roles)[number], id = "u-x"): Actor => ({ userId: id, role, brokerageKey: "fortmark" });
+  const theirs = { brokerageKey: "fortmark", ownerUserId: "u-owner" };
+  const mine = (id: string) => ({ brokerageKey: "fortmark", ownerUserId: id });
+  check("only role 'admin' is a brokerage admin — decided by role, never by an address", roles.filter((r) => isBrokerageAdmin(a(r))).join() === "admin");
+  for (const r of roles) {
+    const seesOthers = canSeePersonal(a(r), theirs);
+    check(`contacts: ${r} ${r === "admin" ? "sees" : "does not see"} a colleague's contact`, seesOthers === (r === "admin"));
+    check(`contacts: ${r} sees their own`, canSeePersonal(a(r, "u-me"), mine("u-me")));
+    check(`contacts: ${r} never sees another brokerage's`, !canSeePersonal({ ...a(r), brokerageKey: "elsewhere" }, theirs));
+    check(`contacts: ${r} ${r === "member" ? "may not" : "may"} write their own`, canWritePersonal(a(r, "u-me"), mine("u-me")) === (r !== "member"));
+    check(`contacts: ${r} ${r === "admin" ? "may" : "may not"} write a colleague's`, canWritePersonal(a(r), theirs) === (r === "admin"));
+    check(`contacts: ${r} cannot create a contact for someone else`, !canCreatePersonalFor(a(r, "u-me"), "u-other"));
+    check(`contacts: ${r} ${r === "member" ? "cannot" : "can"} create one for themselves`, canCreatePersonalFor(a(r, "u-me"), "u-me") === (r !== "member"));
+  }
+  check("transactions keep their own rule: broker and coordinator still see the brokerage's deals", canSeeOwned(a("broker"), theirs) && canSeeOwned(a("transaction_coordinator"), theirs) && canSeeOwned(a("admin"), theirs) && !canSeeOwned(a("agent"), theirs));
+}
 
 // --- Lifecycle ---------------------------------------------------------------------
 check("nine lifecycle stages and two exits", LIFECYCLE_STAGES.length === 9 && EXIT_STAGES.length === 2 && ALL_CONTACT_STAGES.length === 11);
@@ -189,11 +213,11 @@ check("the primary need is the newest open one",
   check("a stage change checks the lifecycle before writing", service.indexOf("canTransition(from, to)") < service.indexOf(".update(contacts)"));
   check("logging a touch stamps last contact without moving it backwards", /row\.lastContactAt > occurredAt \? row\.lastContactAt : occurredAt/.test(service));
   check("the agents list never returns emails or Clerk ids", /name: names\.get\(u\.id\)/.test(service) && !/primaryEmail|clerkUserId/.test(service.slice(service.indexOf("export async function listAgents"))));
-  check("the agents route is empty for a non-privileged caller", readFileSync(files.agents, "utf8").includes("if (!isPrivileged(actor.ctx.actor))"));
+  check("the agents route is empty for a non-privileged caller", readFileSync(files.agents, "utf8").includes("if (!isBrokerageAdmin(actor.ctx.actor))"));
   check("the transactions service now uses the shared actor too",
     /resolveActor as resolveBrokerageActor[^}]*\} from "\.\.\/auth\/actor\.ts"/.test(readFileSync("lib/transactions/service.ts", "utf8")));
-  check("a named assignee must be able to own work, in both services",
-    /agentUserId !== ctx\.actor\.userId && !\(await canOwnRecords\(ctx\.db, agentUserId\)\)/.test(service) &&
+  check("contacts have one owner — the creator — and transactions still vet a named agent",
+    /const agentUserId = ctx\.actor\.userId;/.test(service) && !/canOwnRecords/.test(service) &&
       /agentUserId !== ctx\.actor\.userId && !\(await canOwnRecords\(ctx\.db, agentUserId\)\)/.test(readFileSync("lib/transactions/service.ts", "utf8")) &&
       /status === "active" && user\.role !== "member"/.test(readFileSync("lib/auth/actor.ts", "utf8")));
   check("an invalid assignee is a 400, not a crash", readFileSync("lib/contacts/http.ts", "utf8").includes('"invalid_assignee" }, { status: 400'));

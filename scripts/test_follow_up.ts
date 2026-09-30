@@ -369,7 +369,7 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
   const owner = await direct(AGENT, due, change);
   check("auth control: the owning agent may complete", owner.result.ok && owner.m.row.nextFollowUpAt === null);
   const broker = await direct(BROKER, due, change);
-  check("auth control: a broker may change an agent's follow-up in the brokerage", broker.result.ok && broker.m.row.nextFollowUpAt === null);
+  check("auth control: a broker who does not own the contact cannot — it is not found, and nothing changed", !broker.result.ok && broker.result.reason === "not_found" && broker.m.row.nextFollowUpAt !== null);
 
   const member = await direct(MEMBER_OWNER, due, change);
   check("member: forbidden, even on their own contact", !member.result.ok && member.result.reason === "forbidden");
@@ -508,14 +508,14 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
     return fn.indexOf("canSee(ctx.actor, row)") < fn.indexOf("canWrite(ctx.actor, row)") && fn.indexOf("canWrite(ctx.actor, row)") < fn.indexOf("checkFollowUpDay(") && fn.indexOf("checkFollowUpDay(") < fn.indexOf("ctx.db.batch");
   })());
   check("service: the direct change never writes last contact or an activity", (() => {
-    const fn = service.slice(service.indexOf("export async function changeFollowUp"), service.indexOf("/** Agents a privileged caller may filter by"));
+    const fn = service.slice(service.indexOf("export async function changeFollowUp"), service.indexOf("export async function listAgents"));
     return !/lastContactAt|contactActivities/.test(fn.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, ""));
   })());
   check("service: the update and its audit are one batch", /ctx\.db\.batch\(\[[\s\S]*update\(contacts\)[\s\S]*insert\(auditEvents\)/.test(service));
   check("adapter: the direct control posts to the follow-up route, not the activity route", /\/follow-up`/.test(adapter) && /export async function changeFollowUp/.test(adapter));
   check("adapter: a touch still posts to the activity route", /\/activities`/.test(adapter));
   check("drawer: the direct control calls changeFollowUp, never logTouch", /changeFollowUp\(lead\.id, \{ action: "schedule", day \}\)/.test(drawer) && /changeFollowUp\(lead\.id, \{ action: "complete" \}\)/.test(drawer));
-  check("drawer: Schedule / Change / Mark complete", drawer.includes('{hasFollowUp ? "Change" : "Schedule"}') && drawer.includes("Mark complete"));
+  check("drawer: a Follow-up action opens Schedule / Save / Mark complete", drawer.includes('actionButton("followUp", "Follow-up")') && drawer.includes('{hasFollowUp ? "New date" : "Date"}') && drawer.includes("Save follow-up") && drawer.includes("Mark complete"));
   check("drawer: says a reminder is not contact", drawer.includes("A reminder only. It does not count as a touch."));
   check("drawer: Log a touch remains its own section", drawer.includes('id="log-touch-heading"') && drawer.includes("logTouch(lead.id"));
   check("drawer: completion inside a touch still needs a follow-up and no new date", drawer.includes("const completing = !day && complete && hasFollowUp;"));

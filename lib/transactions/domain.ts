@@ -97,6 +97,13 @@ export const createTransactionSchema = z.object({
   closingDate: isoDate.optional(),
   notes: z.string().trim().max(5000).optional(),
   agentUserId: z.string().uuid().optional(),
+  /**
+   * Open this deal for a contact at Representation. The id is a request, not a
+   * fact: the server reloads the contact, checks the caller may see it and that
+   * it is at Representation, and builds the client party from the stored
+   * contact — never from anything else in the body.
+   */
+  contactId: z.string().uuid().optional(),
   parties: z.array(partyInputSchema).max(20).optional(),
   deadlines: z.array(deadlineInputSchema).max(30).optional(),
 });

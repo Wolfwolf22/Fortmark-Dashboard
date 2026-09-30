@@ -28,7 +28,7 @@ import {
 } from "../db/schema.ts";
 import { contactsDatabaseEnabled, type EnvLike } from "../flags.ts";
 import type { Lead, LeadStage } from "../data/types.ts";
-import { canOwnRecords, isPrivileged, resolveActor as resolveBrokerageActor, type Actor } from "../auth/actor.ts";
+import { isBrokerageAdmin, resolveActor as resolveBrokerageActor, type Actor } from "../auth/actor.ts";
 import {
   canCreateFor,
   canSee,
@@ -41,12 +41,13 @@ import {
   type EditContactInput,
   type FollowUpChangeInput,
 } from "./domain.ts";
-import { canTransition } from "./stages.ts";
+import { canTransition, requiresEngagementNotice } from "./stages.ts";
 import { visibleTo } from "./visibility.ts";
 import { contactOrder, contactWhere, filterPredicates } from "./list-sql.ts";
 import { DEFAULT_PAGE_SIZE, isPaged, MAX_PAGE_SIZE, type ContactQuery } from "./filters.ts";
 import type { LeadPage, LeadSnapshot } from "./windows.ts";
 import { toTimeline, type TimelineItem } from "./timeline.ts";
+import { TIMELINE_DOMAIN_EVENTS } from "./events.ts";
 import { toInt } from "../metrics/window.ts";
 import { checkFollowUpDay, decideFollowUp, type FollowUpOutcome } from "./follow-up.ts";
 import { businessDayKey } from "../metrics/business-day.ts";
@@ -75,7 +76,9 @@ export type ServiceFailure =
   | "invalid_assignee"
   | "invalid_date"
   | "invalid_name"
-  | "invalid_phone";
+  | "invalid_phone"
+  | "invalid_note"
+  | "invalid_need";
 
 export type ServiceResult<T> = { ok: true; value: T } | { ok: false; reason: ServiceFailure };
 
@@ -101,7 +104,7 @@ export async function resolveActor(
 
 export { visibleTo } from "./visibility.ts";
 
-async function agentNames(db: Db, userIds: string[]): Promise<Map<string, string>> {
+export async function agentNames(db: Db, userIds: string[]): Promise<Map<string, string>> {
   const names = new Map<string, string>();
   if (userIds.length === 0) return names;
   const rows = await db
@@ -141,6 +144,7 @@ async function bundle(ctx: Pick<Ctx, "db" | "actor" | "viewerName">, rows: Conta
       row,
       opportunities: opps.filter((o) => o.contactId === row.id),
       agentName: names.get(row.assignedAgentUserId),
+      viewerId: ctx.actor.userId,
     })
   );
 }
@@ -267,13 +271,10 @@ async function recordAudit(
 }
 
 export async function createContact(ctx: Ctx, input: CreateContactInput): Promise<ServiceResult<Lead>> {
-  const agentUserId =
-    input.assignedAgentUserId && isPrivileged(ctx.actor) ? input.assignedAgentUserId : ctx.actor.userId;
+  // A contact belongs to the person who creates it. There is no request shape
+  // that names another owner, so nothing here can hand a contact to someone else.
+  const agentUserId = ctx.actor.userId;
   if (!canCreateFor(ctx.actor, agentUserId)) return { ok: false, reason: "forbidden" };
-  // A named owner is a request-supplied id: it must be someone who can own work.
-  if (agentUserId !== ctx.actor.userId && !(await canOwnRecords(ctx.db, agentUserId))) {
-    return { ok: false, reason: "invalid_assignee" };
-  }
 
   const inserted = await ctx.db
     .insert(contacts)
@@ -290,6 +291,8 @@ export async function createContact(ctx: Ctx, input: CreateContactInput): Promis
       // read confidently is kept as typed rather than dropped.
       phoneE164: input.phone ? (toE164(input.phone) ?? input.phone) : null,
       company: input.company ?? null,
+      birthdayMonth: input.birthday?.month ?? null,
+      birthdayDay: input.birthday?.day ?? null,
       source: input.source ?? "other",
       tags: input.tags ?? [],
       notes: input.notes ?? null,
@@ -371,7 +374,7 @@ export async function planStageChange(
   ctx: Ctx,
   id: string,
   to: LeadStage,
-  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date } = {}
+  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date; engagementAcknowledged?: boolean } = {}
 ): Promise<ServiceResult<StageChangePlan>> {
   if (!isRecordId(id)) return { ok: false, reason: "not_found" };
   const now = options.now ?? new Date();
@@ -392,7 +395,10 @@ export async function planStageChange(
 
   // The mechanism is additive metadata. A manual change records exactly what
   // it always recorded, so existing history stays comparable.
-  const extra = mechanism === "manual" ? {} : { mechanism, ...(options.metadata ?? {}) };
+  // Entering a formally-engaged stage records whether the notice was
+  // acknowledged — never that an engagement was verified, because none is.
+  const gate = requiresEngagementNotice(from, to) ? { engagementAcknowledged: options.engagementAcknowledged === true } : {};
+  const extra = { ...(mechanism === "manual" ? {} : { mechanism, ...(options.metadata ?? {}) }), ...gate };
 
   return {
     ok: true,
@@ -435,8 +441,14 @@ export async function planStageChange(
  * nobody told, on the one field an audit trail exists for. If the history
  * cannot be recorded, the transition does not happen.
  */
-export async function changeStage(ctx: Ctx, id: string, to: LeadStage, now = new Date()): Promise<ServiceResult<Lead>> {
-  const planned = await planStageChange(ctx, id, to, { mechanism: "manual", now });
+export async function changeStage(
+  ctx: Ctx,
+  id: string,
+  to: LeadStage,
+  now = new Date(),
+  options: { engagementAcknowledged?: boolean } = {}
+): Promise<ServiceResult<Lead>> {
+  const planned = await planStageChange(ctx, id, to, { mechanism: "manual", now, engagementAcknowledged: options.engagementAcknowledged });
   if (!planned.ok) return planned;
 
   try {
@@ -590,8 +602,13 @@ export async function changeFollowUp(
   return updated ? { ok: true, value: { lead: updated, outcome: decided.outcome } } : { ok: false, reason: "unavailable" };
 }
 
-/** Agents a privileged caller may filter by: every active user with a name. */
+/**
+ * The owners an admin may filter the brokerage's contacts by: every active user
+ * with a name. Read-only — there is no reassignment — and nobody but an admin
+ * is offered the roster.
+ */
 export async function listAgents(ctx: Ctx): Promise<{ id: string; name: string }[]> {
+  if (!isBrokerageAdmin(ctx.actor)) return [];
   const users = await ctx.db
     .select({ id: dashboardUsers.id, role: dashboardUsers.role })
     .from(dashboardUsers)
@@ -604,7 +621,7 @@ export async function listAgents(ctx: Ctx): Promise<{ id: string; name: string }
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// --- Edit, reassign, timeline ------------------------------------------------------------
+// --- Edit, timeline ------------------------------------------------------------
 
 /**
  * Change how a contact is named and reached, where they came from, or the notes.
@@ -647,7 +664,10 @@ export async function editContact(
           eventType: "contact_updated",
           actorUserId: ctx.actor.userId,
           targetUserId: null,
-          safeMetadata: scrub({ contactId: row.id, mechanism: "edit", fields: plan.changed }) ?? { contactId: row.id },
+          // Field names, and for a birthday only whether it was set, changed or cleared.
+          safeMetadata:
+            scrub({ contactId: row.id, mechanism: "edit", fields: plan.changed, ...(plan.birthday ? { birthday: plan.birthday } : {}) }) ??
+            { contactId: row.id },
         }),
       ] as unknown as Parameters<Db["batch"]>[0]);
     } catch {
@@ -657,80 +677,6 @@ export async function editContact(
 
   const updated = await getContact(ctx, row.id);
   return updated ? { ok: true, value: { lead: updated, changed: plan.changed } } : { ok: false, reason: "unavailable" };
-}
-
-/**
- * Hand a contact to another agent.
- *
- * Privileged roles only (admin, broker, transaction coordinator): an agent may
- * see and work their own contacts but does not move them, and a member cannot
- * write at all. The new owner must be a real, active dashboard user in a role
- * that owns work — the same test that governs who may be named on creation — so
- * an MLS listing agent, a suspended account or a member can never be assigned.
- *
- * The owner change, its line in the contact's history and its audit event commit
- * together. It is not a touch: last contact, the follow-up and the stage are not
- * written. Reassigning to the current owner writes nothing.
- */
-export async function reassignContact(
-  ctx: Ctx,
-  id: string,
-  toUserId: string,
-  now = new Date()
-): Promise<ServiceResult<{ lead: Lead; changed: boolean }>> {
-  if (!isRecordId(id)) return { ok: false, reason: "not_found" };
-  const rows = await ctx.db
-    .select()
-    .from(contacts)
-    .where(and(eq(contacts.id, id), visibleTo(ctx.actor)))
-    .limit(1);
-  const row = rows[0];
-  if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
-  if (!isPrivileged(ctx.actor) || !canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
-
-  if (row.assignedAgentUserId !== toUserId) {
-    if (!isRecordId(toUserId) || !(await canOwnRecords(ctx.db, toUserId))) {
-      return { ok: false, reason: "invalid_assignee" };
-    }
-    try {
-      await ctx.db.batch([
-        ctx.db
-          .update(contacts)
-          .set({ assignedAgentUserId: toUserId, updatedByUserId: ctx.actor.userId, updatedAt: now })
-          .where(eq(contacts.id, row.id)),
-        ctx.db.insert(contactActivities).values({
-          contactId: row.id,
-          actorUserId: ctx.actor.userId,
-          kind: "system",
-          summary: "Contact reassigned",
-          occurredAt: now,
-          safeMetadata: { event: "reassigned", fromAgentUserId: row.assignedAgentUserId, toAgentUserId: toUserId },
-        }),
-        ctx.db.insert(auditEvents).values({
-          eventType: "contact_updated",
-          actorUserId: ctx.actor.userId,
-          targetUserId: null,
-          safeMetadata: scrub({ contactId: row.id, field: "assignedAgent", mechanism: "reassign" }) ?? { contactId: row.id },
-        }),
-      ] as unknown as Parameters<Db["batch"]>[0]);
-    } catch {
-      return { ok: false, reason: "unavailable" };
-    }
-  }
-
-  const updated = await getContact(ctx, row.id);
-  return updated
-    ? { ok: true, value: { lead: updated, changed: row.assignedAgentUserId !== toUserId } }
-    : { ok: false, reason: "unavailable" };
-}
-
-/**
- * The people a contact may be reassigned to: the same roster the agent filter
- * uses — real, active dashboard users who own work, named by profile — for a
- * privileged caller, and nobody for anyone else.
- */
-export async function listAssignees(ctx: Ctx): Promise<{ id: string; name: string }[]> {
-  return isPrivileged(ctx.actor) ? listAgents(ctx) : [];
 }
 
 /**
@@ -751,7 +697,7 @@ export async function getTimeline(ctx: Ctx, id: string, limit = 100): Promise<Se
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
 
   const capped = Math.min(Math.max(limit, 1), 200);
-  const [activities, followUps] = await Promise.all([
+  const [activities, followUps, domainEvents] = await Promise.all([
     ctx.db
       .select({
         id: contactActivities.id,
@@ -782,6 +728,23 @@ export async function getTimeline(ctx: Ctx, id: string, limit = 100): Promise<Se
       )
       .orderBy(desc(auditEvents.createdAt))
       .limit(capped),
+    ctx.db
+      .select({
+        id: auditEvents.id,
+        eventType: auditEvents.eventType,
+        createdAt: auditEvents.createdAt,
+        actorUserId: auditEvents.actorUserId,
+        safeMetadata: auditEvents.safeMetadata,
+      })
+      .from(auditEvents)
+      .where(
+        and(
+          inArray(auditEvents.eventType, [...TIMELINE_DOMAIN_EVENTS]),
+          sql`${auditEvents.safeMetadata}->>'contactId' = ${id}`
+        )
+      )
+      .orderBy(desc(auditEvents.createdAt))
+      .limit(capped),
   ]);
 
   const userIds = new Set<string>();
@@ -791,7 +754,8 @@ export async function getTimeline(ctx: Ctx, id: string, limit = 100): Promise<Se
     if (typeof to === "string") userIds.add(to);
   }
   for (const e of followUps) if (e.actorUserId) userIds.add(e.actorUserId);
+  for (const e of domainEvents) if (e.actorUserId) userIds.add(e.actorUserId);
   const names = await agentNames(ctx.db, Array.from(userIds));
 
-  return { ok: true, value: toTimeline({ activities, followUpEvents: followUps, names, limit: capped }) };
+  return { ok: true, value: toTimeline({ activities, followUpEvents: followUps, domainEvents, names, limit: capped }) };
 }

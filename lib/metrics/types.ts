@@ -187,6 +187,12 @@ export interface BrokerageMetrics {
   source: "database" | "sample";
   generatedAt: string;
   scope: MetricScope;
+  /**
+   * Whose contacts the contact figures cover. Not always the same as `scope`:
+   * a broker or coordinator sees the brokerage's deals but only their own
+   * contacts, and a caption must not say "Brokerage" over both.
+   */
+  contactsScope: MetricScope;
   /** First day of the calendar month the "this month" figures cover. */
   monthStart: string;
   transactions: MetricGroup<TransactionMetrics>;

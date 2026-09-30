@@ -1,12 +1,13 @@
 "use client";
 
 /**
- * Leads — the daily CRM workspace.
+ * Contacts — the daily CRM workspace. A person stays here from first touch through
+ * representation, a transaction and beyond; "lead" is one stage of that, not the section.
  *
  * A snapshot of what needs attention, quick views over the same contacts, a
  * filter bar, and one dense table. Every filter, sort and page is a request to
  * the server; the page keeps no copy of the list to narrow. The filters live in
- * the URL (`/leads?followUp=overdue&active=1`) so a refresh, the back button and
+ * the URL (`/contacts?followUp=overdue&active=1`) so a refresh, the back button and
  * a link to a colleague all land on the same view. Search text does not: it can
  * be a client's name, number or email, and a URL is logged.
  *
@@ -64,13 +65,13 @@ function PageSkeleton() {
 
 function emptyCopy(query: ContactQuery, narrowing: boolean): { title: string; description: string } {
   if (!narrowing) {
-    return { title: "No leads yet", description: "Add a lead with New lead to start your book." };
+    return { title: "No contacts yet", description: "Add a contact with New contact to start your book." };
   }
   const view = matchingView(query);
   if (view === "overdue") return { title: "No overdue follow-ups", description: "Nothing you owe a call is past its day." };
   if (view === "due_today") return { title: "No follow-ups due today", description: "Nothing is scheduled for today." };
-  if (view === "no_touch_14") return { title: "Nobody has gone quiet", description: "Every active lead has been touched in the last 14 days." };
-  return { title: "No leads match these filters", description: "Clear a filter or try a different search." };
+  if (view === "no_touch_14") return { title: "Nobody has gone quiet", description: "Everyone active has been touched in the last 14 days." };
+  return { title: "No contacts match these filters", description: "Clear a filter or try a different search." };
 }
 
 function LeadsPageInner() {
@@ -131,7 +132,7 @@ function LeadsPageInner() {
     if (open) sp.set("open", open);
     const qs = sp.toString();
     // A push, so back and forward step through the views a person has visited.
-    router.push(qs ? `/leads?${qs}` : "/leads", { scroll: false });
+    router.push(qs ? `/contacts?${qs}` : "/contacts", { scroll: false });
   }
 
   const change = (patch: Partial<ContactQuery>) => {
@@ -158,7 +159,7 @@ function LeadsPageInner() {
       const sp = new URLSearchParams(searchParams.toString());
       sp.delete("open");
       const qs = sp.toString();
-      router.replace(qs ? `/leads?${qs}` : "/leads", { scroll: false });
+      router.replace(qs ? `/contacts?${qs}` : "/contacts", { scroll: false });
     }
   }
 
@@ -170,14 +171,14 @@ function LeadsPageInner() {
         <div>
           {/* The section's one heading is the shell's (visually hidden); this is its visible title. */}
           <p aria-hidden className="text-display text-2xl">
-            Leads
+            Contacts
           </p>
           <p className="mt-1 text-sm text-muted-foreground">Manage relationships, follow-ups and activity.</p>
         </div>
         {abilities.canWrite && (
           <Button type="button" onClick={() => setQuickCreate("lead")}>
             <Plus aria-hidden />
-            New lead
+            New contact
           </Button>
         )}
       </div>

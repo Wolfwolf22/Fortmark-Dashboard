@@ -58,7 +58,7 @@ const hit = (over: Partial<SearchHit> = {}): SearchHit => ({
   id: "1",
   entity: "contact",
   title: "Jane Smith",
-  href: "/leads?open=1",
+  href: "/contacts?open=1",
   match: "partial",
   ...over,
 });

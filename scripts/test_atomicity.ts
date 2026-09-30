@@ -210,7 +210,10 @@ const contact = (actor: Actor, from: string, to: string, opts: { failOn?: unknow
   const broker = await contact(BROKER, "lead", "contacted");
   const coordinator = await contact(COORDINATOR, "lead", "contacted");
   const foreign = await contact(BROKER, "lead", "contacted", { row: { brokerageKey: "elsewhere" } });
-  check("contact auth: owner, broker and coordinator may change a stage", owner.result.ok && broker.result.ok && coordinator.result.ok);
+  check("contact auth: the owner may change a stage", owner.result.ok);
+  check("contact auth: a broker or coordinator who does not own the contact cannot — it is not found and nothing is written",
+    !broker.result.ok && broker.result.reason === "not_found" && !coordinator.result.ok && coordinator.result.reason === "not_found" &&
+      broker.m.applied.length + coordinator.m.applied.length === 0);
   check("contact auth: member forbidden, other agent and other brokerage not found, nothing written",
     !member.result.ok && member.result.reason === "forbidden" && !other.result.ok && other.result.reason === "not_found" &&
       !foreign.result.ok && foreign.result.reason === "not_found" && member.m.applied.length + other.m.applied.length + foreign.m.applied.length === 0);

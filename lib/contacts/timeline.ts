@@ -28,6 +28,8 @@ export type TimelineType =
   | "follow_up_scheduled"
   | "follow_up_completed"
   | "assignment"
+  | "need"
+  | "transaction"
   | "created";
 
 export interface TimelineItem {
@@ -55,6 +57,42 @@ export interface FollowUpEventInput {
   createdAt: Date;
   actorUserId: string | null;
   safeMetadata: Record<string, unknown> | null;
+}
+
+/**
+ * A business event recorded only in the audit trail: a note added or deleted, a
+ * client need added or changed, a transaction linked. Only the event type and
+ * its stated status word leave here — a note's text and a need's values are
+ * not in the audit row to begin with, so they cannot reach a timeline.
+ */
+export interface DomainEventInput extends FollowUpEventInput {
+  eventType: string;
+}
+
+const NEED_STATUS_TITLES: Record<string, string> = {
+  active: "Client need reactivated",
+  paused: "Client need paused",
+  fulfilled: "Client need fulfilled",
+  archived: "Client need archived",
+};
+
+function domainEventTitle(eventType: string, meta: Record<string, unknown>): { type: TimelineType; title: string } | null {
+  switch (eventType) {
+    case "contact_note_created":
+      return { type: "note", title: "Added note" };
+    case "contact_note_deleted":
+      return { type: "note", title: "Deleted note" };
+    case "contact_need_created":
+      return { type: "need", title: "Client need added" };
+    case "contact_need_updated":
+      return { type: "need", title: "Client need updated" };
+    case "contact_need_status_changed":
+      return { type: "need", title: (typeof meta.to === "string" && NEED_STATUS_TITLES[meta.to]) || "Client need updated" };
+    case "contact_transaction_linked":
+      return { type: "transaction", title: "Transaction linked" };
+    default:
+      return null;
+  }
 }
 
 /** Words a "Follow-up …" headline uses for each outcome. `kept` never reaches the timeline. */
@@ -91,6 +129,7 @@ type Ranked = TimelineItem & { rank: number };
 export function toTimeline(input: {
   activities: readonly ActivityInput[];
   followUpEvents: readonly FollowUpEventInput[];
+  domainEvents?: readonly DomainEventInput[];
   names: ReadonlyMap<string, string>;
   limit?: number;
 }): TimelineItem[] {
@@ -142,6 +181,12 @@ export function toTimeline(input: {
     const follow = followUpTitle(meta.followUp, meta.day);
     if (!follow) continue;
     items.push({ id: e.id, ...follow, at: e.createdAt.toISOString(), by: nameOf(e.actorUserId), rank: RANK_FOLLOW_UP });
+  }
+
+  for (const e of input.domainEvents ?? []) {
+    const words = domainEventTitle(e.eventType, e.safeMetadata ?? {});
+    if (!words) continue;
+    items.push({ id: e.id, ...words, at: e.createdAt.toISOString(), by: nameOf(e.actorUserId), rank: RANK_FOLLOW_UP });
   }
 
   items.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : y.rank - x.rank));

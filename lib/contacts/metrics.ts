@@ -89,9 +89,9 @@ export async function contactMetrics(ctx: Ctx, now: Date): Promise<ContactMetric
   };
 }
 
-/** `/leads?open=<id>` — the deep link the leads table already uses. */
+/** `/contacts?open=<id>` — the deep link the leads table already uses. */
 function contactHref(id: string): string {
-  return `/leads?open=${encodeURIComponent(id)}`;
+  return `/contacts?open=${encodeURIComponent(id)}`;
 }
 
 /**

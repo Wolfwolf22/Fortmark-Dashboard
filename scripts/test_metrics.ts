@@ -242,6 +242,14 @@ check("the caller id comes from the session, never the request", (() => {
   const src = code("app/api/metrics/route.ts");
   return src.includes("caller.clerkUserId") && !/searchParams|req\.|params/.test(src);
 })());
+check("contacts scope is reported separately: only an admin's contacts are brokerage-wide", (() => {
+  const src = readFileSync("lib/metrics/service.ts", "utf8");
+  return /contactsScope: actor && isBrokerageAdmin\(actor\) \? "brokerage" : "own"/.test(src);
+})());
+check("a broker's caption does not claim the whole brokerage over their own contacts", (() => {
+  const src = readFileSync("components/home/metric-format.ts", "utf8");
+  return src.includes('if (scope === "brokerage" && contactsScope === "own") return "Brokerage deals · your contacts";') && src.includes('contactsScope: MetricScope = scope');
+})());
 check("scope is reported so the screen can name whose numbers these are", (() => {
   const src = readFileSync("lib/metrics/service.ts", "utf8");
   return /scope: privileged \? "brokerage" : "own"/.test(src);
@@ -390,7 +398,7 @@ check("the brief does not greet twice", (() => {
 })());
 check("the brief names the scope it is reporting", (() => {
   const src = readFileSync("components/home/daily-brief.tsx", "utf8");
-  return src.includes("scopeLabel(metrics.scope)");
+  return src.includes("scopeLabel(metrics.scope, metrics.contactsScope)");
 })());
 check("the brief is a divided field, not four cards", (() => {
   const src = readFileSync("components/home/daily-brief.tsx", "utf8");

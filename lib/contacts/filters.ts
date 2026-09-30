@@ -186,8 +186,12 @@ export function isPaged(query: ContactQuery): boolean {
  * a call.
  */
 export const QUICK_VIEWS = [
-  { id: "all", label: "All leads", filters: {} },
-  { id: "mine", label: "My leads", filters: { mine: true } },
+  { id: "all", label: "All contacts", filters: {} },
+  // Leads are the earlier stages, before anyone has agreed to anything.
+  { id: "mine", label: "My leads", filters: { mine: true, stage: ["lead", "contacted", "qualified", "appointment"] } },
+  { id: "representation", label: "Representation", filters: { stage: ["representation"] } },
+  // Exactly the `active_client` stage — Representation is its own view, and the two are never merged.
+  { id: "active_clients", label: "Active clients", filters: { stage: ["active_client"] } },
   { id: "due_today", label: "Due today", filters: { active: true, followUp: "due_today" } },
   { id: "overdue", label: "Overdue", filters: { active: true, followUp: "overdue" } },
   { id: "no_touch_14", label: "No touch 14+ days", filters: { active: true, lastTouch: "14d" } },

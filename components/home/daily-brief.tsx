@@ -141,7 +141,7 @@ export function DailyBrief() {
     <section aria-label="Daily brief" className="mb-5">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <p className="text-micro">
-          Business snapshot · <span className="text-foreground">{scopeLabel(metrics.scope)}</span>
+          Business snapshot · <span className="text-foreground">{scopeLabel(metrics.scope, metrics.contactsScope)}</span>
         </p>
         <p className="text-micro">
           Monthly figures cover {monthLabel(metrics.monthStart)}
@@ -188,7 +188,7 @@ export function DailyBrief() {
           </p>
           <div className="flex items-center gap-4">
             <Link
-              href={ROUTES.leads}
+              href={ROUTES.contacts}
               className="text-[13px] font-semibold underline underline-offset-4 hover:text-muted-foreground"
             >
               Add a contact

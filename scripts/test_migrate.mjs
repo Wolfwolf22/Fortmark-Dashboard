@@ -219,6 +219,65 @@ try {
     }
     check("an unknown MLS link status is refused by the database", /mls_member_links_status_check/.test(badStatus));
 
+    // 1b. Contacts V3 — notes, birthday, needs (0011–0013).
+    const refused = async (text, params) => {
+      try {
+        await query("fresh", text, params);
+        return "";
+      } catch (e) {
+        return String(e?.message ?? e);
+      }
+    };
+    const owner = (await query("fresh", "select id from dashboard_users where clerk_user_id = 'user_testmigrate0001'"))[0].id;
+    const c1 = (await query("fresh", "insert into contacts (assigned_agent_user_id, first_name) values ($1, 'V3') returning id", [owner]))[0].id;
+    const objs = await query("fresh", "select to_regclass('public.contact_notes') n, to_regclass('public.contact_needs') d, to_regclass('public.contact_notes_contact_created_idx') ni, to_regclass('public.contact_needs_contact_status_idx') di");
+    check("0011/0013 create their tables and indexes", Boolean(objs[0].n && objs[0].d && objs[0].ni && objs[0].di));
+
+    // notes: a live note has a body, a deleted one has none.
+    check("a live note is accepted", (await refused("insert into contact_notes (contact_id, author_user_id, body) values ($1, $2, 'hello')", [c1, owner])) === "");
+    check("an empty note body is refused", /contact_notes_body_check/.test(await refused("insert into contact_notes (contact_id, body) values ($1, '')", [c1])));
+    check("a note over 10,000 characters is refused", /contact_notes_body_check/.test(await refused("insert into contact_notes (contact_id, body) values ($1, $2)", [c1, "x".repeat(10_001)])));
+    check("a note of exactly 10,000 characters is accepted", (await refused("insert into contact_notes (contact_id, body) values ($1, $2)", [c1, "x".repeat(10_000)])) === "");
+    check("a live note cannot have no body", /contact_notes_body_check/.test(await refused("insert into contact_notes (contact_id, body) values ($1, null)", [c1])));
+    check("a deleted note cannot keep its text", /contact_notes_body_check/.test(await refused("update contact_notes set deleted_at = now() where body = 'hello'")));
+    check("deleting removes the text and leaves a tombstone", (await refused("update contact_notes set deleted_at = now(), deleted_by_user_id = $1, body = null where body = 'hello'", [owner])) === "");
+    const tomb = await query("fresh", "select count(*)::int as n, count(body)::int as b from contact_notes where deleted_at is not null");
+    check("the tombstone row remains with no body", tomb[0].n === 1 && tomb[0].b === 0);
+    check("a note for a missing contact is refused", /foreign key|contact_notes_contact_id/i.test(await refused("insert into contact_notes (contact_id, body) values ('00000000-0000-0000-0000-000000000000', 'x')")));
+
+    // birthday: month and day, both or neither, real calendar days, no year.
+    const bd = async (m, d) => refused("update contacts set birthday_month = $2, birthday_day = $3 where id = $1", [c1, m, d]);
+    for (const [m, d] of [[1, 1], [2, 29], [4, 30], [12, 31], [3, 17]]) check(`birthday ${m}/${d} is accepted`, (await bd(m, d)) === "");
+    for (const [m, d] of [[2, 30], [4, 31], [6, 31], [9, 31], [11, 31], [13, 1], [0, 5], [1, 0], [1, 32]]) check(`birthday ${m}/${d} is refused`, /contacts_birthday_check/.test(await bd(m, d)));
+    check("a month with no day is refused", /contacts_birthday_check/.test(await bd(5, null)));
+    check("a day with no month is refused", /contacts_birthday_check/.test(await bd(null, 5)));
+    check("a birthday can be cleared (both null)", (await bd(null, null)) === "");
+    const cols = await query("fresh", "select column_name from information_schema.columns where table_name = 'contacts' and column_name like 'birth%' order by 1");
+    check("no birth year is stored", cols.map((c) => c.column_name).join() === "birthday_day,birthday_month");
+
+    // needs: many per contact, bounded, exact.
+    const need = (extra = "") => refused(`insert into contact_needs (contact_id, kind ${extra ? ", " + extra.split("=")[0] : ""}) values ($1, 'buy' ${extra ? ", " + extra.split("=")[1] : ""})`, [c1]);
+    check("a need is accepted with defaults", (await need()) === "");
+    check("a second simultaneous need for one contact is accepted", (await need()) === "");
+    const nn = await query("fresh", "select count(*)::int as n, count(*) filter (where status = 'active')::int as a from contact_needs where contact_id = $1", [c1]);
+    check("many active needs per contact are allowed", nn[0].n === 2 && nn[0].a === 2);
+    check("an unknown need kind is refused", /invalid input value for enum/.test(await refused("insert into contact_needs (contact_id, kind) values ($1, 'opportunity')", [c1])));
+    check("an unknown financing value is refused", /invalid input value for enum/.test(await need("financing='barter'")));
+    check("a need max below its min is refused", /contact_needs_price_check/.test(await refused("insert into contact_needs (contact_id, kind, price_min_cents, price_max_cents) values ($1, 'buy', 500, 100)", [c1])));
+    check("a negative price is refused", /contact_needs_price_check/.test(await need("price_min_cents=-1")));
+    check("an equal min and max is accepted", (await refused("insert into contact_needs (contact_id, kind, price_min_cents, price_max_cents) values ($1, 'buy', 100, 100)", [c1])) === "");
+    check("half baths are accepted", (await need("min_baths=2.5")) === "");
+    check("a third of a bath is refused", /contact_needs_size_check/.test(await need("min_baths=2.3")));
+    check("negative beds are refused", /contact_needs_size_check/.test(await need("min_beds=-1")));
+    check("thirteen areas are refused", /contact_needs_bounds_check/.test(await refused("insert into contact_needs (contact_id, kind, areas) values ($1, 'buy', $2::text[])", [c1, Array.from({ length: 13 }, (_, i) => `a${i}`)])));
+    check("twelve areas are accepted", (await refused("insert into contact_needs (contact_id, kind, areas) values ($1, 'buy', $2::text[])", [c1, Array.from({ length: 12 }, (_, i) => `a${i}`)])) === "");
+    check("an over-long requirements field is refused", /contact_needs_bounds_check/.test(await refused("insert into contact_needs (contact_id, kind, additional_requirements) values ($1, 'buy', $2)", [c1, "x".repeat(2001)])));
+
+    // deleting a contact takes its notes and needs with it (contacts are archived, not deleted, in the product).
+    await query("fresh", "delete from contacts where id = $1", [c1]);
+    const gone = await query("fresh", "select (select count(*)::int from contact_notes) n, (select count(*)::int from contact_needs) d");
+    check("notes and needs follow their contact", gone[0].n === 0 && gone[0].d === 0);
+
     // 2. Idempotent.
     const again = await runMigrations(url);
     check("re-run applies nothing", again.before === again.after && again.after === realJournal.entries.length);

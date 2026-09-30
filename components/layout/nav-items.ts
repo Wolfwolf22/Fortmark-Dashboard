@@ -36,7 +36,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Home", icon: Home, tier: "primary" },
   { href: "/listings", label: "Listings", icon: Building2, tier: "primary" },
-  { href: "/leads", label: "Leads", icon: Users, tier: "primary" },
+  { href: "/contacts", label: "Contacts", icon: Users, tier: "primary" },
   { href: "/transactions", label: "Transactions", icon: Workflow, tier: "primary" },
   { href: "/reports", label: "Reports", icon: LineChart, tier: "secondary" },
   { href: "/calendar", label: "Calendar", icon: CalendarDays, tier: "secondary" },

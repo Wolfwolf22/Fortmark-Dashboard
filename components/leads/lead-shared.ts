@@ -27,9 +27,10 @@ export function lastName(name: string): string {
  * these only decide what is worth showing, so a member is not handed controls
  * that can only answer "forbidden".
  */
-export function leadAbilities(role: string): { canWrite: boolean; canReassign: boolean; sees: "own" | "brokerage" } {
-  const privileged = role === "Admin" || role === "Broker" || role === "Transaction coordinator";
-  return { canWrite: role !== "Member", canReassign: privileged, sees: privileged ? "brokerage" : "own" };
+export function leadAbilities(role: string): { canWrite: boolean; sees: "own" | "brokerage" } {
+  // Only an admin sees the whole brokerage's contacts. A broker or coordinator
+  // has a personal book here, whatever they may see in Transactions.
+  return { canWrite: role !== "Member", sees: role === "Admin" ? "brokerage" : "own" };
 }
 
 /** True once the viewport is at least `px` wide. False until measured, then live. */

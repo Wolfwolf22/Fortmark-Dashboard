@@ -33,6 +33,17 @@ export function isPrivileged(actor: Actor): boolean {
   return PRIVILEGED_ROLES.includes(actor.role);
 }
 
+/**
+ * Brokerage-wide access to the CRM (contacts and everything hanging off them).
+ *
+ * Narrower than `isPrivileged` on purpose: a transaction coordinator or broker
+ * works other agents' deals, which does not entitle them to another person's
+ * private client book. Decided by role, never by an email address.
+ */
+export function isBrokerageAdmin(actor: Actor): boolean {
+  return actor.role === "admin";
+}
+
 /** A record's ownership facts, the shape every scoped table shares. */
 export interface Owned {
   brokerageKey: string;
@@ -59,6 +70,26 @@ export function canWriteOwned(actor: Actor, record: Owned): boolean {
 export function canCreateOwnedFor(actor: Actor, ownerUserId: string): boolean {
   if (actor.role === "member") return false;
   return isPrivileged(actor) || ownerUserId === actor.userId;
+}
+
+/**
+ * The personal-book rules, for records that belong to the person who created
+ * them (contacts): the brokerage boundary first, then the owner, with an admin
+ * seeing the whole brokerage. Nobody creates a record on behalf of someone else.
+ */
+export function canSeePersonal(actor: Actor, record: Owned): boolean {
+  if (record.brokerageKey !== actor.brokerageKey) return false;
+  return isBrokerageAdmin(actor) || record.ownerUserId === actor.userId;
+}
+
+export function canWritePersonal(actor: Actor, record: Owned): boolean {
+  if (actor.role === "member") return false;
+  return canSeePersonal(actor, record);
+}
+
+export function canCreatePersonalFor(actor: Actor, ownerUserId: string): boolean {
+  if (actor.role === "member") return false;
+  return ownerUserId === actor.userId;
 }
 
 /**

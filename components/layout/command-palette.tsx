@@ -40,7 +40,7 @@ const ENTITY_HEADING: Record<SearchEntity, string> = {
  * finder half.
  */
 const ACTIONS = [
-  { label: "Add a contact", href: ROUTES.leads },
+  { label: "Add a contact", href: ROUTES.contacts },
   { label: "Create a transaction", href: ROUTES.transactions },
 ];
 

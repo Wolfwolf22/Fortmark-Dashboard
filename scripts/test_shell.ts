@@ -21,7 +21,7 @@ const src = (p: string) => readFileSync(p, "utf8");
 
 // --- One navigation definition ------------------------------------------------------
 check("the brokerage core leads the bar in order",
-  PRIMARY_NAV.map((i) => i.label).join("|") === "Home|Listings|Leads|Transactions");
+  PRIMARY_NAV.map((i) => i.label).join("|") === "Home|Listings|Contacts|Transactions");
 check("AI is secondary and last", SECONDARY_NAV.some((i) => i.label === "AI") &&
   NAV_ITEMS[NAV_ITEMS.length - 1].label === "AI");
 check("every section is either primary or secondary, once",
@@ -32,13 +32,13 @@ check("every nav route is a real page", NAV_ITEMS.every((i) =>
 const bar = src("components/layout/top-bar.tsx");
 check("the top bar reads the one config (no second list)",
   bar.includes("PRIMARY_NAV.map") && bar.includes("SECONDARY_NAV.map") && bar.includes("NAV_ITEMS.map") &&
-    !/href:\s*"\/(listings|leads|transactions)"/.test(bar));
+    !/href:\s*"\/(listings|contacts|leads|transactions)"/.test(bar));
 
 // --- Active route ---------------------------------------------------------------------
 check("Home is active only on Home", isActivePath("/", "/") && !isActivePath("/", "/listings"));
 check("a listing detail keeps Listings active", isActivePath("/listings", "/listings/abc123"));
 check("a transaction detail keeps Transactions active", isActivePath("/transactions", "/transactions/t1"));
-check("sections match by segment, not prefix", !isActivePath("/lead", "/leads") && !isActivePath("/ai", "/aim"));
+check("sections match by segment, not prefix", !isActivePath("/contact", "/contacts") && !isActivePath("/ai", "/aim"));
 check("page titles follow the same rule",
   pageTitleFor("/listings/abc") === "Listings" && pageTitleFor("/settings") === "Settings" && pageTitleFor("/") === "Home");
 check("active links are marked for assistive tech",

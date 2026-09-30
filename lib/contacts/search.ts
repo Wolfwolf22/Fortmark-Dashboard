@@ -124,7 +124,7 @@ export async function searchContacts(
     title: displayName(row),
     subtitle: subtitleFor(row.stage as ContactStage, row.company),
     meta: row.email ?? row.phoneE164 ?? undefined,
-    href: `/leads?open=${encodeURIComponent(row.id)}`,
+    href: `/contacts?open=${encodeURIComponent(row.id)}`,
     match: row.match as MatchKind,
   }));
 }

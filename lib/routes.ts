@@ -21,7 +21,7 @@ export const ROUTES = {
   transactions: "/transactions",
   listings: "/listings",
   listing: (id: string) => `/listings/${id}`,
-  leads: "/leads",
+  contacts: "/contacts",
   calendar: "/calendar",
   documents: "/documents",
   reports: "/reports",

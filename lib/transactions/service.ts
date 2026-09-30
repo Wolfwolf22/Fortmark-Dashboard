@@ -27,7 +27,10 @@ import {
 } from "../db/schema.ts";
 import { transactionsDatabaseEnabled, type EnvLike } from "../flags.ts";
 import type { DateRange, Transaction, TransactionFilters, TransactionStage } from "../data/types.ts";
-import { canOwnRecords, isPrivileged, resolveActor as resolveBrokerageActor, type Actor } from "../auth/actor.ts";
+import { canOwnRecords, isBrokerageAdmin, isPrivileged, resolveActor as resolveBrokerageActor, type Actor } from "../auth/actor.ts";
+import { loadContact } from "../contacts/access.ts";
+import { displayName as contactDisplayName } from "../contacts/domain.ts";
+import { ELIGIBLE_STAGE } from "../contacts/eligible.ts";
 import {
   canCreateFor,
   canSee,
@@ -59,7 +62,18 @@ export type ServiceFailure =
   | "not_found"
   | "forbidden"
   | "invalid_transition"
-  | "invalid_assignee";
+  | "invalid_assignee"
+  | "invalid_contact";
+
+/** The role a contact takes on the deal, by which side FortMark represents. */
+const CLIENT_PARTY_ROLE: Record<TransactionSideKey, "seller" | "buyer" | "landlord" | "tenant"> = {
+  listing: "seller",
+  buyer: "buyer",
+  dual: "buyer",
+  landlord: "landlord",
+  tenant: "tenant",
+};
+type TransactionSideKey = "listing" | "buyer" | "dual" | "landlord" | "tenant";
 
 export type ServiceResult<T> = { ok: true; value: T } | { ok: false; reason: ServiceFailure };
 
@@ -205,10 +219,29 @@ export async function createTransaction(
   input: CreateTransactionInput,
   now: Date = new Date()
 ): Promise<ServiceResult<Transaction>> {
-  // Ownership: the actor, unless a privileged actor names someone else.
+  // A contact named in the request is revalidated here, from the database, under
+  // the caller's own Contacts scope. Not visible, not at Representation, or not
+  // there at all are the same answer, so the id reveals nothing about a colleague's book.
+  let contact: Awaited<ReturnType<typeof loadContact>> & { ok: true } | undefined;
+  if (input.contactId) {
+    const access = await loadContact(ctx, input.contactId);
+    if (!access.ok || access.row.stage !== ELIGIBLE_STAGE) return { ok: false, reason: "invalid_contact" };
+    contact = access;
+  }
+
+  // Ownership: the actor, unless a privileged actor names someone else. A deal
+  // opened for a contact is the contact owner's deal, unless the admin says otherwise.
   const agentUserId =
-    input.agentUserId && isPrivileged(ctx.actor) ? input.agentUserId : ctx.actor.userId;
+    input.agentUserId && isPrivileged(ctx.actor)
+      ? input.agentUserId
+      : contact && isBrokerageAdmin(ctx.actor)
+        ? contact.row.assignedAgentUserId
+        : ctx.actor.userId;
   if (!canCreateFor(ctx.actor, agentUserId)) return { ok: false, reason: "forbidden" };
+  // Only an admin may open a deal for a contact whose owner is someone else's deal-agent.
+  if (contact && agentUserId !== contact.row.assignedAgentUserId && !isBrokerageAdmin(ctx.actor)) {
+    return { ok: false, reason: "invalid_contact" };
+  }
   // A named owner is a request-supplied id: it must be someone who can own work.
   if (agentUserId !== ctx.actor.userId && !(await canOwnRecords(ctx.db, agentUserId))) {
     return { ok: false, reason: "invalid_assignee" };
@@ -244,16 +277,40 @@ export async function createTransaction(
   const row = inserted[0];
   if (!row) return { ok: false, reason: "unavailable" };
 
-  if (input.parties?.length) {
+  // The client party of a deal opened for a contact is built from the stored
+  // contact — its name, its email, its phone — and carries `contact_id`, the
+  // one existing link between a person and a deal. Any client-role party the
+  // request also sent is dropped rather than duplicated.
+  const clientRole = CLIENT_PARTY_ROLE[input.side];
+  const parties = [
+    ...(contact
+      ? [
+          {
+            role: clientRole,
+            displayName: contactDisplayName(contact.row),
+            company: null as string | null,
+            email: contact.row.email,
+            phone: contact.row.phoneE164,
+            isPrimary: true,
+            contactId: contact.row.id as string | null,
+          },
+        ]
+      : []),
+    ...(input.parties ?? [])
+      .filter((p) => !contact || p.role !== clientRole)
+      .map((p) => ({ ...p, company: p.company ?? null, email: p.email ?? null, phone: p.phone ?? null, isPrimary: p.isPrimary ?? false, contactId: null as string | null })),
+  ];
+  if (parties.length) {
     await ctx.db.insert(transactionParties).values(
-      input.parties.map((p) => ({
+      parties.map((p) => ({
         transactionId: row.id,
         role: p.role,
         displayName: p.displayName,
-        company: p.company ?? null,
-        email: p.email ?? null,
-        phoneE164: p.phone ?? null,
-        isPrimary: p.isPrimary ?? false,
+        company: p.company,
+        email: p.email,
+        phoneE164: p.phone,
+        isPrimary: p.isPrimary,
+        contactId: p.contactId,
       }))
     );
   }
@@ -275,6 +332,19 @@ export async function createTransaction(
     side: row.side,
     transactionType: row.transactionType,
   });
+  if (contact) {
+    // Ids only. The link is history for the contact and for the deal.
+    try {
+      await ctx.db.insert(auditEvents).values({
+        eventType: "contact_transaction_linked",
+        actorUserId: ctx.actor.userId,
+        targetUserId: null,
+        safeMetadata: { contactId: contact.row.id, transactionId: row.id, mechanism: "create" },
+      });
+    } catch {
+      // History must never break the write it describes.
+    }
+  }
   const created = await getTransaction(ctx, row.id, now);
   return created ? { ok: true, value: created } : { ok: false, reason: "unavailable" };
 }

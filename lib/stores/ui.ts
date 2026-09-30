@@ -9,11 +9,19 @@ export type QuickCreateKind =
   | "event"
   | "document";
 
+/** A contact a quick-create dialog was opened for: the deal is theirs. */
+export interface QuickCreateContact {
+  id: string;
+  name: string;
+}
+
 interface UiState {
   commandOpen: boolean;
   setCommandOpen: (open: boolean) => void;
   quickCreate: QuickCreateKind | null;
-  setQuickCreate: (kind: QuickCreateKind | null) => void;
+  /** Set when "Create transaction" is used from a contact; cleared whenever the dialog closes. */
+  quickCreateContact: QuickCreateContact | null;
+  setQuickCreate: (kind: QuickCreateKind | null, contact?: QuickCreateContact | null) => void;
   /**
    * The pathname whose content is playing its exit animation, or null.
    *
@@ -33,7 +41,8 @@ export const useUiStore = create<UiState>()((set) => ({
   commandOpen: false,
   setCommandOpen: (commandOpen) => set({ commandOpen }),
   quickCreate: null,
-  setQuickCreate: (quickCreate) => set({ quickCreate }),
+  quickCreateContact: null,
+  setQuickCreate: (quickCreate, contact = null) => set({ quickCreate, quickCreateContact: quickCreate ? contact : null }),
   leavingFrom: null,
   setLeavingFrom: (leavingFrom) => set({ leavingFrom }),
 }));

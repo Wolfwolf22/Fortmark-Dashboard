@@ -11,6 +11,23 @@ import type { NextConfig } from "next";
  */
 const nextConfig: NextConfig = {
   basePath: "/dashboard",
+  /**
+   * `/leads` is now `/contacts`: a person stays in the relationship system long
+   * after they stop being a lead. The old address keeps working for bookmarks,
+   * emailed links and the dashboards that already point at it.
+   *
+   * 307 (temporary) on purpose. A browser caches a 308 indefinitely, and that is
+   * the one part of this change that could not be undone from the server if it
+   * turned out to be wrong. Convert to a permanent redirect only once Production
+   * has run on this for a while. The query string is preserved by Next, so
+   * `?open=<id>`, filters, sort and page all survive, and the basePath is applied
+   * automatically.
+   */
+  async redirects() {
+    return [
+      { source: "/leads", destination: "/contacts", permanent: false },
+    ];
+  },
   images: {
     // Unchanged: optimization stays off as before (sample plates are SVG).
     // The MLS CDN is declared in remotePatterns below so turning optimization

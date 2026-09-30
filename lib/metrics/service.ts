@@ -24,7 +24,7 @@ import "server-only";
  */
 import { resolveBridgeConfig } from "../mls/config.ts";
 import { searchListings } from "../mls/service.ts";
-import { resolveActor as resolveBrokerageActor, isPrivileged, type Actor } from "../auth/actor.ts";
+import { resolveActor as resolveBrokerageActor, isBrokerageAdmin, isPrivileged, type Actor } from "../auth/actor.ts";
 import type { Db } from "../db/client.ts";
 import { contactsDatabaseEnabled, transactionsDatabaseEnabled, type EnvLike } from "../flags.ts";
 import {
@@ -151,6 +151,7 @@ export async function brokerageMetrics(
     source: "database",
     generatedAt: now.toISOString(),
     scope: privileged ? "brokerage" : "own",
+    contactsScope: actor && isBrokerageAdmin(actor) ? "brokerage" : "own",
     monthStart: monthWindow(now).start,
     transactions,
     contacts,

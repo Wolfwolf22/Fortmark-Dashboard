@@ -27,7 +27,8 @@ export function shortMonthLabel(monthStart: string): string {
 }
 
 /** Whose numbers these are, for a caption. */
-export function scopeLabel(scope: MetricScope): string {
+export function scopeLabel(scope: MetricScope, contactsScope: MetricScope = scope): string {
+  if (scope === "brokerage" && contactsScope === "own") return "Brokerage deals · your contacts";
   return scope === "brokerage" ? "Brokerage" : "Your book";
 }
 

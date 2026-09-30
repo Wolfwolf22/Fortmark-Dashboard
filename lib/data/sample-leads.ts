@@ -132,12 +132,3 @@ export function editSampleLead(
   bumpDataVersion();
   return lead;
 }
-
-/** Hand a sample row to another sample agent. */
-export function reassignSampleLead(id: string, agentId: string): Lead | undefined {
-  const lead = leads.find((l) => l.id === id);
-  if (!lead || !agents.some((a) => a.id === agentId)) return lead;
-  lead.assignedAgentId = agentId;
-  bumpDataVersion();
-  return lead;
-}

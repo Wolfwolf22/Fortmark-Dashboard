@@ -341,13 +341,18 @@ export type LeadStage =
   | "archived";
 
 /** Stages shown on the pipeline strip, in order. Archived is not one. */
+/**
+ * The stages in the order a person reads them. This is display order only — the
+ * database enum is declared with Representation first and is not reordered — so a
+ * sort by stage in SQL follows the enum, and every menu follows this.
+ */
 export const LEAD_STAGES: LeadStage[] = [
   "lead",
   "contacted",
   "qualified",
   "appointment",
-  "representation",
   "active_client",
+  "representation",
   "under_contract",
   "closed",
   "past_client",
@@ -417,6 +422,12 @@ export interface Lead {
   assignedAgentId: string;
   /** The assigned agent's display name, when the source states it. */
   assignedAgentName?: string;
+  /**
+   * Whether the viewer owns this contact. Only an admin ever sees someone
+   * else's, and for them the drawer names the owner (read-only, never a reassign
+   * control); for everyone else it is always true and nothing is shown.
+   */
+  ownedByViewer?: boolean;
   createdDate: string; // ISO
   /** ISO — the latest activity, or creation when there is none. */
   lastContactDate: string;
@@ -427,6 +438,8 @@ export interface Lead {
   lastTouchDate?: string;
   nextFollowUpDate?: string; // ISO
   notes: string;
+  /** Month and day only; a year is never stored. Null when not set. */
+  birthday?: { month: number; day: number } | null;
   recordSource: LeadSourceOfRecord;
   /** Split name parts, for editing. Present on stored contacts only. */
   editable?: {

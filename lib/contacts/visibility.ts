@@ -7,12 +7,12 @@
  */
 import { and, eq } from "drizzle-orm";
 import { contacts } from "../db/schema.ts";
-import { isPrivileged, type Actor } from "../auth/actor.ts";
+import { isBrokerageAdmin, type Actor } from "../auth/actor.ts";
 
 /** The visibility predicate, as SQL. Mirrors `canSee` for a query.
  *  Exported so aggregates (lib/contacts/metrics.ts) count exactly the rows
  *  this actor may list — a total is a disclosure like any other. */
 export function visibleTo(actor: Actor) {
   const tenant = eq(contacts.brokerageKey, actor.brokerageKey);
-  return isPrivileged(actor) ? tenant : and(tenant, eq(contacts.assignedAgentUserId, actor.userId));
+  return isBrokerageAdmin(actor) ? tenant : and(tenant, eq(contacts.assignedAgentUserId, actor.userId));
 }

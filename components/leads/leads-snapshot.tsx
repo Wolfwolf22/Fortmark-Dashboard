@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The Leads snapshot: five counts an agent reads before anything else.
+ * The Contacts snapshot: five counts an agent reads before anything else.
  *
  * Every figure is computed by the server over the contacts this person may list,
  * from the same predicates the table applies — so a card and the table it opens
@@ -68,7 +68,7 @@ export function LeadsSnapshotStrip({
   return (
     <div
       role="group"
-      aria-label="Leads snapshot"
+      aria-label="Contacts snapshot"
       aria-busy={loading}
       className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
     >

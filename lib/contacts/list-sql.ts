@@ -14,7 +14,7 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, not, or, sql, type SQL } from "drizzle-orm";
 import { contactOpportunities, contacts } from "../db/schema.ts";
 import type { Actor } from "../auth/actor.ts";
-import { isPrivileged } from "../auth/actor.ts";
+import { isBrokerageAdmin } from "../auth/actor.ts";
 import { containsPattern } from "../search/query.ts";
 import type { ContactRow } from "../db/schema.ts";
 import type { LeadIntent } from "../data/types.ts";
@@ -91,7 +91,7 @@ export function filterPredicates(actor: Actor, query: ContactQuery, now: Date): 
   if (query.source?.length) out.push(inArray(contacts.source, query.source as ContactRow["source"][]));
   if (query.intent?.length) out.push(or(...query.intent.map(intentPredicate))!);
   // A colleague's book is a privileged view; anyone else already only sees their own.
-  if (query.agentId && isPrivileged(actor)) out.push(eq(contacts.assignedAgentUserId, query.agentId));
+  if (query.agentId && isBrokerageAdmin(actor)) out.push(eq(contacts.assignedAgentUserId, query.agentId));
   if (query.mine) out.push(eq(contacts.assignedAgentUserId, actor.userId));
 
   switch (query.followUp) {

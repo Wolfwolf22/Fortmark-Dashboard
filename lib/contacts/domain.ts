@@ -9,27 +9,28 @@
 import { z } from "zod";
 import type { Lead, LeadIntent, LeadSource, LeadStage } from "../data/types.ts";
 import type { ContactActivityRow, ContactOpportunityRow, ContactRow } from "../db/schema.ts";
-import { canCreateOwnedFor, canSeeOwned, canWriteOwned, type Actor } from "../auth/actor.ts";
+import { canCreatePersonalFor, canSeePersonal, canWritePersonal, type Actor } from "../auth/actor.ts";
 import { centsToDollars } from "../transactions/money.ts";
 import { toE164 } from "../profile/normalize.ts";
 import { businessDayKey } from "../metrics/business-day.ts";
 import { decideFollowUp, type FollowUpOutcome } from "./follow-up.ts";
 import { ALL_CONTACT_STAGES } from "./stages.ts";
+import { birthdayChangeState, birthdaySchema, type Birthday } from "./birthday.ts";
 
 // --- Who ---------------------------------------------------------------------
 
 type Owned = Pick<ContactRow, "brokerageKey" | "assignedAgentUserId">;
 
 export function canSee(actor: Actor, row: Owned): boolean {
-  return canSeeOwned(actor, { brokerageKey: row.brokerageKey, ownerUserId: row.assignedAgentUserId });
+  return canSeePersonal(actor, { brokerageKey: row.brokerageKey, ownerUserId: row.assignedAgentUserId });
 }
 
 export function canWrite(actor: Actor, row: Owned): boolean {
-  return canWriteOwned(actor, { brokerageKey: row.brokerageKey, ownerUserId: row.assignedAgentUserId });
+  return canWritePersonal(actor, { brokerageKey: row.brokerageKey, ownerUserId: row.assignedAgentUserId });
 }
 
 export function canCreateFor(actor: Actor, agentUserId: string): boolean {
-  return canCreateOwnedFor(actor, agentUserId);
+  return canCreatePersonalFor(actor, agentUserId);
 }
 
 // --- Request shapes -----------------------------------------------------------
@@ -53,8 +54,8 @@ export const opportunityInputSchema = z.object({
 /**
  * What a caller may say when adding a person. A name of some kind is
  * required — first, last or preferred — because a contact nobody can name
- * cannot be followed up. Ownership and tenancy are the server's, as with
- * deals: `assignedAgentUserId` is honoured only from a privileged actor.
+ * cannot be followed up. Ownership and tenancy are the server's: a contact
+ * belongs to whoever creates it, and no field of the request can say otherwise.
  */
 export const createContactBaseSchema = z.object({
     firstName: z.string().trim().max(100).optional(),
@@ -66,7 +67,8 @@ export const createContactBaseSchema = z.object({
     source: z.enum(SOURCES).optional(),
     tags: z.array(shortText).max(20).optional(),
     notes: z.string().trim().max(5000).optional(),
-    assignedAgentUserId: z.string().uuid().optional(),
+    /** Optional. A real month and day; never a year. */
+    birthday: birthdaySchema.optional(),
     opportunities: z.array(opportunityInputSchema).max(10).optional(),
 });
 
@@ -79,6 +81,8 @@ export type CreateContactInput = z.infer<typeof createContactSchema>;
 
 export const contactStageChangeSchema = z.object({
   stage: z.enum(ALL_CONTACT_STAGES as [LeadStage, ...LeadStage[]]),
+  /** The person confirmed the engagement notice. Recorded; never taken to mean a document exists. */
+  engagementAcknowledged: z.boolean().optional(),
 });
 
 /** An activity a person logs. System events are written by the service only. */
@@ -153,19 +157,27 @@ export const editContactSchema = z
     phone: z.string().trim().max(40).optional(),
     company: z.string().trim().max(EDITABLE_TEXT.max).optional(),
     source: z.enum(SOURCES).optional(),
+    /** Kept for compatibility. The screen no longer offers it: notes are their own records now. */
     notes: z.string().trim().max(5000).optional(),
+    /** A real month and day, or null to clear. Never a year. */
+    birthday: birthdaySchema.nullable().optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).length > 0, { message: "nothing to change" });
 
 export type EditContactInput = z.infer<typeof editContactSchema>;
 
-export const reassignContactSchema = z.object({ agentId: z.string().uuid() }).strict();
 
-export type ContactEditField = "name" | "email" | "phone" | "company" | "source" | "notes";
+export type ContactEditField = "name" | "email" | "phone" | "company" | "source" | "notes" | "birthday";
 
 export type ContactEditPlan =
-  | { ok: true; set: Partial<Pick<ContactRow, "firstName" | "lastName" | "preferredName" | "email" | "phoneE164" | "company" | "source" | "notes">>; changed: ContactEditField[] }
+  | {
+      ok: true;
+      set: Partial<Pick<ContactRow, "firstName" | "lastName" | "preferredName" | "email" | "phoneE164" | "company" | "source" | "notes" | "birthdayMonth" | "birthdayDay">>;
+      changed: ContactEditField[];
+      /** How the birthday changed, when it did — never the date itself. */
+      birthday?: "set" | "changed" | "cleared";
+    }
   | { ok: false; field: "name" | "phone" };
 
 const blankToNull = (v: string | undefined | null): string | null => {
@@ -183,7 +195,7 @@ const blankToNull = (v: string | undefined | null): string | null => {
  * email is stored lower-case as it is on creation.
  */
 export function planContactEdit(
-  row: Pick<ContactRow, "firstName" | "lastName" | "preferredName" | "email" | "phoneE164" | "company" | "source" | "notes">,
+  row: Pick<ContactRow, "firstName" | "lastName" | "preferredName" | "email" | "phoneE164" | "company" | "source" | "notes" | "birthdayMonth" | "birthdayDay">,
   patch: EditContactInput
 ): ContactEditPlan {
   const set: Extract<ContactEditPlan, { ok: true }>["set"] = {};
@@ -208,6 +220,18 @@ export function planContactEdit(
   if (patch.company !== undefined) apply("company", blankToNull(patch.company), "company", row.company ?? null);
   if (patch.source !== undefined) apply("source", patch.source, "source", row.source);
   if (patch.notes !== undefined) apply("notes", blankToNull(patch.notes), "notes", row.notes ?? null);
+  let birthday: "set" | "changed" | "cleared" | undefined;
+  if (patch.birthday !== undefined) {
+    const before: Birthday | null =
+      row.birthdayMonth != null && row.birthdayDay != null ? { month: row.birthdayMonth, day: row.birthdayDay } : null;
+    const state = birthdayChangeState(before, patch.birthday);
+    if (state !== "unchanged") {
+      set.birthdayMonth = patch.birthday?.month ?? null;
+      set.birthdayDay = patch.birthday?.day ?? null;
+      changed.add("birthday");
+      birthday = state;
+    }
+  }
 
   const after = {
     firstName: "firstName" in set ? set.firstName : row.firstName,
@@ -215,7 +239,7 @@ export function planContactEdit(
     preferredName: "preferredName" in set ? set.preferredName : row.preferredName,
   };
   if (!after.firstName && !after.lastName && !after.preferredName) return { ok: false, field: "name" };
-  return { ok: true, set, changed: Array.from(changed) };
+  return { ok: true, set, changed: Array.from(changed), ...(birthday ? { birthday } : {}) };
 }
 
 // --- Row → screen -----------------------------------------------------------------
@@ -257,6 +281,8 @@ export function primaryOpportunity(
 
 export interface ContactBundle {
   row: ContactRow;
+  /** Who is looking, so a contact can say whether it is theirs. */
+  viewerId?: string;
   opportunities: readonly ContactOpportunityRow[];
   /** The latest activity, when any; lists carry only this one. */
   latestActivity?: ContactActivityRow;
@@ -279,11 +305,13 @@ export function toLead(bundle: ContactBundle): Lead {
     neighborhood: primary?.area ?? undefined,
     assignedAgentId: row.assignedAgentUserId,
     assignedAgentName: bundle.agentName,
+    ...(bundle.viewerId ? { ownedByViewer: row.assignedAgentUserId === bundle.viewerId } : {}),
     createdDate: row.createdAt.toISOString(),
     lastContactDate: lastContact.toISOString(),
     lastTouchDate: row.lastContactAt?.toISOString(),
     nextFollowUpDate: row.nextFollowUpAt?.toISOString(),
     notes: row.notes ?? "",
+    birthday: row.birthdayMonth != null && row.birthdayDay != null ? { month: row.birthdayMonth, day: row.birthdayDay } : null,
     recordSource: "db",
     editable: {
       firstName: row.firstName ?? "",

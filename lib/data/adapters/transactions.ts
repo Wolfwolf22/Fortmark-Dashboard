@@ -149,6 +149,11 @@ export interface QuickCreateTransactionInput {
   contractPrice: number;
   /** ISO. */
   closeDate?: string;
+  /**
+   * A contact at Representation this deal is for. The server reloads it and builds
+   * the client party from the stored contact; `clientName` is then ignored.
+   */
+  contactId?: string;
 }
 
 export async function createTransaction(input: QuickCreateTransactionInput): Promise<Transaction> {
@@ -168,9 +173,11 @@ export async function createTransaction(input: QuickCreateTransactionInput): Pro
       city: input.city,
       contractPriceCents: Math.round(input.contractPrice * 100),
       closingDate,
-      parties: input.clientName.trim()
-        ? [{ role: clientRole, displayName: input.clientName.trim(), isPrimary: true }]
-        : [],
+      ...(input.contactId ? { contactId: input.contactId } : {}),
+      parties:
+        !input.contactId && input.clientName.trim()
+          ? [{ role: clientRole, displayName: input.clientName.trim(), isPrimary: true }]
+          : [],
     }),
   });
   bumpDataVersion();
