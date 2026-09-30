@@ -88,7 +88,7 @@ The contact update and its audit event commit in one `db.batch` (a real Neon
 transaction), as `changeStage` does: there is no state where the follow-up
 changed and the audit is missing, or the reverse. The audit event is
 `contact_updated` with `{ contactId, field: "nextFollowUpAt", followUp,
-mechanism: "direct" }`: *what changed*, never the date, the contact's name or
+mechanism: "direct" }`: *what changed* — and, for a scheduled reminder, the day it was set for (workflow data, added in Leads V2 so the timeline can say "scheduled for Oct 3") — never the contact's name or
 any contact detail. No `contact_activities` row is written — audit history is
 about the system, not about the client.
 
