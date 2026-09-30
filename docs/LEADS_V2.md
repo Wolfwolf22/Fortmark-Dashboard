@@ -76,7 +76,7 @@ read-only access to this contact.*); the server still decides.
 
 - **Edit contact** — first, last and preferred name, email, phone, company, source,
   notes. Only what changed is sent; email is lower-cased; a phone is stored E.164 or
-  refused (`invalid_phone`), never half-stored (create now normalises the same way);
+  refused (`invalid_phone`), never half-stored. (Creating a contact normalises a readable number to E.164 but keeps an unreadable one as typed rather than refusing — the create form has always accepted free text; only edit is strict.);
   a contact must keep a name. Ownership, stage, dates, identifiers and brokerage are
   not editable: a body naming one is a 400, not ignored. Errors name fields, never
   values; focus moves to the first invalid field once the form is enabled again.
