@@ -210,8 +210,8 @@ export function KanbanBoard({ transactions, loading, onOpen }: KanbanBoardProps)
     return (
       <EmptyState
         icon={Inbox}
-        title="No transactions in this period"
-        description="Widen the date range or clear the search to see active files."
+        title="No transactions found"
+        description="Clear the search or the side filter to see every file, or add a transaction from Create."
       />
     );
   }

@@ -384,6 +384,21 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
     /read\("from"\)/.test(readFileSync("lib/transactions/filters.ts", "utf8")));
 }
 
+// --- The list is a work list, not a windowed report --------------------------------
+//
+// The defect: the page passed the global reporting period (default "Month",
+// set on Home/Reports, with no control on this page) to a server filter that
+// keeps only deals whose contract or closing date falls inside it. A deal at
+// the opportunity stage has neither date, so it could never match and the page
+// showed nothing. Pinned at the source, since the page is a client component.
+{
+  const page = readFileSync("app/(app)/transactions/page.tsx", "utf8");
+  const code = page.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  check("the transactions page does not read the global reporting period", !/useDateRange|date-range/.test(code));
+  check("the transactions page asks for deals without a date window", !/getTransactions\([\s\S]{0,200}\brange\b/.test(code));
+  check("the adapter still supports a window for callers that pass one", /if \(range\) \{[\s\S]{0,120}fields\.from/.test(readFileSync("lib/data/adapters/transactions.ts", "utf8")));
+}
+
 // --- The shared atomic stage writer ---------------------------------------------
 //
 // The defect this replaced: the stage update ran alone, and both history

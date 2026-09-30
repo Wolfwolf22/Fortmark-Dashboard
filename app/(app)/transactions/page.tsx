@@ -4,6 +4,12 @@
  * Transactions — pipeline board (drag to advance) with a table alternative.
  * Search and side filter drive the adapter query; ?open=<txnId> deep-links
  * straight into the shared detail drawer.
+ *
+ * This is a work list, not a report, so it is deliberately NOT windowed by the
+ * global reporting period. That period is set on Home and Reports and has no
+ * control here: applying it would filter this list by a setting the user
+ * cannot see, and would drop every deal with no contract or closing date yet —
+ * which is every deal at the opportunity stage.
  */
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -23,7 +29,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { getTransactions } from "@/lib/data/adapters/transactions";
 import { useQuery } from "@/lib/data/hooks";
-import { useDateRange } from "@/lib/stores/date-range";
 
 type SideFilter = "all" | "listing" | "buyer";
 type View = "board" | "table";
@@ -55,7 +60,6 @@ function PageSkeleton() {
 function TransactionsPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { preset, range } = useDateRange();
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -82,14 +86,11 @@ function TransactionsPageInner() {
 
   const { data: transactions, loading } = useQuery(
     () =>
-      getTransactions(
-        {
-          query: debouncedSearch || undefined,
-          side: side === "all" ? undefined : [side],
-        },
-        range
-      ),
-    [preset, range.from.getTime(), range.to.getTime(), debouncedSearch, side]
+      getTransactions({
+        query: debouncedSearch || undefined,
+        side: side === "all" ? undefined : [side],
+      }),
+    [debouncedSearch, side]
   );
 
   function openTransaction(id: string) {

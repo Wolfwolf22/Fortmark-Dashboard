@@ -189,7 +189,7 @@ export function TransactionsTable({
         <EmptyState
           icon={Inbox}
           title="No transactions match"
-          description="Clear the stage filter, adjust the search, or widen the date range."
+          description="Clear the stage filter or adjust the search."
         />
       ) : (
         <>
