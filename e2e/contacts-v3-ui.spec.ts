@@ -620,6 +620,24 @@ for (const [w, h] of [[390, 844], [430, 932], [1280, 800], [1440, 900]] as const
   });
 }
 
+test("the drawer tells a failed load from a contact that is gone", async () => {
+  const id = FIX.ownlead;
+  // A failed read (the network drops the contact request) is NOT "no longer available".
+  await page.route(`**/api/contacts/${id}`, (route) => route.abort());
+  await page.goto(`/dashboard/contacts?open=${id}`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  const failed = page.getByRole("alert").filter({ hasText: "We could not load this contact" });
+  await expect(failed, "a failed load is said to be a failed load").toBeVisible({ timeout: 45_000 });
+  await expect(page.getByText("This contact is no longer available.")).toHaveCount(0);
+  // Try again works once the network is back.
+  await page.unroute(`**/api/contacts/${id}`);
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(drawer(page).getByTestId("lead-notes")).toBeVisible({ timeout: 45_000 });
+  // A real 404 (no such contact, or not yours) is the only thing that says "no longer available".
+  await page.goto("/dashboard/contacts?open=00000000-0000-4000-8000-000000000000", { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await expect(page.getByText("This contact is no longer available.")).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByText("We could not load this contact")).toHaveCount(0);
+});
+
 test("reduced motion: the drawer still opens and closes", async () => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.emulateMedia({ reducedMotion: "reduce" });

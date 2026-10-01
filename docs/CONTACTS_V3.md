@@ -115,13 +115,13 @@ Fixtures were synthetic ("CV3 …"), seeded on the Preview branch, and removed a
   click that raced hydration) are counted and printed by the specs, never hidden. No product exception
   (`uncaught=0`) was seen in any run.
 
-Defects found live and fixed: the contact picker flashed a free-text "Client name" box when a cleared
+Defects found live and fixed (the last one in the promotion audit: the drawer said "no longer available" for any failed load, not only a 404): the contact picker flashed a free-text "Client name" box when a cleared
 search had not reloaded; a dialog opened from the New menu lost focus because its opener (a menu item)
 closes with the menu; dialogs opened from state did not restore focus; focus after deleting a note fell to
 nothing; a duplicate accessible name on the areas list.
 
-Not exercised through the browser: broker and coordinator (covered by the API spec, whose Transactions
-and Contacts expectations are the role table above).
+Broker and transaction coordinator were later certified through the browser as well (own-only Contacts, brokerage-wide
+Transactions, own-only deal-contact selector): see `CONTACTS_V3_PRODUCTION_PROMOTION.md` §14.
 
 ## Tests
 `npm test` (20 suites, includes `test:contacts-v3` 324 checks), `npm run test:migrate` (66),
