@@ -141,7 +141,7 @@ function describe(error: unknown): string {
 }
 
 export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
-  const { data, loading } = useQuery<Lead | undefined>(() => (leadId ? getLead(leadId) : Promise.resolve(undefined)), [leadId]);
+  const { data, loading, error: loadError, refetch } = useQuery<Lead | undefined>(() => (leadId ? getLead(leadId) : Promise.resolve(undefined)), [leadId]);
   // Guard against stale data from a previously opened lead.
   const lead = data && data.id === leadId ? data : undefined;
   const sample = lead?.recordSource === "sample";
@@ -625,7 +625,17 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
               <SheetTitle className="sr-only">Contact</SheetTitle>
               <SheetDescription className="sr-only">Contact details</SheetDescription>
             </SheetHeader>
-            <p className="mt-8 text-sm text-muted-foreground">This contact is no longer available.</p>
+            {/* Only a real 404 means the contact is gone (or not yours). A failed load is said to be a failed load. */}
+            {loadError && leadId ? (
+              <div role="alert" className="mt-8 grid gap-3 text-sm text-muted-foreground">
+                <p>We could not load this contact. Check your connection and try again.</p>
+                <div>
+                  <Button variant="outline" onClick={refetch}>Try again</Button>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-8 text-sm text-muted-foreground">This contact is no longer available.</p>
+            )}
           </>
         )}
       </SheetContent>

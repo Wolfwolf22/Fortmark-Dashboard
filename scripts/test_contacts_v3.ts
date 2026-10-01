@@ -667,6 +667,7 @@ function readMigrations(): string {
   check("ui picker: the server does the searching, debounced", picker.includes("getEligibleContacts(debounced || undefined)") && picker.includes("setTimeout(() => setDebounced"));
   check("ui picker: only the id is submitted for a contact, and free text stays possible for a deal with no contact", picker.includes('name="contactId"') && picker.includes('name="client"') && picker.includes("Not in Contacts — enter a client name"));
   check("ui focus: a dialog opened from the New menu returns focus to the New button", src("components/ui/dialog.tsx").includes("focusFallback") && src("components/layout/new-menu.tsx").includes("data-new-trigger") && src("components/layout/quick-create-dialog.tsx").includes("data-new-trigger"));
+  check("ui drawer: a failed load is not reported as a contact that is gone", (() => { const d = strip(src("components/leads/lead-drawer.tsx")); return d.includes("loadError && leadId") && d.includes("We could not load this contact") && d.includes("This contact is no longer available."); })());
   check("ui picker: the free-text fallback only applies once the list for the CURRENT query has loaded", picker.includes("settled === debounced") && picker.includes("setSettled(debounced)"));
   check("ui picker: a side is suggested only from one explicit active need", picker.includes('kinds.size === 1 && kinds.has("buy")') && picker.includes('kinds.size === 1 && kinds.has("sell")'));
   const dialog = strip(src("components/layout/quick-create-dialog.tsx"));

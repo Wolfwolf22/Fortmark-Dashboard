@@ -1,7 +1,7 @@
 /**
  * Contacts V3 — Preview certification through the real signed-in UI.
  *
- *   CV3_ROLE = admin | agent | member
+ *   CV3_ROLE = admin | agent | broker | transaction_coordinator | member
  *
  * Same synthetic fixture as `contacts-v3-api.spec.ts` (see its header), seeded
  * on the Preview branch and removed afterwards. What this proves that the API
@@ -25,7 +25,8 @@ test.describe.configure({ mode: "serial" });
 const ROLE = process.env.CV3_ROLE ?? "";
 const WRITER = ROLE !== "member";
 const IS_ADMIN = ROLE === "admin";
-const BROKERAGE_DEALS = IS_ADMIN;
+// Transactions are brokerage-wide for these roles; Contacts are brokerage-wide for admin ONLY.
+const BROKERAGE_DEALS = ["admin", "broker", "transaction_coordinator"].includes(ROLE);
 const FIX = JSON.parse(process.env.CV3_FIX ?? "{}") as Record<string, string>;
 const SHOTS = process.env.SHOTS_DIR ?? "test-results/contacts-v3-shots";
 mkdirSync(SHOTS, { recursive: true });
@@ -64,7 +65,7 @@ async function settle(p: Page, load: () => Promise<unknown>, ready: Locator, wha
       await expect(ready).toBeVisible({ timeout });
       return;
     } catch (error) {
-      const platformPage = (await p.getByText(/Application error: a client-side exception|upstream request failed/).count()) > 0;
+      const platformPage = (await p.getByText(/Application error: a client-side exception|upstream request failed|We could not load this contact/).count()) > 0;
       const lost = chunkErrors.length > before;
       // A 5xx or a dropped request from the platform in front of the app while this page was loading:
       // reported with the request that failed, and reloaded once per occurrence — never silently.
@@ -134,7 +135,7 @@ async function unnamedControls(root: Locator): Promise<string[]> {
 
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(600_000);
-  expect(["admin", "agent", "member"], "CV3_ROLE must be admin, agent or member").toContain(ROLE);
+  expect(["admin", "agent", "broker", "transaction_coordinator", "member"], "CV3_ROLE must be a known role").toContain(ROLE);
   expect(FIX.rep1 && FIX.ownlead, "fixture ids").toBeTruthy();
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.on("pageerror", (e) => (/Loading chunk \d+ failed|ChunkLoadError|reading 'loaded'/.test(e.message) ? chunkErrors : uncaught).push(e.message.slice(0, 200)));
@@ -194,6 +195,14 @@ test("Contacts, not Leads: the nav, the page, the views and the legacy address",
   await expect(page.getByText(/^CV3 Ownactive$/)).toHaveCount(0);
   if (IS_ADMIN) await expect(page.getByText(/^CV3 Colleague Rep$/), "an admin's Representation view includes colleagues'").toBeVisible();
   else await expect(page.getByText(/^CV3 Colleague Rep$/)).toHaveCount(0);
+  // Scope is by role, not by what the Transactions page allows: a personal-book role has no Owner filter
+  // and never sees a colleague's contact, even a broker or coordinator whose DEALS are brokerage-wide.
+  if (IS_ADMIN) await expect(page.getByRole("combobox", { name: "Filter by agent" })).toBeVisible();
+  else {
+    await expect(page.getByRole("combobox", { name: "Filter by agent" }), "no Owner filter outside admin").toHaveCount(0);
+    await expect(page.getByText(/^CV3 Colleague (Rep|Lead)$/)).toHaveCount(0);
+    await expect(page.getByText(/^CV3 Foreign$/)).toHaveCount(0);
+  }
   await page.screenshot({ path: `${SHOTS}/${ROLE}-contacts-1440.png` });
 });
 
@@ -219,8 +228,10 @@ test("the drawer: one calm hierarchy, nothing about reassignment, and an owner l
     await expect(drawer(page).getByTestId("lead-owner")).toContainText(/^Owner:/);
     await expect(drawer(page).getByText(/reassign/i)).toHaveCount(0);
   } else {
-    await page.goto(`/dashboard/contacts?open=${FIX.colRep}`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByText("This contact is no longer available.")).toBeVisible({ timeout: 30_000 });
+    for (const [what, id] of [["a colleague's representation contact", FIX.colRep], ["a colleague's lead", FIX.colLead], ["a contact in another brokerage", FIX.foreign]] as const) {
+      await page.goto(`/dashboard/contacts?open=${id}`, { waitUntil: "domcontentloaded" });
+      await expect(page.getByText("This contact is no longer available."), `${what} is not openable by ${ROLE}`).toBeVisible({ timeout: 30_000 });
+    }
   }
 });
 
@@ -518,6 +529,23 @@ test("a new transaction's contact selector: Representation only, server-searched
   await dlg.getByRole("button", { name: "Cancel" }).click();
   await expect(dlg).toHaveCount(0);
   await expect(page.getByRole("button", { name: "New", exact: true }), "focus returns to the New button").toBeFocused();
+});
+
+test("the boundary: deals are brokerage-wide for this role, but the deal dialog never opens another agent's contact book", async () => {
+  test.skip(!WRITER || !BROKERAGE_DEALS || IS_ADMIN, "only broker and coordinator sit on this boundary");
+  await gotoReady(page, "/dashboard/transactions", page.getByRole("combobox", { name: "Filter by side" }), 45_000);
+  await expect(page.getByText("CV3 Colleague Avenue").first(), "the colleague's deal is visible").toBeVisible({ timeout: 45_000 });
+  await expect(page.getByText("CV3 Legacy Street").first(), "the undated opportunity deal is visible").toBeVisible();
+  await chooseFromNewMenu(page, "Transaction");
+  const dlg = page.getByRole("dialog", { name: "New transaction" });
+  await expect(dlg).toBeVisible();
+  const group = dlg.getByRole("radiogroup", { name: "Contacts at Representation" });
+  await expect(group.getByText("CV3 Ownrep One")).toBeVisible();
+  await expect(group.getByText("CV3 Colleague Rep"), "another agent's private contact is not offered").toHaveCount(0);
+  await dlg.getByLabel("Search contacts at Representation").fill("colleague");
+  await expect(group.getByText("No matching contact at Representation."), "searching for it by name finds nothing").toBeVisible();
+  await dlg.getByRole("button", { name: "Cancel" }).click();
+  await expect(dlg).toHaveCount(0);
 });
 
 test("quick create a contact: name, email, phone, source, birthday — no intent — and it opens on the person", async () => {
