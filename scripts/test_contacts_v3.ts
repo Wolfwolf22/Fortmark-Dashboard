@@ -659,7 +659,7 @@ function readMigrations(): string {
   check("ui needs: a bad number puts focus on the field and says what to fix", needsUi.includes("document.getElementById(error.field)?.focus()") && needsUi.includes('role="alert"'));
   check("ui needs: fields are labelled and groups have legends", needsUi.includes("<fieldset") && needsUi.includes("<legend") && (needsUi.match(/<Label htmlFor/g) ?? []).length >= 10);
   const tags = strip(src("components/leads/tag-input.tsx"));
-  check("ui tags: each entry is removable by a button that names it", tags.includes("aria-label={`Remove ${v}`}") && tags.includes('aria-label={label}'));
+  check("ui tags: the chips list is named differently from its input, and each entry is removable by a button that names it", tags.includes("aria-label={`Remove ${v}`}") && tags.includes('aria-label={`${label} added`}'));
 
   // Selector and dialog.
   const picker = strip(src("components/layout/contact-picker.tsx"));

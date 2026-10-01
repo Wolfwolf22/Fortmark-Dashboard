@@ -76,7 +76,7 @@ export function TagInput({
         </Button>
       </div>
       {values.length > 0 && (
-        <ul className="flex flex-wrap gap-1.5" aria-label={label}>
+        <ul className="flex flex-wrap gap-1.5" aria-label={`${label} added`}>
           {values.map((v) => (
             <li key={v} className="inline-flex items-center gap-1 rounded-full bg-tint py-0.5 pl-2.5 pr-1 text-[13px]">
               <span className="break-words">{v}</span>
