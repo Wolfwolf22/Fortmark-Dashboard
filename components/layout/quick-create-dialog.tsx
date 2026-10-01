@@ -181,7 +181,8 @@ export function QuickCreateDialog() {
 
   return (
     <Dialog open={kind !== null} onOpenChange={(open) => !open && close()}>
-      <DialogContent>
+      {/* Opened from the New menu, whose item is gone by the time this closes: focus goes back to the menu's button. */}
+      <DialogContent focusFallback={() => document.querySelector<HTMLElement>("[data-new-trigger]")}>
         {meta && kind && (
           <form onSubmit={submit} className="grid gap-4">
             <DialogHeader>

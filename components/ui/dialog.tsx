@@ -29,8 +29,10 @@ const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
     hideClose?: boolean;
+    /** Where focus goes when the element that opened the dialog is gone — a menu item closes with its menu. */
+    focusFallback?: () => HTMLElement | null;
   }
->(({ className, children, hideClose, onOpenAutoFocus, onCloseAutoFocus, ...props }, ref) => {
+>(({ className, children, hideClose, focusFallback, onOpenAutoFocus, onCloseAutoFocus, ...props }, ref) => {
   /**
    * Radix returns focus on close only to a `DialogTrigger`. A dialog opened from
    * state — the delete confirmation, the engagement notice, "Create transaction"
@@ -59,7 +61,8 @@ const DialogContent = React.forwardRef<
           if (event.defaultPrevented) return;
           event.preventDefault();
           const target = opener.current;
-          if (target && target.isConnected) target.focus();
+          const destination = target && target.isConnected ? target : focusFallback?.();
+          destination?.focus();
         }}
         {...props}
       >
