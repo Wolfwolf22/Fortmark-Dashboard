@@ -337,6 +337,100 @@ try {
     check("the advisory lock is released afterwards", held[0].n === 0);
   }
 
+  // 6. A Production-shaped database: level 0010, populated with legacy rows, migrated to the head.
+  //    This is the release's real path (Production is at 0010 and has real contacts and deals).
+  {
+    const level10 = (() => {
+      const f = mkdtempSync(join(tmpdir(), "fm-mig-0010-"));
+      cpSync(REAL, f, { recursive: true });
+      const j = JSON.parse(readFileSync(`${f}/meta/_journal.json`, "utf8"));
+      j.entries = j.entries.filter((e) => e.idx <= 10);
+      writeFileSync(`${f}/meta/_journal.json`, JSON.stringify(j, null, 2));
+      return f;
+    })();
+    const url = await freshDb("prodshape");
+    const r0 = await runMigrations(url, { migrationsFolder: level10 });
+    check("a database at Production's level (0010) builds", r0.after === 11);
+    const none = await query("prodshape", "select to_regclass('public.contact_notes') n, to_regclass('public.contact_needs') d, (select count(*)::int from information_schema.columns where table_name='contacts' and column_name like 'birthday%') b");
+    check("0010 has none of the V3 objects", none[0].n === null && none[0].d === null && none[0].b === 0);
+
+    const u1 = "a0000000-0000-4000-8000-000000000001";
+    const u2 = "a0000000-0000-4000-8000-000000000002";
+    const c1 = "b0000000-0000-4000-8000-000000000001";
+    const c2 = "b0000000-0000-4000-8000-000000000002";
+    const t1 = "e0000000-0000-4000-8000-000000000001";
+    const t2 = "e0000000-0000-4000-8000-000000000002";
+    const seed = [
+      ["insert into dashboard_users (id, clerk_user_id, primary_email, status, role) values ($1,'user_LEGACY1','legacy1@example.invalid','active','admin'), ($2,'user_LEGACY2','legacy2@example.invalid','active','agent')", [u1, u2]],
+      ["insert into contacts (id, brokerage_key, assigned_agent_user_id, created_by_user_id, first_name, last_name, source, stage, notes, tags) values ($1,'fortmark',$3,$3,'Legacy','Representation','referral','representation','An old free-text note','[\"vip\"]'::jsonb), ($2,'fortmark',$4,$4,'Legacy','Lead','website','lead',null,'[]'::jsonb)", [c1, c2, u1, u2]],
+      ["insert into contact_activities (contact_id, actor_user_id, kind, summary) values ($1,$2,'note','Logged a note'), ($1,$2,'status_change','Stage changed'), ($1,$2,'call','Called')", [c1, u1]],
+      ["insert into contact_opportunities (contact_id, kind, status, area) values ($1,'buyer','open','Brickell')", [c1]],
+      ["insert into transactions (id, agent_user_id, created_by_user_id, transaction_type, side, stage, address_line1, city) values ($1,$3,$3,'residential_sale','listing','opportunity','1 Legacy St','Miami'), ($2,$4,$4,'residential_sale','buyer','under_contract','2 Legacy Ave','Miami')", [t1, t2, u1, u2]],
+      ["insert into transaction_parties (transaction_id, role, display_name, is_primary) values ($1,'seller','Legacy Seller',true), ($2,'buyer','Legacy Buyer',true)", [t1, t2]],
+      ["insert into audit_events (actor_user_id, event_type, safe_metadata) values ($1,'contact_created','{}'::jsonb), ($1,'contact_stage_changed','{}'::jsonb)", [u1]],
+    ];
+    for (const [text, params] of seed) await query("prodshape", text, params);
+
+    const TABLES = ["dashboard_users", "contacts", "contact_activities", "contact_opportunities", "transactions", "transaction_parties", "audit_events"];
+    const fingerprint = async () => {
+      const out = {};
+      for (const t of TABLES) {
+        // The two new contact columns are not part of what existed before; everything else must be bit-identical.
+        const strip = t === "contacts" ? " - 'birthday_month' - 'birthday_day'" : "";
+        const rows = await query("prodshape", `select count(*)::int n, md5(coalesce(string_agg((to_jsonb(x)${strip})::text, '|' order by x.id::text), '')) h from ${t} x`);
+        out[t] = `${rows[0].n}:${rows[0].h}`;
+      }
+      return out;
+    };
+    const before = await fingerprint();
+
+    // 6a. A failing batch on populated data: nothing of 0011-0013 survives, nothing legacy moves.
+    const failing = (() => {
+      const f = mkdtempSync(join(tmpdir(), "fm-mig-fail-"));
+      cpSync(REAL, f, { recursive: true });
+      writeFileSync(`${f}/9100_probe_bad.sql`, 'CREATE TABLE "probe_bad" ("id" integer);\n--> statement-breakpoint\nSELECT 1/0;');
+      const j = JSON.parse(readFileSync(`${f}/meta/_journal.json`, "utf8"));
+      j.entries.push({ idx: j.entries.length, version: "7", when: j.entries.at(-1).when + 1000, tag: "9100_probe_bad", breakpoints: true });
+      writeFileSync(`${f}/meta/_journal.json`, JSON.stringify(j, null, 2));
+      return f;
+    })();
+    let threw = false;
+    try { await runMigrations(url, { migrationsFolder: failing }); } catch { threw = true; }
+    check("0010 -> 0013 plus a failing migration throws", threw);
+    const rolled = await query("prodshape", "select to_regclass('public.contact_notes') n, to_regclass('public.contact_needs') d, to_regclass('public.probe_bad') p, (select count(*)::int from information_schema.columns where table_name='contacts' and column_name like 'birthday%') b, (select count(*)::int from drizzle.__drizzle_migrations) m, (select count(*)::int from pg_type where typname like 'contact_need_%') ty");
+    check("a failed batch leaves no V3 table, column, type or probe", rolled[0].n === null && rolled[0].d === null && rolled[0].p === null && rolled[0].b === 0 && rolled[0].ty === 0);
+    check("a failed batch leaves the bookkeeping at 11 rows", rolled[0].m === 11);
+    check("a failed batch leaves every legacy row untouched", JSON.stringify(await fingerprint()) === JSON.stringify(before));
+    rmSync(failing, { recursive: true, force: true });
+
+    // 6b. The real 0011-0013.
+    const r = await runMigrations(url);
+    check("0010 -> 0013 applies as one batch of three", r.before === 11 && r.after === 14);
+    const after = await fingerprint();
+    check("every legacy row is bit-identical after the migration", JSON.stringify(after) === JSON.stringify(before));
+    const cons = await query("prodshape", "select conname, convalidated from pg_constraint where conname in ('contacts_birthday_check','contact_notes_body_check','contact_needs_price_check','contact_needs_size_check','contact_needs_bounds_check')");
+    check("all five new constraints exist and are validated", cons.length === 5 && cons.every((c) => c.convalidated));
+    const fresh = await query("prodshape", "select (select count(*)::int from contact_notes) notes, (select count(*)::int from contact_needs) needs, (select count(*)::int from contacts where birthday_month is not null or birthday_day is not null) birthdays");
+    check("no backfill: no notes, no needs, no birthdays appear", fresh[0].notes === 0 && fresh[0].needs === 0 && fresh[0].birthdays === 0);
+    const legacy = await query("prodshape", "select notes from contacts where id = $1", [c1]);
+    check("the legacy free-text note stays on the contact, not copied anywhere", legacy[0].notes === "An old free-text note");
+    const links = await query("prodshape", "select count(*)::int n from transaction_parties where contact_id is not null");
+    check("existing deals keep a null contact link (nothing is linked automatically)", links[0].n === 0);
+    const stage = await query("prodshape", "select stage::text s from contacts where id = $1", [c1]);
+    check("an existing Representation contact stays at Representation", stage[0].s === "representation");
+
+    // 6c. The old runtime's writes still pass the new constraints (it never sets the new columns).
+    const oldWrite = await query("prodshape", "insert into contacts (brokerage_key, assigned_agent_user_id, created_by_user_id, first_name, source, stage) values ('fortmark',$1,$1,'OldRuntime','website','lead') returning id", [u1]);
+    check("an insert that omits the new columns (the old runtime) is accepted", oldWrite.length === 1);
+    const oldUpdate = await query("prodshape", "update contacts set stage='contacted', notes='edited by old runtime' where id=$1 returning id", [c2]);
+    check("an update of old columns (the old runtime) is accepted", oldUpdate.length === 1);
+
+    // 6d. Repeat behaviour.
+    const again = await runMigrations(url);
+    check("running again applies nothing", again.before === 14 && again.after === 14);
+    rmSync(level10, { recursive: true, force: true });
+  }
+
   // 5. Non-transactional DDL is refused before connecting.
   {
     const folder = folderWith([["9004_probe_concurrently", 'CREATE INDEX CONCURRENTLY "x" ON "contacts" ("email");']]);
