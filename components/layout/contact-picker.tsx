@@ -34,6 +34,9 @@ export function ContactPicker({
   const [text, setText] = useState("");
   const [debounced, setDebounced] = useState("");
   const [items, setItems] = useState<{ id: string; name: string }[] | null>(null);
+  // The query the current `items` answer. Until it matches what was typed, the list is stale and must not
+  // be read as "there is nobody" — a cleared search would otherwise flash the free-text field.
+  const [settled, setSettled] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [choice, setChoice] = useState<string>(preselected?.id ?? "");
   const [needs, setNeeds] = useState<NeedView[]>([]);
@@ -48,8 +51,8 @@ export function ContactPicker({
     let live = true;
     setFailed(false);
     getEligibleContacts(debounced || undefined)
-      .then((rows) => live && setItems(rows))
-      .catch(() => live && (setFailed(true), setItems([])));
+      .then((rows) => live && (setItems(rows), setSettled(debounced)))
+      .catch(() => live && (setFailed(true), setItems([]), setSettled(debounced)));
     return () => {
       live = false;
     };
@@ -81,7 +84,8 @@ export function ContactPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contactId]);
 
-  const manual = choice === MANUAL || (!preselected && items !== null && items.length === 0 && !debounced && !choice);
+  const nobodyAtRepresentation = items !== null && items.length === 0 && settled === debounced && !debounced;
+  const manual = choice === MANUAL || (!preselected && nobodyAtRepresentation && !choice);
 
   return (
     <fieldset className="grid gap-2">

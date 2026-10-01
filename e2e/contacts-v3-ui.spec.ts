@@ -85,6 +85,22 @@ const pickOption = async (p: Page, scope: Locator | Page, name: string | RegExp,
   await scope.getByRole("combobox", { name }).click();
   await p.getByRole("option", { name: option }).first().click();
 };
+/** Open the New menu and choose an item — retrying a click that raced the page still settling, and saying so. */
+async function chooseFromNewMenu(p: Page, item: string) {
+  for (let attempt = 1; ; attempt += 1) {
+    await p.getByRole("button", { name: "New", exact: true }).click();
+    try {
+      await p.getByRole("menuitem", { name: item, exact: true }).click({ timeout: 5_000 });
+      return;
+    } catch (error) {
+      if (attempt >= 4) throw error;
+      platformReloads += 1;
+      say(`the New menu did not open on click ${attempt}; retrying (${platformReloads})`);
+      await p.keyboard.press("Escape").catch(() => undefined);
+      await p.waitForTimeout(800);
+    }
+  }
+}
 /** Every interactive control inside `root` has an accessible name — the one rule no screenshot shows. */
 async function unnamedControls(root: Locator): Promise<string[]> {
   return root.evaluate((el) => {
@@ -454,7 +470,7 @@ test("Representation → Transaction: the CTA, the chosen contact, nothing pre-f
   await openContact(page, FIX.rep2);
   const linked = drawer(page).getByTestId("lead-transactions");
   await expect(linked).toContainText("CV3 UI Deal Street");
-  await linked.getByRole("link", { name: /CV3 UI Deal Street/ }).click();
+  await linked.getByRole("link", { name: /CV3 UI Deal Street/ }).first().click();
   await expect(page).toHaveURL(/\/dashboard\/transactions\?open=/, { timeout: 30_000 });
   say("create from contact: dialog preselected, nothing pre-filled, deal linked and listed in the drawer");
 });
@@ -462,8 +478,7 @@ test("Representation → Transaction: the CTA, the chosen contact, nothing pre-f
 test("a new transaction's contact selector: Representation only, server-searched, scoped, free text still possible", async () => {
   test.skip(!WRITER, "member cannot open a deal");
   await gotoReady(page, "/dashboard/transactions", page.getByRole("combobox", { name: "Filter by side" }), 45_000);
-  await page.getByRole("button", { name: "New", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Transaction" }).click();
+  await chooseFromNewMenu(page, "Transaction");
   const dlg = page.getByRole("dialog", { name: "New transaction" });
   await expect(dlg).toBeVisible();
   const group = dlg.getByRole("radiogroup", { name: "Contacts at Representation" });
@@ -479,9 +494,9 @@ test("a new transaction's contact selector: Representation only, server-searched
   await expect(group.getByText("No matching contact at Representation.")).toBeVisible();
   await dlg.getByLabel("Search contacts at Representation").fill("");
   await group.getByLabel("CV3 Ownrep One").check();
-  await expect(dlg.getByLabel("Client name"), "a chosen contact needs no typed name").toHaveCount(0);
+  await expect(dlg.getByLabel("Client name", { exact: true }), "a chosen contact needs no typed name").toHaveCount(0);
   await group.getByLabel("Not in Contacts — enter a client name").check();
-  await expect(dlg.getByLabel("Client name")).toBeVisible();
+  await expect(dlg.getByLabel("Client name", { exact: true })).toBeVisible();
   expect(await unnamedControls(dlg)).toEqual([]);
   await dlg.getByRole("button", { name: "Cancel" }).click();
   await expect(dlg).toHaveCount(0);
