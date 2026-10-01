@@ -45,6 +45,10 @@ export function LeadNotes({
   const [pendingDelete, setPendingDelete] = useState<NoteView | null>(null);
   const [deleting, setDeleting] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
+  // Where focus goes once the confirmation has closed. After a delete the button that opened it is
+  // gone with the note, and the dialog's focus trap is still holding focus until it has fully closed —
+  // so the move happens in `onCloseAutoFocus`, not before.
+  const focusComposerAfterClose = useRef(false);
 
   // A different contact starts with an empty composer and no stale messages.
   const [forLead, setForLead] = useState(leadId);
@@ -94,11 +98,10 @@ export function LeadNotes({
     setProblem(null);
     try {
       await deleteNote(leadId, pendingDelete.id);
+      focusComposerAfterClose.current = true;
       setPendingDelete(null);
       setMessage("Note deleted.");
       refetch();
-      // The button that opened the dialog is gone with the note; the composer is the next useful place.
-      window.setTimeout(() => composer.current?.focus(), 0);
     } catch (err) {
       setPendingDelete(null);
       setProblem(
@@ -219,7 +222,16 @@ export function LeadNotes({
       )}
 
       <Dialog open={pendingDelete !== null} onOpenChange={(open) => !open && !deleting && setPendingDelete(null)}>
-        <DialogContent>
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            if (!focusComposerAfterClose.current) return;
+            focusComposerAfterClose.current = false;
+            event.preventDefault();
+            // A deleted note's own button no longer exists; the composer is the next useful place.
+            if (composer.current) composer.current.focus();
+            else (event.currentTarget as HTMLElement | null)?.blur();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Delete note?</DialogTitle>
             <DialogDescription>This will remove the note from the contact&apos;s record.</DialogDescription>

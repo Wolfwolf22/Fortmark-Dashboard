@@ -40,6 +40,17 @@ const say = (line: string) => console.log(`[contacts-v3-ui ${ROLE}] ${line}`);
 const dialogs = (p: Page) => p.getByRole("dialog");
 const drawer = (p: Page) => p.locator('[role="dialog"]').filter({ has: p.getByTestId("lead-notes") });
 const overflows = (p: Page) => p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+/** A count that has stopped changing — a list that refetches after a write is read only once it has settled. */
+async function stableCount(loc: Locator): Promise<number> {
+  let last = -1;
+  for (let i = 0; i < 20; i += 1) {
+    const now = await loc.count();
+    if (now === last) return now;
+    last = now;
+    await loc.page().waitForTimeout(400);
+  }
+  return last;
+}
 const STAMP_RE = /^[A-Z][a-z]{2} \d{1,2}, \d{4} · \d{1,2}:\d{2} (AM|PM)$/;
 
 async function settle(p: Page, load: () => Promise<unknown>, ready: Locator, what: string, timeout = 30_000) {
@@ -89,7 +100,7 @@ test.beforeAll(async ({ browser }) => {
   expect(["admin", "agent", "member"], "CV3_ROLE must be admin, agent or member").toContain(ROLE);
   expect(FIX.rep1 && FIX.ownlead, "fixture ids").toBeTruthy();
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  page.on("pageerror", (e) => (/Loading chunk \d+ failed|ChunkLoadError/.test(e.message) ? chunkErrors : uncaught).push(e.message.slice(0, 200)));
+  page.on("pageerror", (e) => (/Loading chunk \d+ failed|ChunkLoadError|reading 'loaded'/.test(e.message) ? chunkErrors : uncaught).push(e.message.slice(0, 200)));
   await signInCertificationUser(page);
   for (let attempt = 1; ; attempt += 1) {
     await page.goto("/dashboard", { waitUntil: "domcontentloaded", timeout: 60_000 });
@@ -173,12 +184,16 @@ test("notes: always there, timestamped, plain text; delete asks first and keeps 
   await expect(composer, "the composer is on the drawer — not behind Edit contact").toBeVisible();
   await expect(d.getByRole("button", { name: "Save note" })).toBeDisabled();
   const xss = '<img src=x onerror="window.__xss=1"> <b>bold?</b> & "q"';
-  await composer.fill(`${xss} ${Date.now()}`);
+  const unique = `run-${Date.now()}`;
+  await composer.fill(`${xss} ${unique}`);
   await d.getByRole("button", { name: "Save note" }).click();
   await expect(d.getByRole("status").filter({ hasText: "Note saved." })).toBeVisible();
   await expect(composer, "the composer is emptied after a save").toHaveValue("");
-  const first = d.getByTestId("note").first();
+  // The NEW note — identified by this run's token, not by text an earlier run also wrote.
+  const first = d.getByTestId("note").filter({ hasText: unique });
+  await expect(first).toHaveCount(1);
   await expect(first.getByTestId("note-body")).toContainText('<img src=x onerror="window.__xss=1"> <b>bold?</b> & "q"');
+  await expect(d.getByTestId("note").first(), "newest first").toContainText(unique);
   expect(await first.getByTestId("note-time").innerText(), "Eastern business time, readable").toMatch(STAMP_RE);
   expect((await first.getByTestId("note-author").innerText()).trim().length).toBeGreaterThan(0);
   await expect(first.locator("img, b, script")).toHaveCount(0);
@@ -195,7 +210,7 @@ test("notes: always there, timestamped, plain text; delete asks first and keeps 
   await expect(d.getByRole("button", { name: "Save note" })).toBeDisabled();
   await composer.fill("");
   // Delete: Cancel keeps it, focus returns to the button that opened the dialog.
-  const before = await d.getByTestId("note").count();
+  const before = await stableCount(d.getByTestId("note"));
   const del = first.getByRole("button", { name: /Delete note from/ });
   await del.click();
   const confirm = page.getByRole("dialog", { name: "Delete note?" });
