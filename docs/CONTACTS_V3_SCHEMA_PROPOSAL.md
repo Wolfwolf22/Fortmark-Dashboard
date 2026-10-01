@@ -1,6 +1,7 @@
 # Contacts V3 — architecture and schema proposal
 
-Status: **FOR REVIEW. No migration applied. Nothing deployed to Production.**
+Status: **APPROVED / APPLIED TO PREVIEW** (M1, M2, M3). M4 is not applied and is its own gate. **Nothing is in Production.**
+Implementation, behavior and certification: see [`CONTACTS_V3.md`](./CONTACTS_V3.md). What follows is the proposal as it was reviewed; the "Decisions taken" block below records how the open questions were closed.
 Date: 2026-09-30 · Branch: `claude/dashboard-status-yir55p` · Production baseline: `74ff9d4` (Leads V2)
 
 This document is the gate required before any Contacts V3 schema work. It records
@@ -396,6 +397,19 @@ payload (only the drawer fetches them, on open).
 
 ## 11. Open decisions
 
+### Decisions taken (implementation phase)
+
+| # | Decision |
+|---|---|
+| 1 | Transactions: admin, broker and coordinator stay brokerage-wide; agent own only. Contacts: admin brokerage-wide, everyone else own-only, member read-only. |
+| 2 | Deleting a note removes its body (a CHECK enforces a null body with `deleted_at` set) and leaves a tombstone. Stricter than "retain, hidden". |
+| 3 | M1 `contact_notes`, M2 birthday month/day, M3 `contact_needs` applied to Preview only (`0011`–`0013`). No M4, no M5. Notes are limited to 10,000 characters. |
+| 4 | Private store NOT provisioned (the tooling cannot scope a store to Preview only). Operator step is in `CONTACTS_V3.md`. M4 stays blocked. |
+| 5 | "Active clients" = `active_client` only. |
+| 6 | `/dashboard/leads` answers **307** (not 308) to `/dashboard/contacts`, query string kept. |
+
+### Original open decisions (as proposed)
+
 1. Broker / transaction coordinator Transactions scope — recommend keep brokerage-wide.
 2. Soft-deleted note body retention — recommend retain, hidden.
 3. Approve M1, M2, M3 as written (M5 optional).
@@ -407,4 +421,5 @@ payload (only the drawer fetches them, on open).
 
 None. No deployment, migration, data write or environment change was made to
 Production. The only Production access was read-only SQL (counts and non-identifying
-shape columns) for the Transactions root cause.
+shape columns) for the Transactions root cause, and — in the implementation phase —
+one read-only check that Production still has 11 migrations and none of the V3 tables.

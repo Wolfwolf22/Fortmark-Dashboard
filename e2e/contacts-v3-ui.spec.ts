@@ -85,6 +85,21 @@ const pickOption = async (p: Page, scope: Locator | Page, name: string | RegExp,
   await scope.getByRole("combobox", { name }).click();
   await p.getByRole("option", { name: option }).first().click();
 };
+/** Click a button that opens a dialog — retrying a click that raced hydration, counted and said, never hidden. */
+async function clickToOpen(p: Page, button: Locator, dialog: Locator, what: string) {
+  for (let attempt = 1; ; attempt += 1) {
+    await button.click();
+    try {
+      await expect(dialog.first()).toBeVisible({ timeout: 6_000 });
+      return;
+    } catch (error) {
+      if (attempt >= 4) throw error;
+      platformReloads += 1;
+      say(`${what} did not open on click ${attempt}; retrying (${platformReloads})`);
+      await p.waitForTimeout(800);
+    }
+  }
+}
 /** Open the New menu and choose an item — retrying a click that raced the page still settling, and saying so. */
 async function chooseFromNewMenu(p: Page, item: string) {
   for (let attempt = 1; ; attempt += 1) {
@@ -154,7 +169,7 @@ test.afterAll(async () => {
 
 // ---------------------------------------------------------------------------------------------
 test("Contacts, not Leads: the nav, the page, the views and the legacy address", async () => {
-  await gotoReady(page, "/dashboard/leads?stage=representation", page.getByTestId("view-all"), 45_000);
+  await gotoReady(page, "/dashboard/leads?stage=representation", page.getByText(/^CV3 Ownrep One$/), 45_000);
   await expect(page, "the legacy address lands on /contacts with the query kept").toHaveURL(/\/dashboard\/contacts\?stage=representation/);
   const nav = page.getByRole("navigation", { name: "Primary" });
   await expect(nav.getByRole("link", { name: "Contacts", exact: true })).toBeVisible();
@@ -162,7 +177,9 @@ test("Contacts, not Leads: the nav, the page, the views and the legacy address",
   await expect(page.getByText("Contacts", { exact: true }).first()).toBeVisible();
   if (WRITER) await expect(page.getByRole("button", { name: "New contact" })).toBeVisible();
   for (const [id, label] of [["all", /All contacts|My contacts/], ["mine", /My leads/], ["representation", /Representation/], ["active_clients", /Active clients/], ["due_today", /Due today/], ["overdue", /Overdue/], ["no_touch_14", /No touch 14\+/]] as const) {
-    await expect(page.getByTestId(`view-${id}`), id).toContainText(label);
+    // "My leads" narrows a brokerage-wide list to the viewer's own; a personal book is already only theirs.
+    if (id === "mine" && !IS_ADMIN) await expect(page.getByTestId("view-mine"), "a personal book needs no My leads view").toHaveCount(0);
+    else await expect(page.getByTestId(`view-${id}`), id).toContainText(label);
   }
   await expect(page.getByTestId("view-unassigned")).toHaveCount(0);
   await expect(page.getByText(/^CV3 Ownrep One$/)).toBeVisible({ timeout: 30_000 });
@@ -506,8 +523,8 @@ test("a new transaction's contact selector: Representation only, server-searched
 test("quick create a contact: name, email, phone, source, birthday — no intent — and it opens on the person", async () => {
   test.skip(!WRITER, "member cannot add contacts");
   await gotoReady(page, "/dashboard/contacts", page.getByTestId("view-all"), 45_000);
-  await page.getByRole("button", { name: "New contact" }).click();
   const dlg = page.getByRole("dialog", { name: "New contact" });
+  await clickToOpen(page, page.getByRole("button", { name: "New contact" }), dlg, "the New contact dialog");
   for (const label of ["Name", "Email", "Phone", "Source (optional)", "Birthday month (optional)", "Birthday day"]) await expect(dlg.getByLabel(label), label).toBeVisible();
   await expect(dlg.getByLabel("Intent")).toHaveCount(0);
   expect(await unnamedControls(dlg)).toEqual([]);
