@@ -192,7 +192,7 @@ API certification (all five roles + a foreign-brokerage control) was completed i
 - **AI, MLS, listings:** unchanged — no file under `lib/ai`, `app/api/chat`, `lib/mls`, `app/api/listings` differs from `74ff9d4`.
 - **Authorization:** by `role`, never by email; out of scope is 404; read-only is 403. Broker/coordinator Contacts are own-only; their Transactions stay brokerage-wide.
 - **Reassignment removed:** no endpoint (the route file is deleted), no UI, no create-time owner override; historical `assigned_agent_user_id` and the historical timeline label remain.
-- **Client bundle secret scan** (106 files, clean worktree build): no Bridge/DB/OpenAI/Anthropic/Clerk-secret/Blob-write values; the two pattern hits are a Tailwind class-name substring and Clerk's SDK reading `process.env.CLERK_SECRET_KEY` (a name, inlined as undefined). No secret environment-variable name other than that Clerk SDK reference appears in client chunks.
+- **Client bundle secret scan** (106 files, clean worktree build): no Bridge/DB/OpenAI/Anthropic/Clerk-secret/Blob-write values; the two pattern hits are a Tailwind class-name substring and Clerk's SDK reading `process.env.CLERK_SECRET_KEY` (a name, inlined as undefined). None of the checked secret names (database URLs, Bridge, OpenAI, Anthropic, Blob tokens, the planned engagement token) appears in client chunks.
 
 ## 16. Environment — UNCHANGED
 
