@@ -19,16 +19,30 @@ export function EngagementNotice({
   busy,
   onCancel,
   onContinue,
+  returnFocusTo,
 }: {
   /** The stage being entered, or null when the notice is closed. */
   target: ContactStage | null;
   busy: boolean;
   onCancel: () => void;
   onContinue: () => void;
+  /**
+   * The id of the control to hand focus back to. The notice opens from a select's
+   * `onValueChange` while the select's own popup is still closing, so there is no
+   * stable "element that had focus" to return to — the caller names it.
+   */
+  returnFocusTo?: string;
 }) {
   return (
     <Dialog open={target !== null} onOpenChange={(open) => !open && !busy && onCancel()}>
-      <DialogContent>
+      <DialogContent
+        onCloseAutoFocus={(event) => {
+          const el = returnFocusTo ? document.getElementById(returnFocusTo) : null;
+          if (!el) return;
+          event.preventDefault();
+          el.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Brokerage engagement</DialogTitle>
           <DialogDescription>

@@ -35,6 +35,8 @@ let api: ReturnType<typeof refreshingApiFor>;
 let platformReloads = 0;
 const uncaught: string[] = [];
 const chunkErrors: string[] = [];
+/** What the browser was told when an API call was not fine — the evidence a "never appeared" needs. */
+const apiProblems: string[] = [];
 const say = (line: string) => console.log(`[contacts-v3-ui ${ROLE}] ${line}`);
 
 const dialogs = (p: Page) => p.getByRole("dialog");
@@ -56,6 +58,7 @@ const STAMP_RE = /^[A-Z][a-z]{2} \d{1,2}, \d{4} · \d{1,2}:\d{2} (AM|PM)$/;
 async function settle(p: Page, load: () => Promise<unknown>, ready: Locator, what: string, timeout = 30_000) {
   for (let attempt = 1; ; attempt += 1) {
     const before = chunkErrors.length;
+    const problemsBefore = apiProblems.length;
     await load();
     try {
       await expect(ready).toBeVisible({ timeout });
@@ -63,9 +66,12 @@ async function settle(p: Page, load: () => Promise<unknown>, ready: Locator, wha
     } catch (error) {
       const platformPage = (await p.getByText(/Application error: a client-side exception|upstream request failed/).count()) > 0;
       const lost = chunkErrors.length > before;
-      if ((!platformPage && !lost) || attempt >= 4) throw error;
+      // A 5xx or a dropped request from the platform in front of the app while this page was loading:
+      // reported with the request that failed, and reloaded once per occurrence — never silently.
+      const upstream = apiProblems.slice(problemsBefore).filter((p) => /^(50[234]|failed)/.test(p));
+      if ((!platformPage && !lost && upstream.length === 0) || attempt >= 4) throw new Error(`${String(error)}\n[api problems while loading ${what}: ${JSON.stringify(apiProblems.slice(problemsBefore)).slice(0, 400)}]`);
       platformReloads += 1;
-      say(`platform ${lost ? "dropped a chunk" : "error page"} at ${what}; reloading (${platformReloads})`);
+      say(`platform ${lost ? "dropped a chunk" : upstream.length ? `answered ${upstream.join("; ")}` : "error page"} at ${what}; reloading (${platformReloads})`);
     }
   }
 }
@@ -101,6 +107,14 @@ test.beforeAll(async ({ browser }) => {
   expect(FIX.rep1 && FIX.ownlead, "fixture ids").toBeTruthy();
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.on("pageerror", (e) => (/Loading chunk \d+ failed|ChunkLoadError|reading 'loaded'/.test(e.message) ? chunkErrors : uncaught).push(e.message.slice(0, 200)));
+  page.on("response", (r) => {
+    const u = new URL(r.url());
+    if (u.pathname.startsWith("/dashboard/api/") && r.status() >= 400 && r.status() !== 404 && r.status() !== 403) apiProblems.push(`${r.status()} ${r.request().method()} ${u.pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, ":id")}`);
+  });
+  page.on("requestfailed", (r) => {
+    const u = new URL(r.url());
+    if (u.pathname.startsWith("/dashboard/api/")) apiProblems.push(`failed ${r.method()} ${u.pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, ":id")} ${r.failure()?.errorText}`);
+  });
   await signInCertificationUser(page);
   for (let attempt = 1; ; attempt += 1) {
     await page.goto("/dashboard", { waitUntil: "domcontentloaded", timeout: 60_000 });
@@ -117,6 +131,7 @@ test.beforeAll(async ({ browser }) => {
 
 test.afterAll(async () => {
   say(`platform reloads=${platformReloads} (dropped chunks seen=${chunkErrors.length}), product uncaught=${uncaught.length}`);
+  if (apiProblems.length) say(`API problems the browser saw: ${JSON.stringify(apiProblems).slice(0, 800)}`);
   if (uncaught.length) say(`detail: ${JSON.stringify(uncaught).slice(0, 500)}`);
   await page?.close();
 });
@@ -305,7 +320,7 @@ test("client needs: a small form, progressive disclosure, several at once, pause
   const form = d.getByRole("form", { name: "Client need" });
   await expect(form.getByLabel("Need type")).toBeVisible();
   for (const hidden of ["Minimum square feet", "Financing", "Must-haves", "Avoid", "Additional requirements"]) await expect(form.getByLabel(hidden), `${hidden} is behind 'More requirements'`).toHaveCount(0);
-  const more = form.getByRole("button", { name: "More requirements" });
+  const more = form.getByRole("button", { name: /^(More|Fewer) requirements$/ });
   await expect(more).toHaveAttribute("aria-expanded", "false");
   // The error path first: a maximum below the minimum puts focus on the field.
   await form.getByLabel("Budget minimum ($)").fill("750000");
@@ -361,7 +376,8 @@ test("client needs: a small form, progressive disclosure, several at once, pause
   const others = d.getByRole("button", { name: /^Other needs \(1\)$/ });
   await expect(others).toHaveAttribute("aria-expanded", "false");
   await others.click();
-  await expect(d.getByText("Paused")).toBeVisible();
+  await expect(d.getByTestId("lead-needs").getByText("Paused", { exact: true })).toBeVisible();
+  await expect(d.getByTestId("lead-timeline").getByText("Client need paused").first(), "the timeline says so — in words, no values").toBeVisible();
   await expect(d.getByRole("button", { name: /delete/i }).filter({ hasText: /need/i })).toHaveCount(0);
   say("needs: error focus, disclosure, summary from stored values only, two at once, edit, pause");
 });

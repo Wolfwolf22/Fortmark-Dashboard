@@ -475,7 +475,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                       <p className={heading}>Stage</p>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <Select value={lead.stage} onValueChange={(v) => changeStage(v as LeadStage)} disabled={saving}>
-                          <SelectTrigger aria-label="Contact stage" className="w-full sm:w-56">
+                          <SelectTrigger id="lead-stage-select" aria-label="Contact stage" className="w-full sm:w-56">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -615,7 +615,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 <p className="text-xs text-muted-foreground">Sets last contact to now. The follow-up is kept.</p>
               </div>
             )}
-            <EngagementNotice target={pendingStage} busy={saving} onCancel={() => setPendingStage(null)} onContinue={() => void confirmEngagement()} />
+            <EngagementNotice target={pendingStage} busy={saving} onCancel={() => setPendingStage(null)} onContinue={() => void confirmEngagement()} returnFocusTo="lead-stage-select" />
           </>
         ) : loading && leadId ? (
           <DrawerSkeleton />
