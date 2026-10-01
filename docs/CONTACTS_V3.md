@@ -107,7 +107,7 @@ Fixtures were synthetic ("CV3 …"), seeded on the Preview branch, and removed a
   the isolation control: every refusal is paired with the same request succeeding for a role allowed to
   make it.
 - **UI**, signed in through Clerk against the deployment (`e2e/contacts-v3-ui.spec.ts`):
-  - admin: all 18 steps (steps 1–11 on revision `ea01490`/`80c4170`, 12–18 on `80c4170`);
+  - admin: all 18 steps passed, across three runs on the same code (`80c4170`; later commits only touched docs and the spec) — steps 1–11 in one run, then 12–18 in another after the run was stopped by a click that raced hydration; not one uninterrupted pass;
   - agent: 17 passed, 1 skipped (member-only step);
   - member: 11 passed, 7 skipped (write paths a read-only role cannot take).
   - Widths 390, 430, 1280 and 1440 with no sideways scrolling; every control named; reduced motion checked.
