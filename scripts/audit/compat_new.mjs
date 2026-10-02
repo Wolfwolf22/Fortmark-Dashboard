@@ -61,6 +61,14 @@ export async function run({ db, ctxA, ctxB, ok, pg, ids, import_ }) {
   await attempt("new: a contact below Representation is refused", () => ts.createTransaction(ctxA, { transactionType: "residential_sale", side: "buyer", addressLine1: "10 Compat Way", city: "Miami", contactId: ids.C2 }), (r) => !r.ok && r.reason === "invalid_contact");
   await attempt("new: a deal without a contact still works (legacy path)", () => ts.createTransaction(ctxA, { transactionType: "residential_sale", side: "buyer", addressLine1: "11 Compat Way", city: "Miami", parties: [{ role: "buyer", displayName: "Free Text Buyer", isPrimary: true }] }), (r) => r.ok);
 
+  // Search: a hit with the contact's id (the response echoes the query, so text alone proves nothing); no private content in results
+  {
+    const ss = await import_("lib/search/service.ts");
+    const env = { DATABASE_URL: "postgres://shim:shim@db.example.invalid/compat", PROFILE_DATABASE_ENABLED: "1", TRANSACTIONS_DATABASE_ENABLED: "1", CONTACTS_DATABASE_ENABLED: "1" };
+    process.env.DATABASE_URL = env.DATABASE_URL;
+    await attempt("new: global search finds a legacy contact by name, and shows no note/need content", () => ss.search("user_LEGACY1", "Legacy", { env }), (r) => r.hits.some((h) => JSON.stringify(h).includes(ids.C1)) && !/7781|Zzyzx|moat/.test(JSON.stringify(r)));
+  }
+
   // No automatic changes
   const st = (await q("select stage::text s from contacts where id=$1", [ids.C1]))[0];
   ok("new: the Representation contact is still at Representation (nothing auto-moved)", st.s === "representation");

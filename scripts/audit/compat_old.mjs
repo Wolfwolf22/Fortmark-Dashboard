@@ -32,7 +32,10 @@ export async function run({ db, ctxA, ctxB, ok, pg, ids, import_ }) {
   // Search and metrics (when callable from here)
   try {
     const ss = await import_("lib/search/service.ts");
-    await attempt("old: global search finds a legacy contact by name", () => ss.search({ actor: ctxA.actor, db }, "Legacy"), (r) => JSON.stringify(r).includes("Legacy"));
+    // search(clerkUserId, query, { env }) — the response echoes the query, so only a HIT with the contact's id counts.
+    const env = { DATABASE_URL: "postgres://shim:shim@db.example.invalid/compat", PROFILE_DATABASE_ENABLED: "1", TRANSACTIONS_DATABASE_ENABLED: "1", CONTACTS_DATABASE_ENABLED: "1" };
+    process.env.DATABASE_URL = env.DATABASE_URL;
+    await attempt("old: global search finds a legacy contact by name", () => ss.search("user_LEGACY1", "Legacy", { env }), (r) => r.hits.some((h) => JSON.stringify(h).includes(ids.C1)));
   } catch (e) { ok("old: global search callable", false, String(e.message).slice(0, 200)); }
 
   // The V3 tables are inert to the old runtime

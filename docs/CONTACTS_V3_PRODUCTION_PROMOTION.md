@@ -220,3 +220,68 @@ Application-only rollback: **YES**. Database restore required: **NO** (only for 
 Broker browser PASS · coordinator browser PASS · backup/restore path established · 0011–0013 safe · legacy Production data compatible · old runtime works on schema 0013 · no environment change · M4 absent/deferred · authorization correct · notes, birthday, needs private · Transactions loading fixed · Representation selector scope correct · build and tests green · no P0 · no P1.
 
 **GO.** Stop: wait for explicit authorization to migrate Production and deploy. Nothing was migrated, merged or deployed in this phase.
+
+---
+
+# PRODUCTION EXECUTION
+
+**Authorised:** 2026-10-02. Certified runtime **`0f765be`**. Order: safety branch → Neon 17 rehearsal → Production migration → verify → fast-forward → deploy → health → smoke → logs.
+
+## 1. Frozen state (15:37Z) — matches the audit, no drift
+
+- Production `74ff9d4`, `dpl_HHsoeTDXVxGoZFbAg5CZ7vdQ8z6L` READY, `isRollbackCandidate: true`; default branch at `74ff9d4`.
+- Health: transactions `db`, contacts `db`, listings `mls`, homeMetrics `real-only`, assistant `openai`/`no_credential`, actions `disabled`.
+- DB `br-bitter-cake-av7pmzth`: **11 migrations** (last `created_at` 1790138386822, hash `43217604…`); contacts 1 (Representation, 1 legacy note), activities 15, opportunities 1, transactions 2, parties 2 (0 linked), users 1 (`admin:active`), profiles 1, brokerage 1, MLS links 1, audit 195; `contact_notes`/`contact_needs` absent; no birthday columns.
+- Source: `0f765be` is a clean fast-forward of `74ff9d4`; dev head `02d7a73` is runtime-identical to it (empty diff on every runtime path). `0f765be` is the revision to deploy, not the dev head.
+
+## 2. Production safety branch — CREATED, RETAINED
+
+- **`br-patient-poetry-av0t6hrc`** — `contacts-v3-prod-safety-20261002T1538Z-from-production-fortmark-professional-profiles`.
+- Parent `br-bitter-cake-av7pmzth` at LSN **`0/2224F30`** (parent timestamp 2026-10-02T15:37:12Z); no compute; `ready`; taken at migration level 11.
+- Retained until the release has been stable and the operator approves deletion. Restore only for real data corruption, only by human decision (it discards later writes).
+
+## 3. Neon 17 rehearsal — RUN, PASS
+
+- Temporary branch `br-holy-fire-av8ft4sk`, **branched from the safety branch** (same LSN). Its `neondb_owner` password was reset **on that branch only** (Neon resets are branch-scoped), so the runner could connect without Production's credential ever entering this session; that throwaway credential died with the branch.
+- Canonical runner from a clean `0f765be` checkout: `npm run db:migrate` → **`migrations applied atomically (bookkeeping rows 11 -> 14, 3 new)`**, every post-check present, exit 0.
+- Verified on PG 17 with the real data shape: the 3 new bookkeeping rows equal the repository files (`b15ded1f…`, `9b8b0620…`, `0eaa72c9…`, journal times `1790743155894/…164664/…179789`); the first 11 rows unchanged; 5 new constraints validated; 3 enum types; 2 indexes; `contact_engagements` absent; **every legacy table byte-identical** (md5 over all rows before vs after: contacts [excluding the two new columns], activities, opportunities, transactions, parties, users, profiles, brokerage, audit); 0 notes, 0 needs, 0 birthdays (no backfill); contact still Representation; legacy note present; 0 linked parties.
+- Real services of each runtime against the migrated copy:
+  - **`74ff9d4`: PASS** — contacts page, snapshot, the Representation contact with its legacy note, 15 activities, timeline, both deals listed and opened (NULL contact link), global search by name and by address, Home metrics, plus a touch and an edit (writes on the copy only).
+  - **`0f765be`: PASS** — the same reads, plus: legacy note not duplicated, needs empty, no linked deals, the Representation selector offers the contact, note add → delete leaves a body-less tombstone, a need, Feb 29 set/clear; no audit row and no search result carries a note body or need value; stage unchanged.
+  - Two first-pass misses were harness errors, not product defects: an activity count read after the old-runtime run had added a touch (16 = 15 + 1), and a search call with the wrong signature. Re-checked correctly; both pass.
+- Audit-harness correction: the committed `scripts/audit/compat_old.mjs` search check passed only because the response echoes the query. It now requires a hit carrying the contact's id; re-run 20/20 (old) and 31/31 (new, now including search).
+- Rehearsal branch **deleted**; the slot is recovered.
+
+## 4. Final preflight (15:4xZ)
+
+Production still `74ff9d4`, 11 migrations, counts unchanged; safety branch ready; rehearsal passed; runner clean (`assertTransactionSafe` on all 14); no unexpected deployment.
+
+## 5. Production migration — OPERATOR STEP (pending)
+
+This session cannot run the canonical runner against Production without the Production connection string passing through the transcript (Vercel variables are write-only; Neon's tool returns the URL as text; a password reset on Production would rotate the live app's credential). The one-transaction SQL reproduction used for 0010 is excluded by this release's instruction not to touch bookkeeping by hand. As for 0009, the operator runs the canonical command on their own machine:
+
+```bash
+git fetch origin && git checkout --detach 0f765be && npm ci
+unset DATABASE_URL DATABASE_URL_UNPOOLED
+# Neon console › misty-cherry-08153356 › branch production/fortmark-professional-profiles (br-bitter-cake-av7pmzth)
+#   › Connect › Connection pooling OFF › copy the URL, then paste at the silent prompt:
+read -rs DATABASE_URL_UNPOOLED && export DATABASE_URL_UNPOOLED
+
+# 1. Target proof — MUST print 23deffc7e4e5, else STOP.
+node -e 'const h=new URL(process.env.DATABASE_URL_UNPOOLED).hostname.replace("-pooler","");console.log(require("crypto").createHash("sha256").update(h).digest("hex").slice(0,12))'
+
+# 2. Preflight (read-only). Expect { migrations: 11 } and { notes_absent: true }.
+node --input-type=module -e '
+import { Client } from "@neondatabase/serverless";
+const c = new Client({ connectionString: process.env.DATABASE_URL_UNPOOLED }); await c.connect();
+console.log((await c.query("select count(*)::int as migrations from drizzle.__drizzle_migrations")).rows[0]);
+console.log((await c.query("select to_regclass(\x27public.contact_notes\x27) is null as notes_absent")).rows[0]);
+await c.end();'
+
+# 3. Canonical migration. Expect "[migrate] migrations applied atomically (bookkeeping rows 11 -> 14, 3 new)", exit 0.
+npm run db:migrate
+
+unset DATABASE_URL_UNPOOLED
+```
+
+A non-zero exit means the transaction rolled back: re-run step 2 (it must still show 11), stop, report. Never hand-apply SQL. **Do not deploy until §6 passes.**
