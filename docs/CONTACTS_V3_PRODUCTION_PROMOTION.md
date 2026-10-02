@@ -286,3 +286,11 @@ unset DATABASE_URL_UNPOOLED
 ```
 
 A non-zero exit means the transaction rolled back: re-run step 2 (it must still show 11), stop, report. Never hand-apply SQL. **Do not deploy until §6 passes.**
+
+## 6. Cloud-only credential attempt (2026-10-02, 16:0xZ) — SECURE CREDENTIAL INJECTION UNAVAILABLE
+
+- The runner reads **`DATABASE_URL_UNPOOLED`** (preferred for DDL), falling back to `DATABASE_URL` (`scripts/migrate.mjs`, `lib/db/client.ts`).
+- Existing injected secret: neither variable is set in this cloud container.
+- Vercel CLI pull: not run. The session's Vercel linkage defaults to a different project; the session's permission policy declined further credential exploration, and the step was stopped there. Separately, the repository records that the Neon integration created these variables as Vercel *sensitive* (write-only), so a pull would not return their values.
+- Neon connection-string tool: not used — it returns the URL into the transcript.
+- No credential was obtained, printed, written or reset. **Production unchanged:** runtime `74ff9d4`, 11 migrations, counts as §1. Safety branch `br-patient-poetry-av0t6hrc` retained. Rehearsal evidence (§3) stands.
