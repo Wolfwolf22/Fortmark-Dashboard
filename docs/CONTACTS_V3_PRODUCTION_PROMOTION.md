@@ -267,8 +267,9 @@ unset DATABASE_URL DATABASE_URL_UNPOOLED
 #   › Connect › Connection pooling OFF › copy the URL, then paste at the silent prompt:
 read -rs DATABASE_URL_UNPOOLED && export DATABASE_URL_UNPOOLED
 
-# 1. Target proof — MUST print 23deffc7e4e5, else STOP.
-node -e 'const h=new URL(process.env.DATABASE_URL_UNPOOLED).hostname.replace("-pooler","");console.log(require("crypto").createHash("sha256").update(h).digest("hex").slice(0,12))'
+# 1. Target proof — MUST print 23deffc7e4e5 (Production's direct host), else STOP.
+#    A pooled URL prints something else on purpose: the migration must use the direct connection.
+node -e 'const h=new URL(process.env.DATABASE_URL_UNPOOLED).hostname;console.log(require("crypto").createHash("sha256").update(h).digest("hex").slice(0,12))'
 
 # 2. Preflight (read-only). Expect { migrations: 11 } and { notes_absent: true }.
 node --input-type=module -e '
