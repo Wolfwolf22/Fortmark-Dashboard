@@ -294,3 +294,11 @@ A non-zero exit means the transaction rolled back: re-run step 2 (it must still 
 - Vercel CLI pull: not run. The session's Vercel linkage defaults to a different project; the session's permission policy declined further credential exploration, and the step was stopped there. Separately, the repository records that the Neon integration created these variables as Vercel *sensitive* (write-only), so a pull would not return their values.
 - Neon connection-string tool: not used — it returns the URL into the transcript.
 - No credential was obtained, printed, written or reset. **Production unchanged:** runtime `74ff9d4`, 11 migrations, counts as §1. Safety branch `br-patient-poetry-av0t6hrc` retained. Rehearsal evidence (§3) stands.
+
+## 7. Cloud execution attempt (2026-10-03) — BLOCKED BEFORE MIGRATION
+
+- `DATABASE_URL_UNPOOLED` was **present** in the cloud container (checked for presence only; value never read, printed or written).
+- Step 1, the host-fingerprint target proof (a hash of the hostname compared against `23deffc7e4e5`, printing only MATCH/MISMATCH), was **refused by the session's permission policy** (classified as a Production deploy action). Without the target proof the runbook does not allow the migration, so it stopped there.
+- Read-only checks that did run: the Production branch `claude/fortmark-dashboard-build-v39u96` is still `74ff9d4`; `0f765be` is a clean fast-forward of it. The session's Vercel connection is scoped to a different project (`i-dx-server`), so the deployment and logs of `fortmark-dashboard` were **not verified** from here.
+- **Nothing was migrated, pushed to Production or deployed.** Production stays `74ff9d4` on 11 migrations as recorded in §1. Safety branch `br-patient-poetry-av0t6hrc` **retained**. M4 **deferred**.
+- Next step: the operator runs §5 on their own machine, or grants this session permission for the fingerprint check, the preflight and `npm run db:migrate`.
