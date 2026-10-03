@@ -302,3 +302,31 @@ A non-zero exit means the transaction rolled back: re-run step 2 (it must still 
 - Read-only checks that did run: the Production branch `claude/fortmark-dashboard-build-v39u96` is still `74ff9d4`; `0f765be` is a clean fast-forward of it. The session's Vercel connection is scoped to a different project (`i-dx-server`), so the deployment and logs of `fortmark-dashboard` were **not verified** from here.
 - **Nothing was migrated, pushed to Production or deployed.** Production stays `74ff9d4` on 11 migrations as recorded in §1. Safety branch `br-patient-poetry-av0t6hrc` **retained**. M4 **deferred**.
 - Next step: the operator runs §5 on their own machine, or grants this session permission for the fingerprint check, the preflight and `npm run db:migrate`.
+
+## 8. Production execution (2026-10-03, manual permission mode) — CONTACTS V3 LIVE
+
+Each step run with the operator's explicit approval. The credential was read from the process environment only; its value was never printed, written or passed as an argument.
+
+| Step | Result |
+|---|---|
+| Target proof | host fingerprint **MATCH** (`23deffc7e4e5`) |
+| Preflight (read-only transaction) | Production branch `74ff9d4`; health `74ff9d4`, sources unchanged; **11** migrations (last `43217604…`); V3 objects absent; counts as §1; legacy-table md5 fingerprints recorded; safety branch `br-patient-poetry-av0t6hrc` `ready` (LSN `0/2224F30`) |
+| Migration | `npm run db:migrate` (canonical runner) → exit 0, **`migrations applied atomically (bookkeeping rows 11 -> 14, 3 new)`** |
+| Schema | 14 rows; first 11 unchanged; 0011 `b15ded1f`, 0012 `9b8b0620`, 0013 `0eaa72c9` each recorded once; `contact_notes`, `contact_needs`, `birthday_month/day`; 3 enum types; 2 indexes; 5 CHECKs validated; 6 FKs (3 per new table, as in the files); `contact_engagements` absent; no M5 unique constraint |
+| Data integrity | md5 of all 9 legacy tables identical before/after; counts unchanged; contact still Representation; legacy note present; 2 undated opportunity deals; 0 linked parties; 0 notes, 0 needs, 0 birthdays (no backfill) |
+| Old runtime on 0013 | `74ff9d4` health `ok`; protected pages 307 → sign-in; protected APIs 401 `no-store`; no 5xx |
+| Fast-forward | plain push `74ff9d4..0f765be` to `claude/fortmark-dashboard-build-v39u96` (no force, no merge) |
+| Deployment | **`dpl_BxtRQgSg6GSpwni8Hkz9aTS59BgE`**, `0f765be`, READY (live ~75 s after push, 2026-10-03 ~20:28Z) |
+| Health | revision `0f765be`; contacts `db`, transactions `db`, listings `mls`, homeMetrics `real-only`, assistant `openai`/`no_credential` (unchanged), actions `disabled` |
+| Security (anonymous) | protected pages 307 → sign-in; all Contacts, Notes, Needs, Activities, Timeline, linked-deal, eligible (Representation selector), Transactions, Search, Metrics APIs 401 `no-store`, body `{"error":"Unauthorized"}`; anonymous POSTs 401 |
+| Contacts redirect | `/dashboard/leads?stage=representation` → **307** → `/dashboard/contacts?stage=representation` (query kept); then sign-in; 2 hops, no loop |
+| Transactions fix | the 2 undated opportunity deals are intact; the list itself is confirmed in the signed-in smoke (rehearsal already proved the service returns them on this data) |
+| M4 | `contact_engagements` absent; no engagement Blob variable referenced by the runtime; only the warning/acknowledgement component |
+| Logs (`fortmark-dashboard`, production, 30 min) | **CLEAN** — no 5xx, no error/warning-level entries; 4xx are only the anonymous probes above |
+| Postcheck (read-only) | migrations 14; contacts 1, notes 0, needs 0, activities 15, opportunities 1, transactions 2, parties 2, users 1, profiles 1, brokerage 1, MLS links 1, audit 195 |
+
+- **Rollback:** not required. Application rollback target stays `dpl_HHsoeTDXVxGoZFbAg5CZ7vdQ8z6L` (valid on schema 0013).
+- **Safety branch:** `br-patient-poetry-av0t6hrc` **retained** until the signed-in smoke passes, logs are reviewed after normal use, and the operator approves deletion.
+- **Environment:** unchanged. **AI / MLS:** unchanged. **M4:** deferred.
+- **Cloud database secret:** no longer needed; the operator removes `DATABASE_URL_UNPOOLED` from the cloud environment.
+- **Signed-in human smoke (§11):** PENDING (operator).
