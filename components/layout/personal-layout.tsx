@@ -26,7 +26,7 @@ export function PersonalLayout({ownerId,clerkUserId,children}:{ownerId:string|nu
   },[ownerId]);
   useEffect(()=>{if(changed){storage?.invalidate();connectLayoutStorage(null);setLocalWorkspaceOwner(null);useAiStore.setState({threads:[],activeId:null});}},[changed,storage]);
   if(changed)return <div className="p-8"><p>Your sign-in changed.</p><a href="https://app.fortmark.net/dashboard" className="underline">Reload your Dashboard</a></div>;
-  if(!isLoaded)return <p className="p-8" role="status">Verifying your FortMark account…</p>;
+  if(!isLoaded)return <p className="p-8" role="status">Verifying your FortMark account...</p>;
   if(!ownerId)return <div className="p-8">Your personal workspace is not available yet. Please reload Dashboard to finish setting up your account.</div>;
   return storage?<LayoutStatus storage={storage}>{children}</LayoutStatus>:<p className="p-8" role="status">Loading your workspaceâ€¦</p>;
 }
