@@ -5,11 +5,11 @@ const name = z.string().trim().min(1).max(120);
 const longitude = z.number().finite().min(-180).max(180);
 const latitude = z.number().finite().min(-90).max(90);
 const position = z.tuple([longitude, latitude]);
-const ring = z.array(position).min(4).max(2000 + 1);
-const polygonCoordinates = z.array(ring).min(1).max(2000 / 3);
+const ring = z.array(position).min(4).max(200 + 1);
+const polygonCoordinates = z.array(ring).min(1).max(200 / 3);
 const geometry = z.discriminatedUnion('type', [
   z.object({ type: z.literal('Polygon'), coordinates: polygonCoordinates }).strict(),
-  z.object({ type: z.literal('MultiPolygon'), coordinates: z.array(polygonCoordinates).min(1).max(2000 / 3) }).strict(),
+  z.object({ type: z.literal('MultiPolygon'), coordinates: z.array(polygonCoordinates).min(1).max(200 / 3) }).strict(),
 ]);
 
 
