@@ -34,7 +34,9 @@
     "certify:f2b": "playwright test --project=setup --project=certification e2e/f2b-certification.spec.ts",
     "certify:f2b:expiry": "playwright test --project=setup --project=certification e2e/expiry.spec.ts",
     "test:shell": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_shell.ts",
-    "test:workspaces": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_workspaces.ts"
+    "test:workspaces": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_workspaces.ts",
+    "prebuild": "node scripts/clerk-loader-patch.mjs",
+    "test:clerk-loader": "node scripts/test-clerk-loader.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

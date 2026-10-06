@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createRequire} from 'node:module';
+import vm from 'node:vm';
+import {patchLoader} from './clerk-loader-patch.mjs';
+const require=createRequire(import.meta.url);
+const source=readFileSync(require.resolve('@clerk/shared/loadClerkJsScript'),'utf8').replace(/\r\n/g,'\n');
+const patched=patchLoader(source);assert.equal(patchLoader(patched),patched);
+const start=patched.indexOf('function waitForPredicateWithTimeout('),end=patched.indexOf('\nfunction setClerkJSLoadingErrorPackageName',start);
+const wait=vm.runInNewContext(patched.slice(start,end)+';waitForPredicateWithTimeout',{setTimeout,clearTimeout,setInterval,clearInterval});
+assert.equal(await wait(1000,()=>true,new Error('timeout')),null);
+let ready=false;setTimeout(()=>ready=true,5);assert.equal(await wait(1000,()=>ready,new Error('timeout')),null);
+await assert.rejects(wait(5,()=>false,new Error('timeout')),/timeout/);
+assert.throws(()=>patchLoader('unsupported'),/Review/);
+console.log('Clerk cached-script readiness, deferred readiness, timeout and idempotence checks passed.');
