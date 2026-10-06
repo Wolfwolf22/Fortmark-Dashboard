@@ -21,6 +21,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   smallint,
   text,
   timestamp,
@@ -1044,3 +1045,12 @@ export const mlsMemberLinks = pgTable(
 );
 
 export type MlsMemberLinkRow = typeof mlsMemberLinks.$inferSelect;
+
+/** Private preferences, keyed by the verified Dashboard identity. No role override. */
+export const personalWorkspaces = pgTable("personal_workspaces", {
+  ownerUserId: uuid("owner_user_id").notNull().references(()=>dashboardUsers.id,{onDelete:"cascade"}),
+  namespace:text("namespace").notNull(),
+  data:jsonb("data").$type<Record<string,string>>().notNull().default({}),
+  revision:integer("revision").notNull().default(1),
+  updatedAt:timestamp("updated_at",{withTimezone:true}).notNull().defaultNow(),
+},t=>[primaryKey({columns:[t.ownerUserId,t.namespace]})]);

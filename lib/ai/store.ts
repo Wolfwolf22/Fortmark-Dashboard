@@ -6,7 +6,8 @@
  * return, so swapping this for an API is a one-file change.
  */
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
+import { accountLocalStorage } from "../workspaces/account-local";
 import { ChatMessage, ChatRole, ChatThread } from "./types";
 
 /** Thread titles come from the first user message, trimmed to a line. */
@@ -157,6 +158,8 @@ export const useAiStore = create<AiState>()(
     }),
     {
       name: "fm.ai.threads.v1",
+      storage: createJSONStorage(()=>accountLocalStorage),
+      skipHydration: true,
       partialize: (s) => ({ threads: s.threads, activeId: s.activeId }),
       onRehydrateStorage: () => (state) => {
         // Continue the id sequence past anything already on disk, so a

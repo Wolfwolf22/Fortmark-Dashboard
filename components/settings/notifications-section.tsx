@@ -6,6 +6,7 @@
  * cause a hydration mismatch.
  */
 import { useEffect, useState } from "react";
+import { getPersonalStorage } from "@/lib/workspaces/personal-storage";
 import {
   Card,
   CardContent,
@@ -17,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 
-const STORAGE_KEY = "fm.settings.notifications.v1";
+const STORAGE_KEY = "notifications";
 
 type NotificationKey =
   | "dealMilestones"
@@ -66,7 +67,7 @@ const ROWS: { key: NotificationKey; label: string; description: string }[] = [
 
 function readStored(): NotificationPrefs {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = getPersonalStorage().getItem(STORAGE_KEY);
     if (!raw) return DEFAULTS;
     const parsed = JSON.parse(raw) as Partial<Record<string, unknown>>;
     const next = { ...DEFAULTS };
@@ -91,7 +92,7 @@ export function NotificationsSection() {
   useEffect(() => {
     if (!mounted) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
+      getPersonalStorage().setItem(STORAGE_KEY, JSON.stringify(prefs));
     } catch {
       // Storage unavailable — preferences hold for this visit only.
     }
@@ -102,7 +103,7 @@ export function NotificationsSection() {
       <CardHeader>
         <CardTitle>Notifications</CardTitle>
         <CardDescription>
-          Choose what reaches you. Preferences are stored on this device.
+          Choose what reaches you. Preferences are saved to your account.
         </CardDescription>
       </CardHeader>
       <CardContent>

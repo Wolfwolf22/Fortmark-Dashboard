@@ -626,7 +626,7 @@ const edit = (actor: Actor, patch: Record<string, unknown>, opts: { failOn?: unk
   const adapter = strip(src("lib/data/adapters/leads.ts"));
   check("adapter: a read that got no answer is retried once; a write never is", adapter.includes("async function fetchOnce") && adapter.includes("if (!read) return send();") && adapter.includes("first.status !== 502 && first.status !== 504") && adapter.includes("init?.method === undefined || init.method === \"GET\""));
   check("adapter: only the two name-search POSTs (contacts list, eligible contacts) are declared reads", (adapter.match(/read: true/g) ?? []).length === 2);
-  check("the only migrations after Leads V2 are Contacts V3's three additive ones", (() => { const j = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] }; return j.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs"; })());
+  check("later migrations are the approved additive contact and personal workspace tables", (() => { const j = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] }; return j.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces"; })());
 }
 
 console.log(`\n${passed}/${passed + failures.length} Leads V2 checks passed`);

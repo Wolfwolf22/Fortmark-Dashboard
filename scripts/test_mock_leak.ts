@@ -43,7 +43,7 @@ function check(name: string, condition: boolean): void {
 
 /** Source with comments stripped, so a sentence about a rule cannot satisfy it. */
 function code(path: string): string {
-  return readFileSync(path, "utf8")
+  return readFileSync(path, "utf8").replace(/\r\n/g, "\n")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
 }

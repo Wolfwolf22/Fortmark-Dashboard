@@ -1,59 +1,23 @@
 "use client";
-
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
-import { DateRangePreset } from "@/lib/data/types";
+import type { DateRangePreset } from "@/lib/data/types";
 import { DEFAULT_WIDGET_ORDER, type WidgetId } from "./widget-order";
-
-// The order lives in a dependency-free module so tests can import it under
-// plain Node; re-exported here so existing consumers are unaffected.
+import { layoutSchema } from "../workspaces/contract";
 export { DEFAULT_WIDGET_ORDER } from "./widget-order";
 export type { WidgetId } from "./widget-order";
-
 interface LayoutState {
-  widgetOrder: WidgetId[];
-  setWidgetOrder: (order: WidgetId[]) => void;
-  resetLayout: () => void;
-  /** Per-widget period override; null = follow the global selector. */
-  widgetPeriods: Partial<Record<WidgetId, DateRangePreset | null>>;
-  setWidgetPeriod: (id: WidgetId, preset: DateRangePreset | null) => void;
+  widgetOrder:WidgetId[];widgetPeriods:Partial<Record<WidgetId,DateRangePreset|null>>;
+  setWidgetOrder:(order:WidgetId[])=>void;resetLayout:()=>void;setWidgetPeriod:(id:WidgetId,preset:DateRangePreset|null)=>void;
 }
-
-export const useLayoutStore = create<LayoutState>()(
-  persist(
-    (set) => ({
-      widgetOrder: [...DEFAULT_WIDGET_ORDER],
-      setWidgetOrder: (widgetOrder) => set({ widgetOrder }),
-      resetLayout: () =>
-        set({ widgetOrder: [...DEFAULT_WIDGET_ORDER], widgetPeriods: {} }),
-      widgetPeriods: {},
-      setWidgetPeriod: (id, preset) =>
-        set((s) => ({ widgetPeriods: { ...s.widgetPeriods, [id]: preset } })),
-    }),
-    {
-      // v3: Release E1 replaced four KPI cards with the daily brief and moved
-      // "Needs attention" to the top. `merge` below appends unknown ids at the
-      // END, so a saved v2 order would have kept attention in last place
-      // forever for anyone who had already loaded the dashboard — which is the
-      // single thing this release set out to fix. A new key retires them.
-      // v4: the Home redesign moved the live MLS module up beside the working
-      // modules and re-spanned the grid for the top-bar shell. A saved v3
-      // order would keep the listing card pinned last, so a new key again.
-      name: "fm.dashboard.layout.v4",
-      merge: (persisted, current) => {
-        // Tolerate widget ids added/removed between versions.
-        const p = persisted as Partial<LayoutState> | undefined;
-        const saved = (p?.widgetOrder ?? []).filter((id): id is WidgetId =>
-          (DEFAULT_WIDGET_ORDER as readonly string[]).includes(id)
-        );
-        const missing = DEFAULT_WIDGET_ORDER.filter((id) => !saved.includes(id));
-        return {
-          ...current,
-          ...p,
-          widgetOrder: [...saved, ...missing],
-          widgetPeriods: p?.widgetPeriods ?? {},
-        };
-      },
-    }
-  )
-);
+type LayoutData=Pick<LayoutState,'widgetOrder'|'widgetPeriods'>;
+let storage:Pick<Storage,'setItem'>|null=null;
+const defaults=():LayoutData=>({widgetOrder:[...DEFAULT_WIDGET_ORDER],widgetPeriods:{}});
+export function connectLayoutStorage(next:Pick<Storage,'getItem'|'setItem'>|null){
+  storage=next;let value=defaults();
+  if(next){try{const raw=next.getItem('layout');if(raw){const parsed=layoutSchema.parse(JSON.parse(raw));value={...parsed,widgetOrder:[...parsed.widgetOrder,...DEFAULT_WIDGET_ORDER.filter(id=>!parsed.widgetOrder.includes(id))]};}}catch{/* Invalid data never replaces the safe default. */}}
+  useLayoutStore.setState(value);
+}
+export const useLayoutStore=create<LayoutState>((set,get)=>{
+  const update=(value:LayoutData)=>{if(!storage)return;try{storage.setItem('layout',JSON.stringify(value));set(value);}catch{/* The account save status explains the blocked write. */}};
+  return {...defaults(),setWidgetOrder:widgetOrder=>update({widgetOrder,widgetPeriods:get().widgetPeriods}),resetLayout:()=>update(defaults()),setWidgetPeriod:(id,preset)=>update({widgetOrder:get().widgetOrder,widgetPeriods:{...get().widgetPeriods,[id]:preset}})};
+});

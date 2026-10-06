@@ -18,7 +18,7 @@ export default function ToolsPage() {
 
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         <a
-          href="https://fm-competitive-edge.vercel.app/"
+          href="https://app.fortmark.net/competitive-edge"
           target="_blank"
           rel="noopener noreferrer"
           aria-label="Open FortMark Realty Competitive Edge (opens in a new tab)"
@@ -47,7 +47,7 @@ export default function ToolsPage() {
             <div className="mt-auto flex items-center justify-between gap-3 border-t border-border pt-5 text-sm font-semibold">
               <span>Open Competitive Edge</span><ArrowUpRight aria-hidden="true" className="h-4 w-4 shrink-0" />
             </div>
-            <p className="text-xs leading-5 text-muted-foreground">Opens in a new tab. Competitive Edge access is required.</p>
+            <p className="text-xs leading-5 text-muted-foreground">Opens in a new tab with your FortMark account.</p>
           </div>
         </a>
       </div>

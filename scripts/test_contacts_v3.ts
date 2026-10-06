@@ -55,7 +55,7 @@ function check(name: string, condition: boolean): void {
     console.log(`FAIL  ${name}`);
   }
 }
-const src = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
+const src = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 
 // ===================================================================================
@@ -678,7 +678,7 @@ function readMigrations(): string {
 
   // No M4, no M5.
   const journal = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] };
-  check("migrations: exactly M1–M3 were added — no engagement table, no unique link index", journal.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs" && !/engagement/i.test(readMigrations()) && !/CREATE UNIQUE INDEX/i.test(readMigrations()));
+  check("migrations: contact migrations remain additive alongside personal workspaces", journal.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces" && !/engagement/i.test(readMigrations()) && !/CREATE UNIQUE INDEX/i.test(readMigrations()));
   check("migrations: additive only — nothing dropped or altered destructively", !/DROP\s+(TABLE|COLUMN|TYPE)/i.test(readMigrations()) && !/ALTER TABLE "[a-z_]+" (DROP|ALTER COLUMN)/i.test(readMigrations()) && !/ALTER TYPE/i.test(readMigrations()));
   check("migrations: the contact stage enum is untouched", !/contact_stage/.test(readMigrations()));
   check("migrations: nothing backfills a legacy note or a legacy transaction", !/(^|-->\s*statement-breakpoint\s*)\s*(UPDATE|INSERT)\s/i.test(readMigrations()));
