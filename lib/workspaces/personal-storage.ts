@@ -13,7 +13,7 @@ export class PersonalStorage implements Storage {
   private timer:ReturnType<typeof setTimeout>|undefined;
   private state:SaveState={phase:'loading',message:'Loading your workspace…'};
   private listeners=new Set<()=>void>();
-  constructor(readonly accountId:string,private namespace:string,private allowedKeys:readonly string[],private endpoint:string,private transport:typeof fetch=fetch){}
+  constructor(readonly accountId:string,private namespace:string,private allowedKeys:readonly string[],private endpoint:string,private transport:typeof fetch=(...args)=>fetch(...args)){}
   getSnapshot=()=>this.state;
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn);};};
   private publish(phase:SavePhase,message:string){this.state={phase,message};this.listeners.forEach(fn=>fn());}
