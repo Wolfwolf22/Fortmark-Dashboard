@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useAuth } from '@clerk/nextjs';
 import { PersonalStorage, activatePersonalStorage } from '@/lib/workspaces/personal-storage';
 import { connectLayoutStorage } from '@/lib/stores/layout';
@@ -8,11 +8,9 @@ import { useAiStore } from '@/lib/ai/store';
 import { useDateRange } from '@/lib/stores/date-range';
 import { apiPath } from '@/lib/routes';
 
-export function PersonalLayout({ownerId,children}:{ownerId:string|null;children:ReactNode}){
+export function PersonalLayout({ownerId,clerkUserId,children}:{ownerId:string|null;clerkUserId:string;children:ReactNode}){
   const {userId,isLoaded,isSignedIn}=useAuth();
-  const firstUser=useRef<string|null|undefined>(undefined);
-  if(isLoaded&&firstUser.current===undefined)firstUser.current=userId;
-  const changed=isLoaded&&(!isSignedIn||firstUser.current!==userId);
+  const changed=isLoaded&&(!isSignedIn||clerkUserId!==userId);
   const [storage,setStorage]=useState<PersonalStorage|null>(null);
   useEffect(()=>{
     if(!ownerId)return;
@@ -28,6 +26,7 @@ export function PersonalLayout({ownerId,children}:{ownerId:string|null;children:
   },[ownerId]);
   useEffect(()=>{if(changed){storage?.invalidate();connectLayoutStorage(null);setLocalWorkspaceOwner(null);useAiStore.setState({threads:[],activeId:null});}},[changed,storage]);
   if(changed)return <div className="p-8"><p>Your sign-in changed.</p><a href="https://app.fortmark.net/dashboard" className="underline">Reload your Dashboard</a></div>;
+  if(!isLoaded)return <p className="p-8" role="status">Verifying your FortMark account…</p>;
   if(!ownerId)return <div className="p-8">Your personal workspace is not available yet. Please reload Dashboard to finish setting up your account.</div>;
   return storage?<LayoutStatus storage={storage}>{children}</LayoutStatus>:<p className="p-8" role="status">Loading your workspaceâ€¦</p>;
 }

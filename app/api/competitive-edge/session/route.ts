@@ -11,5 +11,5 @@ export async function GET() {
   if(!actor.ok)return NextResponse.json({error:"Workspace identity unavailable"},{status:actor.reason==="no_identity"?403:503,headers});
   const session=await getSession();
   if(!session || session.user.id!==verified.clerkUserId)return NextResponse.json({error:"Sign in required"},{status:401,headers});
-  return NextResponse.json({userId:actor.actor.userId,displayName:session.user.name},{headers});
+  return NextResponse.json({userId:actor.actor.userId,clerkUserId:verified.clerkUserId,displayName:session.user.name},{headers});
 }

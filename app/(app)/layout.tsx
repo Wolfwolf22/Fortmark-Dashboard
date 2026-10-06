@@ -67,7 +67,7 @@ export default async function AppLayout({
   const actor = await resolveActor(session.user.id, profileDatabaseEnabled());
 
   return (
-    <PersonalLayout key={actor.ok?actor.actor.userId:'no-identity'} ownerId={actor.ok?actor.actor.userId:null}><AppShell user={toPublicUser(session.user)} profile={profile}>
+    <PersonalLayout key={actor.ok?actor.actor.userId:'no-identity'} ownerId={actor.ok?actor.actor.userId:null} clerkUserId={session.user.id}><AppShell user={toPublicUser(session.user)} profile={profile}>
       {children}
     </AppShell></PersonalLayout>
   );
