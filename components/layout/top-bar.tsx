@@ -122,7 +122,7 @@ function MobileNav({ pathname }: { pathname: string }) {
   }, [pathname]);
 
   return (
-    <nav aria-label="Primary" className="border-t border-white/10 lg:hidden">
+    <nav aria-label="Primary" className="border-t border-white/10 xl:hidden">
       <div
         ref={strip}
         className="flex gap-1.5 overflow-x-auto px-4 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -182,7 +182,7 @@ export function TopBar({ profile }: { profile: ShellProfile }) {
           />
         </Link>
 
-        <nav aria-label="Primary" className="ml-2 hidden items-center gap-1.5 lg:flex xl:ml-4">
+        <nav aria-label="Primary" className="ml-2 hidden items-center gap-1.5 xl:ml-4 xl:flex">
           {PRIMARY_NAV.map((item) => (
             <NavTab key={item.href} item={item} pathname={pathname} />
           ))}

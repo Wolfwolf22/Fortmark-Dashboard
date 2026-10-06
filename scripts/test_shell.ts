@@ -21,7 +21,7 @@ const src = (p: string) => readFileSync(p, "utf8");
 
 // --- One navigation definition ------------------------------------------------------
 check("the brokerage core leads the bar in order",
-  PRIMARY_NAV.map((i) => i.label).join("|") === "Home|Listings|Contacts|Transactions");
+  PRIMARY_NAV.map((i) => i.label).join("|") === "Home|Listings|Contacts|Transactions|Tools");
 check("AI is secondary and last", SECONDARY_NAV.some((i) => i.label === "AI") &&
   NAV_ITEMS[NAV_ITEMS.length - 1].label === "AI");
 check("every section is either primary or secondary, once",
@@ -56,8 +56,8 @@ check("no rail padding is left behind", !/pl-16|pl-60/.test(shell));
 check("content is wide but bounded", shell.includes("max-w-[1520px]") && bar.includes("max-w-[1520px]"));
 check("the bar is always black with the dark token scope", bar.includes('className="dark sticky top-0'));
 check("phones get a scrolling section strip, not a hamburger",
-  bar.includes("function MobileNav") && bar.includes("overflow-x-auto") && bar.includes("lg:hidden"));
-check("the desktop tabs appear only where they fit", bar.includes('className="ml-2 hidden items-center gap-1.5 lg:flex'));
+  bar.includes("function MobileNav") && bar.includes("overflow-x-auto") && bar.includes("xl:hidden"));
+check("the desktop tabs appear only where they fit", bar.includes('className="ml-2 hidden items-center gap-1.5 xl:ml-4 xl:flex'));
 check("search opens the one palette from both controls",
   (bar.match(/onClick=\{\(\) => setCommandOpen\(true\)\}/g) ?? []).length === 2);
 check("no notification count is invented", !/unread\s*=\s*\d/.test(src("components/layout/notifications-bell.tsx")));

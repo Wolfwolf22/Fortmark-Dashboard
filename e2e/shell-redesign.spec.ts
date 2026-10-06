@@ -53,7 +53,7 @@ test("shell: top navigation, no rail", async () => {
   const header = page.locator("header").first();
   await expect(header).toBeVisible();
   const primary = header.getByRole("navigation", { name: "Primary" }).first();
-  for (const label of ["Home", "Listings", "Leads", "Transactions"]) {
+  for (const label of ["Home", "Listings", "Contacts", "Transactions", "Tools"]) {
     await expect(primary.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
   await expect(primary.getByRole("link", { name: "Home", exact: true })).toHaveAttribute("aria-current", "page");
@@ -93,7 +93,7 @@ for (const [w, h] of [[1440, 900], [1280, 800], [430, 932], [390, 844]] as const
     });
     expect(fits).toBe(true);
     const header = await page.locator("header").first().boundingBox();
-    if (w >= 1024) expect(header!.height).toBeLessThanOrEqual(72); // one row: no wrap
+    if (w >= 1280) expect(header!.height).toBeLessThanOrEqual(72); // one row: no wrap
     await page.screenshot({ path: `${SHOTS}/home-${w}.png`, fullPage: w < 1024 });
     await page.screenshot({ path: `${SHOTS}/home-${w}-fold.png` });
   });

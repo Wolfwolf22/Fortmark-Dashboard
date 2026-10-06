@@ -4,6 +4,7 @@ import {
   FileText,
   Home,
   LineChart,
+  LayoutGrid,
   MessageSquare,
   Sparkles,
   Users,
@@ -28,7 +29,7 @@ export interface NavItem {
  * page title all read from here — there is no second list to drift.
  *
  * Order is the product's argument: the brokerage core first (Home, Listings,
- * Leads, Transactions) — the four sections backed by live data. The rest sit
+ * Contacts, Transactions), followed by Tools for connected workspaces. The rest sit
  * behind "More": Reports, Calendar, Documents and Messages say plainly that
  * they are not connected yet, and AI is last because it is a layer inside the
  * operating system, not the product.
@@ -38,6 +39,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/listings", label: "Listings", icon: Building2, tier: "primary" },
   { href: "/contacts", label: "Contacts", icon: Users, tier: "primary" },
   { href: "/transactions", label: "Transactions", icon: Workflow, tier: "primary" },
+  { href: "/tools", label: "Tools", icon: LayoutGrid, tier: "primary" },
   { href: "/reports", label: "Reports", icon: LineChart, tier: "secondary" },
   { href: "/calendar", label: "Calendar", icon: CalendarDays, tier: "secondary" },
   { href: "/documents", label: "Documents", icon: FileText, tier: "secondary" },
