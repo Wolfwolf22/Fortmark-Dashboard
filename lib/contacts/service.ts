@@ -81,6 +81,7 @@ export type ServiceFailure =
   | "invalid_phone"
   | "invalid_note"
   | "invalid_need"
+  | "invalid_action"
   | "invalid_request"
   | "invalid_revision"
   | "request_conflict"
@@ -137,7 +138,7 @@ async function bundle(ctx: Pick<Ctx, "db" | "actor" | "viewerName">, rows: Conta
   const [opps, needs, names] = await Promise.all([
     db.select().from(contactOpportunities).where(inArray(contactOpportunities.contactId, ids)),
     db.select().from(contactNeeds).where(inArray(contactNeeds.contactId, ids)),
-    agentNames(db, Array.from(new Set(rows.map((r) => r.assignedAgentUserId)))),
+    agentNames(db, Array.from(new Set(rows.flatMap((r) => [r.assignedAgentUserId, ...(r.nextActionAssignedUserId ? [r.nextActionAssignedUserId] : [])])))),
   ]);
   // Profile name first (above). A contact the caller owns whose profile has
   // no name falls back to the caller's own name; anyone else's stays unnamed
@@ -152,6 +153,7 @@ async function bundle(ctx: Pick<Ctx, "db" | "actor" | "viewerName">, rows: Conta
       opportunities: opps.filter((o) => o.contactId === row.id),
       needs: needs.filter((n) => n.contactId === row.id),
       agentName: names.get(row.assignedAgentUserId),
+      nextActionAssigneeName: row.nextActionAssignedUserId ? names.get(row.nextActionAssignedUserId) : undefined,
       viewerId: ctx.actor.userId,
       includePrivateDetails,
     })
@@ -515,6 +517,8 @@ export async function logActivity(ctx: Ctx, id: string, input: ActivityInput, no
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
   const day = input.nextFollowUpAt ? businessDayKey(new Date(input.nextFollowUpAt)) : null;
+  const changesFollowUp = Boolean(input.nextFollowUpAt || input.completeFollowUp);
+  if (changesFollowUp && row.nextActionId) return { ok: false, reason: "conflict" };
   if (day && !checkFollowUpDay(day, now).ok) return { ok: false, reason: "invalid_date" };
   const occurredAt = input.occurredAt ? new Date(input.occurredAt) : now;
   if (!Number.isFinite(occurredAt.getTime()) || occurredAt > now) return { ok: false, reason: "invalid_date" };
@@ -533,7 +537,8 @@ export async function logActivity(ctx: Ctx, id: string, input: ActivityInput, no
     const result = await ctx.db.execute<{ id: string }>(sql`
       with locked as materialized (
         select id, next_follow_up_at from ${contacts}
-        where ${and(eq(contacts.id, id), visibleTo(ctx.actor))} for update
+        where ${and(eq(contacts.id, id), visibleTo(ctx.actor))}
+          and (${!changesFollowUp} or ${contacts.nextActionId} is null) for update
       ), changed as (
         update ${contacts} set
           last_contact_at = case when ${countsAsTouch} then greatest(last_contact_at, ${occurredAt.toISOString()}::timestamptz) else last_contact_at end,
@@ -552,7 +557,7 @@ export async function logActivity(ctx: Ctx, id: string, input: ActivityInput, no
           jsonb_build_object('contactId', ${id}::text, 'activity', ${input.kind}::text, 'followUp', ${follow.outcome})
         from activity cross join locked returning id
       ) select id from changed`);
-    if (!result.rows.length) return { ok: false, reason: "not_found" };
+    if (!result.rows.length) return { ok: false, reason: changesFollowUp ? "conflict" : "not_found" };
   } catch { return { ok: false, reason: "unavailable" }; }
   const updated = await getContact(ctx, id);
   return updated ? { ok: true, value: updated } : { ok: false, reason: "unavailable" };
@@ -593,6 +598,7 @@ export async function changeFollowUp(
   const row = rows[0];
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
+  if (row.nextActionId) return { ok: false, reason: "conflict" };
 
   if (change.action === "schedule" && !checkFollowUpDay(change.day, now).ok) {
     return { ok: false, reason: "invalid_date" };
@@ -603,7 +609,7 @@ export async function changeFollowUp(
     const result = await ctx.db.execute<{ outcome: FollowUpOutcome }>(sql`
       with locked as materialized (
         select id, next_follow_up_at from ${contacts}
-        where ${and(eq(contacts.id, id), visibleTo(ctx.actor))} for update
+        where ${and(eq(contacts.id, id), visibleTo(ctx.actor))} and ${contacts.nextActionId} is null for update
       ), decision as materialized (
         select id, ${follow.outcome} as outcome, ${follow.value} as value from locked
       ), changed as (
@@ -619,7 +625,7 @@ export async function changeFollowUp(
           || jsonb_build_object('followUp', decision.outcome)
         from changed join decision on changed.id = decision.id returning id
       ) select outcome from decision`);
-    if (!result.rows.length) return { ok: false, reason: "not_found" };
+    if (!result.rows.length) return { ok: false, reason: "conflict" };
     outcome = result.rows[0].outcome;
   } catch { return { ok: false, reason: "unavailable" }; }
   const updated = await getContact(ctx, row.id);
@@ -777,6 +783,8 @@ export async function getTimeline(ctx: Ctx, id: string, limit = 100): Promise<Se
     if (a.actorUserId) userIds.add(a.actorUserId);
     const to = a.safeMetadata?.toAgentUserId;
     if (typeof to === "string") userIds.add(to);
+    const actionAssignee = a.safeMetadata?.assigneeId;
+    if (typeof actionAssignee === "string") userIds.add(actionAssignee);
   }
   for (const e of followUps) if (e.actorUserId) userIds.add(e.actorUserId);
   for (const e of domainEvents) if (e.actorUserId) userIds.add(e.actorUserId);

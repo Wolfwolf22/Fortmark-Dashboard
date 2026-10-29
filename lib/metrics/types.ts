@@ -126,6 +126,13 @@ export interface AttentionItem {
   dueDate: string;
   /** Whole days from today. Negative when overdue. */
   daysAway: number;
+  /** Timed contact action details. Older reminders and deal deadlines omit them. */
+  actionKind?: import("../contacts/next-action.ts").NextActionKind;
+  purpose?: string;
+  assigneeName?: string;
+  dueAt?: string;
+  /** A timed action may be overdue earlier today, when daysAway is still zero. */
+  overdue?: boolean;
   href: string;
 }
 
@@ -143,6 +150,7 @@ export type ActivityKind =
   | "transaction_closed"
   | "contact_created"
   | "contact_stage_changed"
+  | "contact_task"
   | "contact_touch";
 
 /**

@@ -514,10 +514,10 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
 
   // Single source of truth for "due".
   check("Home's SQL bound comes from the shared rule, not a UTC end-of-day", metrics.includes("followUpDueBy(now)") && !/endOfToday|T23:59:59/.test(metrics));
-  check("Home's attention items are classified by the shared rule", /followUpStatus\(row\.nextFollowUpAt/.test(metrics) && !/daysUntil|dayKey/.test(metrics));
-  check("sample Home uses the same classifier", sampleMetrics.includes("isFollowUpDue(followUpStatus(l.nextFollowUpDate, at))") && !/nextFollowUpDate[^)]*slice\(0, 10\)/.test(sampleMetrics));
-  check("the Leads column classifies with the shared rule", table.includes("followUpStatus(lead.nextFollowUpDate)") && table.includes("isFollowUpDue(followUp)"));
-  check("the drawer classifies with the shared rule", drawer.includes("followUpStatus(lead?.nextFollowUpDate)") && drawer.includes("followUpLabel(followUp"));
+  check("Home's attention items use the shared timed-or-legacy rule", metrics.includes("effectiveFollowUpStatus(") && !/daysUntil|dayKey/.test(metrics));
+  check("sample Home uses the same timed-or-legacy classifier", sampleMetrics.includes("isFollowUpDue(effectiveFollowUpStatus(l, at))") && !/nextFollowUpDate[^)]*slice\(0, 10\)/.test(sampleMetrics));
+  check("the Leads column classifies with the shared rule", table.includes("effectiveFollowUpStatus(lead)") && table.includes("isFollowUpDue(followUp)"));
+  check("the drawer classifies with the shared rule", drawer.includes("effectiveFollowUpStatus(lead)") && drawer.includes("followUpLabel(followUp"));
   check("no component compares dates itself", !/new Date\([^)]*\)\s*[<>]=?\s*new Date|getTime\(\)\s*[<>]/.test(drawer) && !/dayKey|toISOString\(\)\.slice\(0, 10\)/.test(drawer + table));
   check("the states are named as the product names them", /"none" \| "overdue" \| "due_today" \| "future"/.test(followUp));
   check("the business timezone is one documented constant", /BUSINESS_TIME_ZONE = "America\/New_York"/.test(read("lib/metrics/business-day.ts")));
@@ -541,7 +541,7 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
   check("drawer: a Follow-up action opens Schedule / Save / Mark complete", drawer.includes('actionButton("followUp", "Follow-up")') && drawer.includes('{hasFollowUp ? "New date" : "Date"}') && drawer.includes("Save follow-up") && drawer.includes("Mark complete"));
   check("drawer: says a reminder is not contact", drawer.includes("A reminder only. It does not count as a touch."));
   check("drawer: Log a touch remains its own section", drawer.includes('id="log-touch-heading"') && drawer.includes("logTouch(lead.id"));
-  check("drawer: completion inside a touch still needs a follow-up and no new date", drawer.includes("const completing = !day && complete && hasFollowUp;"));
+  check("drawer: legacy completion inside a touch requires a reminder and cannot replace a structured action", drawer.includes("const completing = !lead.nextAction && !day && complete && hasFollowUp;"));
   check("drawer: 'Mark contacted today' keeps the follow-up", drawer.includes("The follow-up is kept."));
   check("drawer: no lone separator when there is no email or phone", drawer.includes("[lead.email, lead.phone].filter(Boolean)") && !/\{lead\.email\} · \{lead\.phone\}/.test(drawer));
   check("drawer: an unnamed stored agent reads 'Unnamed agent', never an id", drawer.includes("Unnamed agent") && !/assignedAgentId\}/.test(drawer));

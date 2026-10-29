@@ -225,3 +225,51 @@ changed/archived/restored a stage, checked the shared Home count, and inspected
 the editor at 390px and 320px with no horizontal overflow. Interactive samples
 allow only these changes in memory and reset on reload; live-data certification
 and deployment remain separate.
+
+## Next Action workspace — 2026-10-29
+
+Migration `0017_contact_next_action.sql` adds one pending structured action per
+contact: ID, type (call/email/text/meeting/custom), purpose, due instant and
+assigned dashboard user. The database enforces all-or-none fields, bounded
+purpose, a valid kind, a real user reference and the reminder-day mirror.
+Existing reminders remain unchanged until deliberately adopted into an action.
+Migrations 0015–0017 have been prepared locally; this work applies no live updates.
+
+The contact profile schedules and edits actions, records a required completion
+outcome with an optional successor in the same save, and records a reason when
+cancelled. Active assignment choices are the contact owner and administrators
+who already have access. Assignment grants no new contact visibility. If a
+chosen person becomes unavailable, the editor keeps the draft, refreshes the
+team list and requires a new explicit choice.
+
+Every mutation freezes the opening contact revision and pending action ID.
+Concurrent changes require explicit review; a completion/cancellation draft
+cannot be applied to a replacement action. The current action, day mirror,
+task history and content-free audit commit atomically. Completing or scheduling
+never changes last contact. An unavailable response causes shared reads to
+refresh, and no write is automatically retried. Legacy reminder and AI follow-up
+writes cannot overwrite a pending structured action, including same-day writes
+or races after preparation. A normal logged touch can still keep the action.
+
+Actions store an exact instant and display Eastern time. New or changed deadlines
+must be in the future and within 730 calendar days in the business timezone; an unchanged overdue time
+can be retained while editing another field. Nonexistent spring-forward times
+are refused; newly selected repeated fall-back times choose the earlier
+occurrence, with explicit guidance. Editing an unchanged local minute preserves
+the exact original instant, including seconds and a later repeated occurrence.
+
+The contact list, filters, snapshots and Home share timed overdue classification.
+An action earlier today is overdue even though its calendar-day difference is
+zero. Old reminders keep their day-based behavior. Home shows action type,
+purpose, assignee and time; completed future successors leave the due queue.
+Task outcomes stay in authorized contact history. Home's recent activity uses
+a task icon and controlled event titles rather than presenting them as calls.
+Visible Contacts and Home refresh time-sensitive state at minute boundaries,
+on return and at business midnight, while keeping editors' drafts.
+
+Verification covers 4,646 counted checks across the complete local project
+suite, plus its unnumbered personal-workspace suite. New coverage includes 92
+backend checks, 54 actual PostgreSQL cross-view checks, 30 UI/state checks and
+61 real-adapter checks. The isolated preview adds 10 next-action contract
+groups alongside its 11 existing groups. Browser verification uses synthetic,
+memory-only samples; this is separate from authenticated deployment testing.

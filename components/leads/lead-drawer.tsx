@@ -46,11 +46,13 @@ import {
   changeFollowUp,
   getLead,
   getLinkedTransactions,
+  getNextActionAssignees,
   LeadsError,
   logTouch,
   markContacted,
   updateContact,
   updateLeadStage,
+  updateNextAction,
   type ContactEdit,
   type TouchKind,
 } from "@/lib/data/adapters/leads";
@@ -58,7 +60,8 @@ import { useQuery } from "@/lib/data/hooks";
 import { Lead, LeadStage, LEAD_SOURCE_LABELS, LEAD_STAGES, LEAD_STAGE_LABELS, TRANSACTION_STAGE_LABELS, type TransactionStage } from "@/lib/data/types";
 import { cn, formatDate, formatRelative, initials } from "@/lib/utils";
 import { businessDayKey } from "@/lib/metrics/business-day";
-import { followUpLabel, followUpStatus, formatFollowUpDay, isFollowUpDue, noRecentTouch, NO_TOUCH_LABEL } from "@/lib/contacts/follow-up";
+import { effectiveFollowUpStatus, followUpLabel, formatFollowUpDay, isFollowUpDue, noRecentTouch, NO_TOUCH_LABEL } from "@/lib/contacts/follow-up";
+import { formatNextActionDueAt, type NextActionMutation } from "@/lib/contacts/next-action";
 import { allowedStageTransitions, canTransition, requiresEngagementNotice } from "@/lib/contacts/stages";
 import type { Birthday } from "@/lib/contacts/birthday";
 import { useUiStore } from "@/lib/stores/ui";
@@ -67,6 +70,7 @@ import { EngagementNotice } from "./engagement-notice";
 import { LeadBirthday } from "./lead-birthday";
 import { LeadEditForm } from "./lead-edit-form";
 import { ClientInfo } from "./client-info";
+import { NextActionView } from "./next-action";
 import type { ClientInfoSave } from "@/lib/contacts/client-info";
 import { LeadNeeds } from "./lead-needs";
 import { LeadNotes } from "./lead-notes";
@@ -193,6 +197,11 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
     const target = document.getElementById(stageFocusTarget === "archived" ? "lead-stage-restore" : "lead-stage-select");
     if (target) { target.focus(); setStageFocusTarget(null); }
   }, [stageFocusTarget, lead?.stage, saving, panel]);
+  useEffect(() => {
+    if (!lead?.nextAction || panel !== "followUp") return;
+    setPanel(null);
+    document.getElementById("lead-next-action-workspace")?.focus();
+  }, [lead?.nextAction?.id, panel]);
 
   // The direct follow-up control (no touch involved).
   const [followUpDay, setFollowUpDay] = useState("");
@@ -308,6 +317,21 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
     } finally { setSaving(false); }
   }
 
+  async function saveNextAction(input: NextActionMutation): Promise<boolean> {
+    if (!lead || saving) return false;
+    setSaving(true); setError(null); setNotice(null);
+    try {
+      const updated = await updateNextAction(lead.id, input);
+      if (!updated) return false;
+      return true;
+    } catch (error) {
+      refetch();
+      if (error instanceof LeadsError && (error.status === 409 || (error.status === 400 && error.code === "invalid_assignee"))) throw error;
+      setError(describe(error));
+      return false;
+    } finally { setSaving(false); }
+  }
+
   async function archive(to: LeadStage) {
     if (!lead || !canTransition(lead.stage, to)) return;
     const expectedStage = to === "archived" ? confirmArchiveFrom : lead.stage;
@@ -327,13 +351,14 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
     setNotice(to === "archived" ? "Contact archived." : "Contact restored to Lead.");
   }
 
-  const followUp = followUpStatus(lead?.nextFollowUpDate);
+  const followUp = effectiveFollowUpStatus(lead);
+  const hasStructuredAction = Boolean(lead?.nextAction);
   const quiet = lead ? noRecentTouch(lead.lastContactDate) : false;
   const hasFollowUp = followUp.state !== "none";
 
   async function saveFollowUp(e: FormEvent) {
     e.preventDefault();
-    if (!lead || !followUpDay) return;
+    if (!lead || lead.nextAction || !followUpDay) return;
     const day = followUpDay;
     const rescheduling = hasFollowUp;
     const ok = await run(() => changeFollowUp(lead.id, { action: "schedule", day }));
@@ -344,7 +369,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
   }
 
   async function completeCurrentFollowUp() {
-    if (!lead) return;
+    if (!lead || lead.nextAction) return;
     const ok = await run(() => changeFollowUp(lead.id, { action: "complete" }));
     if (ok) {
       setPanel(null);
@@ -360,8 +385,8 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
       setError("Add a short summary of the touch.");
       return;
     }
-    const day = nextDay || undefined;
-    const completing = !day && complete && hasFollowUp;
+    const day = !lead.nextAction ? nextDay || undefined : undefined;
+    const completing = !lead.nextAction && !day && complete && hasFollowUp;
     const ok = await run(() => logTouch(lead.id, { kind: touchKind, summary: text, nextFollowUpDay: day, completeFollowUp: completing }));
     if (!ok) return;
     setSummary("");
@@ -373,6 +398,8 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
         ? `Touch logged. Next follow-up set for ${formatFollowUpDay(day)}.`
         : completing
           ? "Touch logged. Follow-up marked complete."
+          : lead.nextAction
+            ? "Touch logged. The next action was kept."
           : hasFollowUp
             ? `Touch logged. Follow-up kept for ${formatFollowUpDay(followUp.day!)}.`
             : "Touch logged."
@@ -431,7 +458,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
               </Badge>
               <Badge variant="outline">{LEAD_SOURCE_LABELS[lead.source]}</Badge>
               {isFollowUpDue(followUp) && (
-                <StatusPill tone="warn">{followUp.state === "overdue" ? "Follow-up overdue" : "Follow-up due today"}</StatusPill>
+                <StatusPill tone="warn">{hasStructuredAction ? "Next action" : "Follow-up"} {followUp.state === "overdue" ? "overdue" : "due today"}</StatusPill>
               )}
               {quiet && <StatusPill tone="neutral">{NO_TOUCH_LABEL}</StatusPill>}
             </div>
@@ -470,7 +497,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
                 <div role="group" aria-label="Contact actions">
                   <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                     {actionButton("touch", "Log touch")}
-                    {actionButton("followUp", "Follow-up")}
+                    {!hasStructuredAction && actionButton("followUp", "Follow-up")}
                     {actionButton("stage", "Change stage")}
                     {actionButton("edit", "Edit contact")}
                   </div>
@@ -503,11 +530,11 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
                           autoFocus
                         />
                       </div>
-                      <div className="grid gap-1.5">
+                      {!hasStructuredAction && <div className="grid gap-1.5">
                         <Label htmlFor="lead-next-follow-up-day">{hasFollowUp ? "Also change the follow-up (optional)" : "Also set a follow-up (optional)"}</Label>
                         <Input id="lead-next-follow-up-day" type="date" min={businessToday()} value={nextDay} onChange={(e) => setNextDay(e.target.value)} disabled={saving} className="w-full sm:w-48" />
-                      </div>
-                      {hasFollowUp && (
+                      </div>}
+                      {hasFollowUp && !hasStructuredAction && (
                         <div className="flex items-center gap-2">
                           <Checkbox id="lead-complete-follow-up" checked={complete && !nextDay} onCheckedChange={(v) => setComplete(v === true)} disabled={saving || Boolean(nextDay)} />
                           <Label htmlFor="lead-complete-follow-up" className="font-normal">
@@ -516,7 +543,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
                         </div>
                       )}
                       <p className="text-xs text-muted-foreground">
-                        {hasFollowUp ? "This touch updates last contact. Leave both empty to keep the current follow-up." : "This touch updates last contact. Add a date to be reminded."}
+                        {hasStructuredAction ? "This touch updates last contact and keeps the next action. Complete or reschedule that action in its own card." : hasFollowUp ? "This touch updates last contact. Leave both empty to keep the current follow-up." : "This touch updates last contact. Add a date to be reminded."}
                       </p>
                       <Button type="submit" disabled={saving || !summary.trim()}>
                         Log touch
@@ -524,7 +551,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
                     </form>
                   )}
 
-                  {panel === "followUp" && (
+                  {panel === "followUp" && !hasStructuredAction && (
                     <div id="lead-panel-followUp" className="mt-3 rounded-panel border border-border bg-tint p-4">
                       <h3 id="follow-up-heading" className={heading}>
                         Next follow-up
@@ -599,6 +626,14 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
                 </div>
               )}
 
+              <div id="lead-next-action-workspace" tabIndex={-1} className="min-w-0">
+                <NextActionView lead={lead} canWrite={abilities.canWrite} available={!sample} saving={saving} onSave={saveNextAction} loadAssignees={() => getNextActionAssignees(lead.id)} onReload={async () => {
+                  const fresh = await getLead(lead.id);
+                  refetch();
+                  return fresh;
+                }} />
+              </div>
+
               {/* --- Details -------------------------------------------------- */}
               <section aria-labelledby="lead-details-heading">
                 <SectionHeading id="lead-details-heading" icon={UserRound}>Details</SectionHeading>
@@ -606,12 +641,12 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
                   <Fact label="Company" value={lead.editable?.company || "—"} />
                   <Fact label="Last touch" numeric value={lead.lastTouchDate || sample ? formatRelative(lead.lastContactDate) : "Never"} />
                   <div>
-                    <p className="text-[11px] leading-4 text-muted-foreground">Next follow-up</p>
+                    <p className="text-[11px] leading-4 text-muted-foreground">{hasStructuredAction ? "Next action due" : "Next follow-up"}</p>
                     <p
                       data-testid="lead-next-follow-up"
                       className={cn("mt-1.5 break-words text-sm font-semibold leading-snug tabular", followUp.state === "none" && "font-normal text-muted-foreground", isFollowUpDue(followUp) && "text-status-warn")}
                     >
-                      {followUpLabel(followUp, { withDate: true })}
+                      {lead.nextAction ? formatNextActionDueAt(lead.nextAction.dueAt) : followUpLabel(followUp, { withDate: true })}
                     </p>
                   </div>
                   <Fact label="Created" numeric value={formatDate(lead.createdDate)} />

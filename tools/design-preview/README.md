@@ -116,8 +116,8 @@ Select **Interactive samples** in the contact preview controls, or open:
 - `/responsive?width=390&height=844&view=/contacts?open=sample-overdue&scenario=interactive`
 - `/responsive?width=320&height=568&view=/contacts?open=sample-quiet&scenario=interactive`
 
-This mode permits only contact stage changes, client need creation/content/status
-changes, and the optional About/named personal-details section. The fixture actor
+This mode permits only contact stage changes, structured next actions, client
+need creation/content/status changes, and the optional About/named personal-details section. The fixture actor
 is explicitly a synthetic Admin. Stage changes use the production transition
 graph and optional expected-stage check. About/details use the production schema
 and saved revision; need changes use the production schemas and update planner.
@@ -131,7 +131,7 @@ Legacy Other status-only edits remain possible; a content edit must describe the
 selected Other choices. Hidden Other descriptions clear when their choice changes.
 
 Only local adapter functions can make these allowed changes. Notes, outreach,
-follow-ups, contact identity fields, transactions and every other write remain
+legacy date-only reminders, contact identity fields, transactions and every other write remain
 blocked. All contacts and needs are copied at module load; no account, browser
 storage or remote service receives a sample change. The actual list, filters,
 snapshot, drawer and Home counts read the same session state. Need summaries use
@@ -153,3 +153,56 @@ These checks cover revision/stage conflicts, optional information save/clear,
 Other validation and clearing, legacy status changes, source-precedence summaries,
 Home/list/filter agreement, complete long-history paging, blocked writes,
 network rejection, unchanged base fixtures and read-only scenario recovery.
+
+## Structured next actions
+
+The same interactive scenario now supports the real Next action workspace:
+schedule, edit, reschedule, complete with an outcome and optional successor, or
+cancel with a reason. Completion records a task outcome and never invents an
+outreach touch. The old date-only reminder write remains blocked.
+
+The preview uses the production strict mutation schema, event classification,
+date eligibility, business-day mirror, status, queue ordering and timeline
+projection. Saves compare both the contact revision and pending action ID.
+An unchanged set is a no-op. Complete plus successor updates the synthetic
+contact and both task history entries in one synchronous local operation.
+New or changed times must be future and within 730 business-calendar days;
+the exact unchanged due time on an existing overdue action can still be edited.
+An exited relationship can resolve its pending action but cannot receive a new
+action or successor. Eligible assignees are only the fixture's contact owner and
+the existing synthetic Admin reader; assignment never changes contact access.
+
+Useful contact IDs with `scenario=interactive`:
+
+- `sample-due-today`: call at 5pm Eastern (correctly becomes overdue after 5pm).
+- `sample-overdue`: email with a past due time.
+- `sample-upcoming`: future meeting.
+- `sample-quiet`: no action, for scheduling from empty.
+- `sample-contact-23`: long purpose and contact name for narrow-screen wrapping.
+- `sample-colleague-contact`: distinct owner and Admin assignee options.
+- `sample-past-client`: exited relationship with a pending action.
+- `sample-contact-01`: legacy date-only reminder for comparison.
+
+Every action and mirrored reminder derive from one due instant. Home and the
+contact list use the same shared exact-time classifier, so earlier today can be
+overdue with zero calendar days away. Home includes action type, purpose, assignee
+and due time. All sample ownership and action assignment IDs are valid synthetic
+UUIDs, and the list's Mine filter uses the same fixture actor ID.
+
+The existing **Remote change on save (409)** scenario also supports next actions.
+On `sample-overdue`, its first refused next-action save reveals a newer purpose
+and time while retaining the action ID. On `sample-upcoming`, it reveals a
+replacement action ID. Draft input remains unchanged, and the actual UI requires
+explicit review. This scenario remains read-only after review and still supports
+its original Company-edit rehearsal. Reload resets both rehearsals.
+
+Run the next-action contract checks separately:
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-next-action-session.mjs
+```
+
+The checks cover concurrent/stale saves, valid assignees, time boundaries,
+no-op/edit/reschedule, complete with and without successor, cancellation, exited
+relationships, task history text, Home/list agreement, denied legacy/transport
+writes, unchanged drafts on conflict and immutable base fixtures.

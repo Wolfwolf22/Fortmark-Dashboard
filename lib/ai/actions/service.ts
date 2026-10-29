@@ -27,7 +27,7 @@ import type { Db } from "../../db/client.ts";
 import { aiPreparedActions, auditEvents, contactActivities, contacts } from "../../db/schema.ts";
 import { aiActionsEnabled, contactsDatabaseEnabled, type EnvLike } from "../../flags.ts";
 import { commitStageChange, planStageChange, StageChangeConflict } from "../../contacts/service.ts";
-import { nextContactUpdatedAt } from "../../contacts/reliability.ts";
+import { guardedLegacyFollowUpAt, isPendingNextActionConflict, nextContactUpdatedAt } from "../../contacts/reliability.ts";
 import { canWrite } from "../../contacts/domain.ts";
 import type { LeadStage } from "../../data/types.ts";
 import {
@@ -256,6 +256,7 @@ export async function prepareFollowup(
   if (!row) return { ok: false, reason: "not_found" };
 
   if (!canWrite(actor, row)) return { ok: false, reason: "not_permitted" };
+  if (row.nextActionId) return { ok: false, reason: "not_permitted" };
   const change = followUpChange(row, day.day);
   const entity = { type: "contact" as const, id: row.id, displayName: contactDisplayName(row) };
   const preview = {
@@ -579,6 +580,10 @@ export async function executePreparedAction(
     await release(db, actionId, "failed", "not_permitted");
     return { ok: false, reason: "not_permitted" };
   }
+  if (claimed.actionType === FOLLOWUP_ACTION_TYPE && contact.nextActionId) {
+    await release(db, actionId, "failed", "not_permitted");
+    return { ok: false, reason: "not_permitted" };
+  }
 
   // Each action type depends on different fields, so each recomputes its own
   // fingerprint. A follow-up is invalidated by the follow-up moving; a stage
@@ -608,7 +613,7 @@ export async function executePreparedAction(
     await db.batch([
       db
         .update(contacts)
-        .set({ nextFollowUpAt: followUpAt, updatedByUserId: actor.userId, updatedAt: nextContactUpdatedAt(ctx.now) })
+        .set({ nextFollowUpAt: guardedLegacyFollowUpAt(followUpAt), updatedByUserId: actor.userId, updatedAt: nextContactUpdatedAt(ctx.now) })
         .where(eq(contacts.id, contact.id)),
       db.insert(contactActivities).values({
         contactId: contact.id,
@@ -641,9 +646,13 @@ export async function executePreparedAction(
         .set({ status: "executed", executedAt: ctx.now })
         .where(eq(aiPreparedActions.id, actionId)),
     ]);
-  } catch {
+  } catch (error) {
     // The transaction rolled back: the contact is untouched, no activity was
     // written, and the action must not read as done.
+    if (isPendingNextActionConflict(error)) {
+      await release(db, actionId, "stale", "stale");
+      return { ok: false, reason: "stale" };
+    }
     await release(db, actionId, "failed", "unavailable");
     return { ok: false, reason: "unavailable" };
   }

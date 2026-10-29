@@ -633,7 +633,10 @@ function readMigrations(): string {
   check("ui drawer: the hierarchy — details, needs, notes, activity, representation, transactions", (() => { const at = ["lead-details-heading", "<LeadNeeds", "<LeadNotes", "<LeadTimeline", "lead-representation-heading", "lead-transactions-heading"].map((n) => drawer.indexOf(n)); return at.every((v, i) => v > 0 && (i === 0 || v > at[i - 1])); })());
   check("ui drawer: the four quick actions", ["Log touch", "Follow-up", "Change stage", "Edit contact"].every((l) => drawer.includes(`"${l}"`) || drawer.includes(`>${l}<`) || drawer.includes(`, "${l}"`)));
   check("ui drawer: quick actions announce and control their panel", drawer.includes("aria-expanded={panel === id}") && drawer.includes("aria-controls={`lead-panel-${id}`}"));
-  check("ui drawer: an admin's view of a colleague's contact names the owner, read-only", drawer.includes("lead.ownedByViewer === false") && drawer.includes("Owner:") && !/Reassign|reassign|assignee/i.test(drawer));
+  check("ui drawer: an admin's view of a colleague's contact names the owner, read-only", (() => {
+    const owner = drawer.match(/<p[^>]*data-testid="lead-owner"[\s\S]*?<\/p>/)?.[0] ?? "";
+    return drawer.includes("lead.ownedByViewer === false") && owner.includes("Owner:") && !/<(?:Select|Input|Button)|onChange|onClick/.test(owner);
+  })());
   check("ui drawer: no reassign control, picker or modal anywhere in the leads components", !/reassign/i.test(["lead-drawer", "lead-edit-form", "leads-table", "leads-filters", "lead-shared", "lead-timeline"].map((f) => strip(src(`components/leads/${f}.tsx`.replace("lead-shared.tsx", "lead-shared.ts")))).join("\n")));
   check("ui drawer: 'Create transaction' only at Representation, only for someone who can write, opens the existing dialog with this contact", /lead\.stage === "representation" && abilities\.canWrite && !sample/.test(drawer) && drawer.includes('setQuickCreate("transaction", { id: lead.id, name: lead.name })') && drawer.includes("Create transaction"));
   check("ui drawer: nothing is auto-created from a stage move", !/setQuickCreate\("transaction"[^;]*updateLeadStage|updateLeadStage[^;]*setQuickCreate\("transaction"/.test(drawer));
@@ -679,7 +682,7 @@ function readMigrations(): string {
 
   // No M4, no M5.
   const journal = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] };
-  check("migrations: contact migrations remain additive alongside personal workspaces", journal.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces,0015_contact_create_requests,0016_contact_details_and_need_other" && !/engagement/i.test(readMigrations()) && !/CREATE UNIQUE INDEX/i.test(readMigrations()));
+  check("migrations: contact migrations remain additive alongside personal workspaces", journal.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces,0015_contact_create_requests,0016_contact_details_and_need_other,0017_contact_next_action" && !/engagement/i.test(readMigrations()) && !/CREATE UNIQUE INDEX/i.test(readMigrations()));
   check("migrations: additive only — nothing dropped or altered destructively", !/DROP\s+(TABLE|COLUMN|TYPE)/i.test(readMigrations()) && !/ALTER TABLE "[a-z_]+" (DROP|ALTER COLUMN)/i.test(readMigrations()) && !/ALTER TYPE/i.test(readMigrations()));
   check("migrations: the contact stage enum is untouched", !/contact_stage/.test(readMigrations()));
   check("migrations: nothing backfills a legacy note or a legacy transaction", !/(^|-->\s*statement-breakpoint\s*)\s*(UPDATE|INSERT)\s/i.test(readMigrations()));

@@ -3,6 +3,7 @@
  * Adapters in `lib/data/adapters/` return these shapes today from mock data;
  * the real MLS / Postgres integrations return the same shapes later.
  */
+import type { NextAction } from "../contacts/next-action.ts";
 
 // ---------------------------------------------------------------------------
 // Shared
@@ -442,6 +443,8 @@ export interface Lead {
    */
   lastTouchDate?: string;
   nextFollowUpDate?: string; // ISO
+  /** One deliberate next step. The legacy reminder mirrors its calendar day. */
+  nextAction?: NextAction | null;
   notes: string;
   /** Month and day only; a year is never stored. Null when not set. */
   birthday?: { month: number; day: number } | null;

@@ -5,16 +5,17 @@ import Link from "next/link";
 import { ArrowUpRight, Check, ListTodo } from "lucide-react";
 import { useHomeMetrics } from "./metrics-provider";
 import { dueText, greetingParts } from "./hero-text";
+import { attentionIsOverdue } from "@/lib/metrics/attention";
 import { IconWell } from "@/components/ui/icon-well";
 
 /** A factual queue summary. An empty schedule is not a deal-health claim. */
 function AttentionSummary() {
-  const { metrics, loading, error } = useHomeMetrics();
+  const { metrics, error } = useHomeMetrics();
 
   if (error) {
     return <p className="text-sm text-muted-foreground">Metrics could not be loaded. Refresh to retry.</p>;
   }
-  if (loading || !metrics) {
+  if (!metrics) {
     return (
       <div aria-hidden className="flex items-center gap-3">
         <div className="h-10 w-10 animate-pulse rounded-panel bg-tint" />
@@ -53,7 +54,8 @@ function AttentionSummary() {
           {items.length} {items.length === 1 ? "item needs" : "items need"} attention
           {group.data.overdueCount > 0 ? ` · ${group.data.overdueCount} overdue` : ""}
         </span>
-        <span className="mt-1 block truncate text-xs text-muted-foreground">{next.subject} · {dueText(next.daysAway)}</span>
+        <span className="mt-1 block truncate text-xs text-muted-foreground">{next.subject} · {attentionIsOverdue(next) && next.daysAway === 0 ? "Overdue today" : dueText(next.daysAway)}</span>
+        {next.purpose && <span className="mt-1 block truncate text-xs text-muted-foreground">{next.label} · {next.purpose}</span>}
       </span>
       <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" aria-hidden />
     </Link>

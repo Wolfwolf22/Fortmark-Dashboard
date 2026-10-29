@@ -100,7 +100,7 @@ export function LeadTimeline({ leadId, refreshKey = 0 }: { leadId: string; refre
                   <IconWell icon={Icon} />
                   <div className="min-w-0 flex-1">
                     <p className="break-words text-sm font-semibold leading-snug">{item.title}</p>
-                    {item.detail && <p className="mt-1 break-words text-[13px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{item.detail}</p>}
+                    {item.detail && <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{item.detail}</p>}
                     <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">
                       <time dateTime={item.at} title={formatDate(item.at)}>
                         {formatRelative(item.at)}

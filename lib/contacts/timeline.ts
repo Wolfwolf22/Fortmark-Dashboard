@@ -16,6 +16,7 @@
 import { CONTACT_STAGE_LABELS, isContactStage } from "./stages.ts";
 import { formatFollowUpDay } from "./follow-up.ts";
 import { compareHistory } from "./history.ts";
+import { formatNextActionDueAt, NEXT_ACTION_KIND_LABELS, NEXT_ACTION_KINDS, type NextActionKind } from "./next-action.ts";
 
 export type TimelineType =
   | "call"
@@ -142,6 +143,22 @@ export function toTimeline(input: {
     const meta = a.safeMetadata ?? {};
     const by = nameOf(a.actorUserId);
     const at = a.occurredAt.toISOString();
+
+    const actionTitles: Record<string, string> = {
+      next_action_created: "Next action scheduled", next_action_edited: "Next action updated",
+      next_action_rescheduled: "Next action rescheduled", next_action_completed: "Next action completed",
+      next_action_cancelled: "Next action cancelled",
+    };
+    if (a.kind === "task" && typeof meta.event === "string" && actionTitles[meta.event]) {
+      const kind = typeof meta.kind === "string" && (NEXT_ACTION_KINDS as readonly string[]).includes(meta.kind) ? NEXT_ACTION_KIND_LABELS[meta.kind as NextActionKind] : "Task";
+      const purpose = typeof meta.purpose === "string" ? meta.purpose : "";
+      const due = typeof meta.dueAt === "string" && Number.isFinite(Date.parse(meta.dueAt)) ? formatNextActionDueAt(meta.dueAt) : "";
+      const assignee = nameOf(typeof meta.assigneeId === "string" ? meta.assigneeId : null);
+      const outcome = typeof meta.outcome === "string" ? `Outcome: ${meta.outcome}` : typeof meta.reason === "string" ? `Reason: ${meta.reason}` : "";
+      const detail = [purpose ? `${kind}: ${purpose}` : kind, due, assignee ? `Assigned to ${assignee}` : "", outcome].filter(Boolean).join("\n");
+      items.push({ id: a.id, type: "task", title: actionTitles[meta.event], detail, at, by, rank: RANK_TOUCH });
+      continue;
+    }
 
     if (a.kind === "status_change") {
       const to = meta.to;

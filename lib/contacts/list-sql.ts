@@ -106,16 +106,22 @@ export function filterPredicates(actor: Actor, query: ContactQuery, now: Date): 
 
   switch (query.followUp) {
     case "overdue":
-      out.push(and(isNotNull(contacts.nextFollowUpAt), lt(contacts.nextFollowUpAt, w.todayStart))!);
+      out.push(or(
+        and(isNotNull(contacts.nextActionDueAt), lt(contacts.nextActionDueAt, now)),
+        and(isNull(contacts.nextActionDueAt), isNotNull(contacts.nextFollowUpAt), lt(contacts.nextFollowUpAt, w.todayStart))
+      )!);
       break;
     case "due_today":
-      out.push(and(gte(contacts.nextFollowUpAt, w.todayStart), lt(contacts.nextFollowUpAt, w.tomorrowStart))!);
+      out.push(or(
+        and(gte(contacts.nextActionDueAt, now), lt(contacts.nextActionDueAt, w.tomorrowStart)),
+        and(isNull(contacts.nextActionDueAt), gte(contacts.nextFollowUpAt, w.todayStart), lt(contacts.nextFollowUpAt, w.tomorrowStart))
+      )!);
       break;
     case "upcoming":
-      out.push(gte(contacts.nextFollowUpAt, w.tomorrowStart));
+      out.push(sql`coalesce(${contacts.nextActionDueAt}, ${contacts.nextFollowUpAt}) >= ${w.tomorrowStart}`);
       break;
     case "none":
-      out.push(isNull(contacts.nextFollowUpAt));
+      out.push(and(isNull(contacts.nextActionDueAt), isNull(contacts.nextFollowUpAt))!);
       break;
   }
 
@@ -178,7 +184,7 @@ export function contactOrder(sort: SortKey | undefined, dir: SortDir | undefined
       // The enum is declared in lifecycle order, so this is lifecycle order.
       return [by(sql`${contacts.stage}`), ...tail];
     case "followUp":
-      return [sql`${contacts.nextFollowUpAt} ${direction === "desc" ? sql`desc` : sql`asc`} nulls last`, ...tail];
+      return [sql`coalesce(${contacts.nextActionDueAt}, ${contacts.nextFollowUpAt}) ${direction === "desc" ? sql`desc` : sql`asc`} nulls last`, ...tail];
     case "created":
       return [by(sql`${contacts.createdAt}`), asc(contacts.id)];
     case "lastTouch":

@@ -31,3 +31,17 @@ export function contactRevision(expected: string) {
 export function nextContactUpdatedAt(now: Date) {
   return sql`greatest(date_trunc('milliseconds', ${contacts.updatedAt}) + interval '1 millisecond', ${now.toISOString()}::timestamptz)`;
 }
+
+/** A pending structured action owns its mirror, including same-day legacy writes. */
+export function guardedLegacyFollowUpAt(at: Date) {
+  return sql`case when ${contacts.nextActionId} is null then ${at.toISOString()}::timestamptz else null end`;
+}
+export function isPendingNextActionConflict(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; current && typeof current === "object" && depth < 6; depth++) {
+    const cause = current as { code?: unknown; constraint?: unknown; cause?: unknown };
+    if (cause.code === "23514" && cause.constraint === "contacts_next_action_check") return true;
+    current = cause.cause;
+  }
+  return false;
+}

@@ -6,20 +6,35 @@ import { HISTORY_PAGE_SIZE, decodeHistoryCursor, historyPage } from "../../lib/c
 import { NEED_STATUS_RANK, decodeNeedCursor, needHistoryPage } from "../../lib/contacts/needs-pagination.ts";
 import { clientInfoValuesSchema } from "../../lib/contacts/client-info.ts";
 import { createNeedSchema, updateNeedSchema, planNeedUpdate } from "../../lib/contacts/needs.ts";
-import { canTransition, isContactStage, CONTACT_STAGE_LABELS } from "../../lib/contacts/stages.ts";
+import { canTransition, isContactStage, CONTACT_STAGE_LABELS, OPEN_PIPELINE_STAGES } from "../../lib/contacts/stages.ts";
+import { nextActionMutationSchema, nextActionDayMirror, nextActionSetEvent, checkNextActionDueAt } from "../../lib/contacts/next-action.ts";
+import { toTimeline } from "../../lib/contacts/timeline.ts";
 import { bumpDataVersion } from "../../lib/data/store.ts";
 import { z } from "zod";
-import { getPreviewScenario, interactiveSamples, canWriteSample, readSampleContacts, readSampleContact, readSampleNeeds, readSampleTimeline, replaceSampleContact, replaceSampleNeeds, appendSampleTimeline, nextSampleRevision } from "./sample-session.mjs";
+import { SAMPLE_ACTOR, getPreviewScenario, interactiveSamples, canWriteSample, readSampleContacts, readSampleContact, readSampleNeeds, readSampleTimeline, replaceSampleContact, replaceSampleNeeds, appendSampleTimeline, nextSampleRevision } from "./sample-session.mjs";
 
 const copy = value => value === undefined ? undefined : structuredClone(value);
 const scenario = getPreviewScenario;
 const remoteReads = new Set();
-const remoteProjection = contact => scenario() === "conflict" && remoteReads.has(contact.id) ? {
-  ...contact,
-  email: "sample.remote-version@example.com",
-  updatedAt: new Date(Date.parse(contact.updatedAt) + 60_000).toISOString(),
-  editable: { ...contact.editable, company: "Sample Company - remote version" },
-} : contact;
+const remoteActionReads = new Set();
+const remoteProjection = contact => {
+  if (scenario() !== "conflict") return contact;
+  const companyChanged = remoteReads.has(contact.id);
+  const actionChanged = remoteActionReads.has(contact.id);
+  if (!companyChanged && !actionChanged) return contact;
+  const nextAction = actionChanged ? {
+    id: contact.id === "sample-upcoming" ? "50000000-0000-4000-8000-000000000002" : contact.nextAction?.id || "50000000-0000-4000-8000-000000000001",
+    kind: contact.nextAction?.kind || "call", purpose: "Synthetic newer action: confirm the revised property shortlist before the next conversation.",
+    dueAt: new Date(Date.parse(contact.nextAction?.dueAt || contact.updatedAt) + 3_600_000).toISOString(),
+    assigneeId: contact.nextAction?.assigneeId || contact.assignedAgentId,
+    assigneeName: contact.nextAction?.assigneeName || contact.assignedAgentName,
+  } : contact.nextAction;
+  return { ...contact,
+    updatedAt: new Date(Date.parse(contact.updatedAt) + 60_000 * (Number(companyChanged) + Number(actionChanged))).toISOString(),
+    ...(companyChanged ? { email: "sample.remote-version@example.com", editable: { ...contact.editable, company: "Sample Company - remote version" } } : {}),
+    ...(actionChanged ? { nextAction, nextFollowUpDate: nextActionDayMirror(nextAction.dueAt) } : {}),
+  };
+};
 const rows = () => readSampleContacts().map(remoteProjection);
 let failedOnce = false;
 export class LeadsError extends Error {
@@ -67,6 +82,56 @@ function revision(contact, expected) {
   if (Date.parse(expected) !== Date.parse(contact.updatedAt)) throw new LeadsError("conflict", 409);
 }
 function event(id, type, title, at) { appendSampleTimeline(id, { id: crypto.randomUUID(), type, title, at, by: "Sample Agent" }); }
+function actionAssignees(contact) {
+  if (!contact || contact.recordSource !== "db") return [];
+  // The fixture actor is an eligible active Admin; the only other eligible
+  // fixture is this contact's active owner. This never grants contact access.
+  const eligible = new Set([contact.assignedAgentId, SAMPLE_ACTOR.userId]);
+  return copy(contactAgents.filter(agent => eligible.has(agent.id)));
+}
+export async function getNextActionAssignees(id) { return actionAssignees(rows().find(item => item.id === id)); }
+function actionEvent(id, eventName, action, at, summary = "") {
+  const safeMetadata = { event: eventName, actionId: action.id, kind: action.kind, purpose: action.purpose, dueAt: action.dueAt, assigneeId: action.assigneeId,
+    ...(eventName === "next_action_completed" ? { outcome: summary } : {}),
+    ...(eventName === "next_action_cancelled" ? { reason: summary } : {}) };
+  const items = toTimeline({ activities: [{ id: crypto.randomUUID(), kind: "task", summary, occurredAt: new Date(at), actorUserId: SAMPLE_ACTOR.userId, safeMetadata }], followUpEvents: [], names: new Map(contactAgents.map(agent => [agent.id, agent.name])) });
+  items.forEach(item => appendSampleTimeline(id, item));
+}
+export async function updateNextAction(id, input) {
+  const fixture = previewContacts.find(item => item.id === id);
+  if (scenario() === "conflict" && fixture?.recordSource === "db" && !remoteActionReads.has(id)) {
+    remoteActionReads.add(id);
+    throw new LeadsError("conflict", 409);
+  }
+  if (!interactiveSamples()) return readOnly();
+  const contact = writable(id);
+  const parsed = nextActionMutationSchema.safeParse(input);
+  if (!parsed.success) throw invalid(parsed.error);
+  const command = parsed.data;
+  if (Date.parse(command.expectedUpdatedAt) !== Date.parse(contact.updatedAt)) throw new LeadsError("conflict", 409);
+  const current = contact.nextAction ?? null;
+  const expectedId = command.action === "set" ? command.expectedActionId : command.actionId;
+  if (expectedId !== (current?.id ?? null)) throw new LeadsError("conflict", 409);
+  const draft = command.action === "cancel" ? undefined : command.next;
+  if (draft && !OPEN_PIPELINE_STAGES.includes(contact.stage)) throw new LeadsError("invalid_transition", 409);
+  if (draft && !checkNextActionDueAt(draft.dueAt, new Date(), command.action === "set" ? current?.dueAt : undefined).ok) throw new LeadsError("invalid_date", 400, ["dueAt"]);
+  const assignees = actionAssignees(contact);
+  if (draft && !assignees.some(agent => agent.id === draft.assigneeId)) throw new LeadsError("invalid_assignee", 400, ["assigneeId"]);
+  if (command.action !== "set" && !current) throw new LeadsError("conflict", 409);
+  const setEvent = command.action === "set" ? nextActionSetEvent(current, command.next) : null;
+  if (command.action === "set" && !setEvent) return copy(contact);
+  const at = nextSampleRevision(contact.updatedAt);
+  const next = draft ? { ...draft, dueAt: new Date(draft.dueAt).toISOString(), id: command.action === "set" && current ? current.id : crypto.randomUUID(), assigneeName: assignees.find(agent => agent.id === draft.assigneeId).name } : null;
+  replaceSampleContact({ ...contact, nextAction: next, nextFollowUpDate: next ? nextActionDayMirror(next.dueAt) : undefined, updatedAt: at });
+  if (command.action === "set") actionEvent(id, setEvent, next, at);
+  if (command.action === "complete") {
+    actionEvent(id, "next_action_completed", current, at, command.outcome);
+    if (next) actionEvent(id, "next_action_created", next, at);
+  }
+  if (command.action === "cancel") actionEvent(id, "next_action_cancelled", current, at, command.reason);
+  bumpDataVersion();
+  return copy(readSampleContact(id));
+}
 export async function updateLeadStage(id, to, options = {}) {
   if (!interactiveSamples()) return readOnly();
   const contact = writable(id);
@@ -144,9 +209,9 @@ export async function getLeadsPage(query) {
     failedOnce = true;
     throw new LeadsError("preview_first_read_unavailable", 503);
   }
-  return copy(applyQuery(rows(), query, new Date(), "sample-agent"));
+  return copy(applyQuery(rows(), query, new Date(), SAMPLE_ACTOR.userId));
 }
-export async function getLeadSnapshot() { return copy(snapshotOf(rows(), new Date(), "sample-agent")); }
+export async function getLeadSnapshot() { return copy(snapshotOf(rows(), new Date(), SAMPLE_ACTOR.userId)); }
 export async function getTimeline(id) { return copy(rows().some(contact => contact.id === id) ? readSampleTimeline(id) : []); }
 export async function getNotes(id) { return copy(rows().some(contact => contact.id === id) ? contactNotes[id] || [] : []); }
 export async function getNeeds(id) { return copy(rows().some(contact => contact.id === id) ? readSampleNeeds(id) : []); }

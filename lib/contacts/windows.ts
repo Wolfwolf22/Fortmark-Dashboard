@@ -22,7 +22,7 @@
  */
 import type { Lead } from "../data/types.ts";
 import { businessDayKey, businessDayStart, startOfNextBusinessDay } from "../metrics/business-day.ts";
-import { followUpStatus } from "./follow-up.ts";
+import { effectiveFollowUpStatus } from "./follow-up.ts";
 import {
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
@@ -78,7 +78,7 @@ export function leadMatches(lead: Lead, query: ContactQuery, now: Date, viewerId
   if (query.active && !OPEN.includes(lead.stage)) return false;
 
   if (query.followUp) {
-    const state = followUpStatus(lead.nextFollowUpDate, now).state;
+    const state = effectiveFollowUpStatus(lead, now).state;
     const want = query.followUp === "upcoming" ? "future" : query.followUp;
     if (state !== want) return false;
   }
@@ -125,7 +125,7 @@ function keyOf(lead: Lead, sort: SortKey): string | number | null {
     case "lastTouch":
       return touchReference(lead).getTime();
     case "followUp":
-      return lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).getTime() : null;
+      return lead.nextAction?.dueAt ? new Date(lead.nextAction.dueAt).getTime() : lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).getTime() : null;
     case "created":
       return new Date(lead.createdDate).getTime();
   }

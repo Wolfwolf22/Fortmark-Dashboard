@@ -23,7 +23,9 @@ import {
 } from "../contacts/stages.ts";
 import { available, type BrokerageMetrics, type MonthPoint } from "../metrics/types.ts";
 import { dayKey, daysUntil, monthBucket, monthSeries, monthWindow } from "../metrics/window.ts";
-import { followUpStatus, isFollowUpDue } from "../contacts/follow-up.ts";
+import { effectiveFollowUpStatus, isFollowUpDue } from "../contacts/follow-up.ts";
+import { attentionIsOverdue, compareAttention, nextActionAttentionFields } from "../metrics/attention.ts";
+import type { AttentionItem } from "../metrics/types.ts";
 import type { LeadSource } from "./types.ts";
 
 const ACTIVE = ACTIVE_STAGES as readonly string[];
@@ -71,10 +73,10 @@ export function sampleBrokerageMetrics(at: Date = sampleNow()): BrokerageMetrics
 
   // The database path's classifier, not a second date comparison.
   const followUps = leads.filter(
-    (l) => OPEN_PIPELINE.includes(l.stage) && isFollowUpDue(followUpStatus(l.nextFollowUpDate, at))
+    (l) => OPEN_PIPELINE.includes(l.stage) && isFollowUpDue(effectiveFollowUpStatus(l, at))
   );
 
-  const attentionItems = [
+  const attentionItems: AttentionItem[] = [
     ...active.flatMap((t) =>
       t.milestones
         .filter((m) => m.state !== "done")
@@ -96,11 +98,12 @@ export function sampleBrokerageMetrics(at: Date = sampleNow()): BrokerageMetrics
       kind: "follow_up_due" as const,
       label: "Follow up",
       subject: l.name,
-      dueDate: followUpStatus(l.nextFollowUpDate, at).day as string,
-      daysAway: followUpStatus(l.nextFollowUpDate, at).daysAway as number,
+      dueDate: effectiveFollowUpStatus(l, at).day as string,
+      daysAway: effectiveFollowUpStatus(l, at).daysAway as number,
       href: `/contacts?open=${encodeURIComponent(l.id)}`,
+      ...(l.nextAction ? nextActionAttentionFields(l.nextAction, at) : {}),
     })),
-  ].sort((a, b) => a.daysAway - b.daysAway || a.subject.localeCompare(b.subject));
+  ].sort(compareAttention);
 
   return {
     source: "sample",
@@ -136,8 +139,8 @@ export function sampleBrokerageMetrics(at: Date = sampleNow()): BrokerageMetrics
     listings: { availability: "not_configured" },
     attention: available({
       items: attentionItems,
-      overdueCount: attentionItems.filter((i) => i.daysAway < 0).length,
-      soonCount: attentionItems.filter((i) => i.daysAway >= 0).length,
+      overdueCount: attentionItems.filter(attentionIsOverdue).length,
+      soonCount: attentionItems.filter((i) => !attentionIsOverdue(i)).length,
     }),
     activity: available([]),
     leaderboard: { availability: "not_permitted" },

@@ -30,12 +30,13 @@ import { Lead, LEAD_SOURCE_LABELS, LEAD_STAGE_LABELS } from "@/lib/data/types";
 import { cn, formatDate, formatRelative, initials } from "@/lib/utils";
 import {
   followUpLabel,
-  followUpStatus,
+  effectiveFollowUpStatus,
   isFollowUpDue,
   noRecentTouch,
   NO_TOUCH_LABEL,
 } from "@/lib/contacts/follow-up";
 import type { SortDir, SortKey } from "@/lib/contacts/filters";
+import { NEXT_ACTION_KIND_LABELS, formatNextActionDueAt } from "@/lib/contacts/next-action";
 import { INTENT_LABELS, useMinWidth } from "./lead-shared";
 
 interface Column {
@@ -75,9 +76,9 @@ export function agentLabel(lead: Lead, byId: Map<string, string>): string {
 }
 
 function FollowUpCell({ lead }: { lead: Lead }) {
-  const followUp = followUpStatus(lead.nextFollowUpDate);
+  const followUp = effectiveFollowUpStatus(lead);
   return (
-    <span data-testid="lead-follow-up-cell">
+    <span data-testid="lead-follow-up-cell" className="inline-flex min-w-0 flex-col items-start gap-1">
       {isFollowUpDue(followUp) ? (
         <StatusPill tone="warn">{followUpLabel(followUp)}</StatusPill>
       ) : followUp.state === "future" ? (
@@ -88,6 +89,10 @@ function FollowUpCell({ lead }: { lead: Lead }) {
       ) : (
         <span className="text-muted-foreground" aria-label="No follow-up scheduled">—</span>
       )}
+      {lead.nextAction && <>
+        <span className="text-[11px] text-muted-foreground">{NEXT_ACTION_KIND_LABELS[lead.nextAction.kind]} · {formatNextActionDueAt(lead.nextAction.dueAt)}</span>
+        <span className="max-w-64 break-words text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{lead.nextAction.purpose}</span>
+      </>}
     </span>
   );
 }

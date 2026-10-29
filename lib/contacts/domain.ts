@@ -18,6 +18,7 @@ import { ALL_CONTACT_STAGES } from "./stages.ts";
 import { birthdayChangeState, birthdaySchema, type Birthday } from "./birthday.ts";
 import { clientAboutSchema, clientPersonalDetailsSchema } from "./client-info.ts";
 import { projectContactNeedSummary } from "./needs-summary.ts";
+import type { NextAction } from "./next-action.ts";
 
 // --- Who ---------------------------------------------------------------------
 
@@ -296,7 +297,17 @@ export interface ContactBundle {
   /** The latest activity, when any; lists carry only this one. */
   latestActivity?: ContactActivityRow;
   agentName?: string;
+  nextActionAssigneeName?: string;
   includePrivateDetails?: boolean;
+}
+
+/** A partially populated action never appears as a usable next step. */
+export function contactNextAction(row: Partial<Pick<ContactRow, "nextActionId" | "nextActionKind" | "nextActionPurpose" | "nextActionDueAt" | "nextActionAssignedUserId">>, assigneeName?: string): NextAction | null {
+  return row.nextActionId && row.nextActionKind && row.nextActionPurpose && row.nextActionDueAt && row.nextActionAssignedUserId ? {
+    id: row.nextActionId, kind: row.nextActionKind as NextAction["kind"], purpose: row.nextActionPurpose,
+    dueAt: row.nextActionDueAt.toISOString(), assigneeId: row.nextActionAssignedUserId,
+    ...(assigneeName ? { assigneeName } : {}),
+  } : null;
 }
 
 export function toLead(bundle: ContactBundle): Lead {
@@ -322,6 +333,7 @@ export function toLead(bundle: ContactBundle): Lead {
     lastContactDate: lastContact.toISOString(),
     lastTouchDate: row.lastContactAt?.toISOString(),
     nextFollowUpDate: row.nextFollowUpAt?.toISOString(),
+    nextAction: contactNextAction(row, bundle.nextActionAssigneeName),
     notes: row.notes ?? "",
     birthday: row.birthdayMonth != null && row.birthdayDay != null ? { month: row.birthdayMonth, day: row.birthdayDay } : null,
     recordSource: "db",

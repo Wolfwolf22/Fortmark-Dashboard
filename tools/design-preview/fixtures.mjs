@@ -1,9 +1,10 @@
 // Deliberately synthetic, nonpersistent fixtures for visual review only.
 import { visualTransactions } from "./visual-fixtures.mjs";
 import { contactFixtureNow } from "./contact-fixtures.mjs";
-import { readSampleContacts } from "./sample-session.mjs";
+import { readSampleContacts, readSampleActionActivity } from "./sample-session.mjs";
 import { ACTIVE_CLIENT_STAGES, LIFECYCLE_STAGES, OPEN_PIPELINE_STAGES } from "../../lib/contacts/stages.ts";
-import { followUpStatus } from "../../lib/contacts/follow-up.ts";
+import { effectiveFollowUpStatus } from "../../lib/contacts/follow-up.ts";
+import { nextActionAttentionFields, attentionIsOverdue, compareAttention } from "../../lib/metrics/attention.ts";
 import { businessDayKey, dayDiff } from "../../lib/metrics/business-day.ts";
 const previewNow = contactFixtureNow;
 const monthStart = new Date(Date.UTC(previewNow.getUTCFullYear(), previewNow.getUTCMonth(), 1)).toISOString().slice(0, 10);
@@ -60,8 +61,8 @@ function contactFigures(contacts, at, month) {
   thisMonthContacts.forEach(contact => sourceCounts.set(contact.source, (sourceCounts.get(contact.source) || 0) + 1));
   const attention = contacts.flatMap(contact => {
     if (!OPEN_PIPELINE_STAGES.includes(contact.stage)) return [];
-    const status = followUpStatus(contact.nextFollowUpDate, at);
-    return status.state === "due_today" || status.state === "overdue" ? [{ id: `follow-up:${contact.id}`, kind: "follow_up_due", label: "Follow up", subject: contact.name, dueDate: status.day, daysAway: status.daysAway, href: `/contacts?open=${contact.id}` }] : [];
+    const status = effectiveFollowUpStatus(contact, at);
+    return status.state === "due_today" || status.state === "overdue" ? [{ id: `follow-up:${contact.id}`, kind: "follow_up_due", label: "Follow up", subject: contact.name, dueDate: status.day, daysAway: status.daysAway, href: `/contacts?open=${contact.id}`, ...(contact.nextAction ? nextActionAttentionFields(contact.nextAction, at) : {}) }] : [];
   });
   return {
     data: {
@@ -85,17 +86,20 @@ function transactionAttentionAt(at) {
 function setContactGroups(target, contacts, at) {
   const derived = contactFigures(contacts, at, target.monthStart);
   target.contacts.data = derived.data;
-  const attention = [...derived.attention, ...transactionAttentionAt(at)].sort((a, b) => a.daysAway - b.daysAway || a.id.localeCompare(b.id));
-  target.attention.data = { items: attention, overdueCount: attention.filter(item => item.daysAway < 0).length, soonCount: attention.filter(item => item.daysAway >= 0).length };
+  const attention = [...derived.attention, ...transactionAttentionAt(at)].sort(compareAttention);
+  target.attention.data = { items: attention, overdueCount: attention.filter(attentionIsOverdue).length, soonCount: attention.filter(item => !attentionIsOverdue(item) && item.daysAway <= 7).length };
 }
 setContactGroups(metrics, readSampleContacts(), previewNow);
 
 /** A fresh view of the same ephemeral session used by all contact reads. */
-export function getPreviewMetrics() {
+export function getPreviewMetrics(at = new Date()) {
   const result = structuredClone(metrics);
-  const at = new Date();
   result.generatedAt = at.toISOString();
   setContactGroups(result, readSampleContacts(), at);
+  // Match the production Home feed's eight most recent business events.
+  result.activity.data = [...readSampleActionActivity(), ...result.activity.data]
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .slice(0, 8);
   return result;
 }
 

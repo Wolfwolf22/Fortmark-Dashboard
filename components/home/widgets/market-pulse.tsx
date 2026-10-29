@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   FileCheck2,
   PhoneCall,
+  ListChecks,
   UserPlus,
   type LucideIcon,
 } from "lucide-react";
@@ -28,6 +29,7 @@ const ICONS: Record<ActivityItem["kind"], LucideIcon> = {
   contact_created: UserPlus,
   contact_stage_changed: ArrowRightLeft,
   contact_touch: PhoneCall,
+  contact_task: ListChecks,
 };
 
 /**
@@ -100,6 +102,7 @@ function ActivityBody({ items }: { items: ActivityItem[] }) {
               <IconWell icon={Icon} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-semibold">{item.summary}</p>
+                {item.kind === "contact_task" && <p className="mt-0.5 truncate text-xs text-muted-foreground">{item.subject}</p>}
                 <p className="text-micro mt-0.5">{formatRelative(item.at)}</p>
               </div>
             </Link>

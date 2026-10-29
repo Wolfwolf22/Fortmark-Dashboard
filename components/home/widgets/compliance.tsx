@@ -9,9 +9,12 @@ import { WidgetCard, useWidgetExpanded } from "@/components/widgets/widget-card"
 import { MetricState } from "@/components/home/metric-state";
 import { useHomeMetrics } from "@/components/home/metrics-provider";
 import type { AttentionItem, AttentionMetrics } from "@/lib/metrics/types";
-import { formatCalendarDayShort } from "@/lib/metrics/business-day";
+import { BUSINESS_TIME_ZONE, formatCalendarDayShort } from "@/lib/metrics/business-day";
+import { attentionHint, attentionIsOverdue } from "@/lib/metrics/attention";
+import { formatNextActionDueAt } from "@/lib/contacts/next-action";
 
 const COLLAPSED_ROWS = 6;
+const ACTION_TIME = new Intl.DateTimeFormat("en-US", { timeZone: BUSINESS_TIME_ZONE, hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
 const KIND_LABELS: Record<AttentionItem["kind"], string> = {
   deadline_overdue: "Overdue",
@@ -64,13 +67,7 @@ export default function ComplianceWidget() {
 
 /** Overdue reads as a warning; everything else is simply upcoming. */
 function toneFor(item: AttentionItem): "warn" | "neutral" {
-  return item.daysAway < 0 ? "warn" : "neutral";
-}
-
-function hintFor(days: number): string {
-  if (days < 0) return days === -1 ? "1 day overdue" : `${Math.abs(days)} days overdue`;
-  if (days === 0) return "due today";
-  return days === 1 ? "due tomorrow" : `due in ${days}d`;
+  return attentionIsOverdue(item) ? "warn" : "neutral";
 }
 
 function AttentionBody({ data }: { data: AttentionMetrics }) {
@@ -100,15 +97,18 @@ function AttentionBody({ data }: { data: AttentionMetrics }) {
               className="group -mx-2 flex items-center gap-3 rounded-lg px-2 py-3 transition-colors duration-150 hover:bg-tint"
             >
               <StatusPill tone={toneFor(item)} className="shrink-0">
-                {KIND_LABELS[item.kind]}
+                {item.actionKind ? item.label : KIND_LABELS[item.kind]}
               </StatusPill>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-semibold">{item.subject}</p>
-                <p className="mt-0.5 truncate text-xs text-muted-foreground">{item.label}</p>
+                <p className="mt-0.5 break-words text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{item.purpose ?? item.label}</p>
+                {item.assigneeName && <p className="mt-1 break-words text-[11px] text-muted-foreground">{item.assigneeName}</p>}
+                {item.dueAt && <p className="mt-1 text-[11px] text-muted-foreground sm:hidden">{formatNextActionDueAt(item.dueAt)}</p>}
               </div>
               <div className="shrink-0 text-right">
                 <p className="tabular text-[13px]">{formatCalendarDayShort(item.dueDate)}</p>
-                <p className="text-micro mt-0.5">{hintFor(item.daysAway)}</p>
+                {item.dueAt && <p className="mt-0.5 hidden text-[11px] tabular text-muted-foreground sm:block">{ACTION_TIME.format(new Date(item.dueAt))}</p>}
+                <p className="text-micro mt-0.5">{attentionHint(item)}</p>
               </div>
               <ChevronRight
                 className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150 group-hover:translate-x-0.5"

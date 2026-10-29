@@ -42,6 +42,8 @@ export async function getTimelinePage(ctx: Ctx, contactId: string, options: { pa
     if (activity.actorUserId) userIds.add(activity.actorUserId);
     const to = activity.safeMetadata?.toAgentUserId;
     if (typeof to === "string") userIds.add(to);
+    const assignee = activity.safeMetadata?.assigneeId;
+    if (typeof assignee === "string") userIds.add(assignee);
   }
   for (const event of [...followUps, ...domainEvents]) if (event.actorUserId) userIds.add(event.actorUserId);
   const names = await agentNames(ctx.db, [...userIds]);

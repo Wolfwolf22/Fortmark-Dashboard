@@ -656,6 +656,11 @@ export const contacts = pgTable(
     /** Derived from activities on write; read here so lists need no join. */
     lastContactAt: timestamp("last_contact_at", { withTimezone: true }),
     nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+    nextActionId: uuid("next_action_id"),
+    nextActionKind: text("next_action_kind"),
+    nextActionPurpose: text("next_action_purpose"),
+    nextActionDueAt: timestamp("next_action_due_at", { withTimezone: true }),
+    nextActionAssignedUserId: uuid("next_action_assigned_user_id").references(() => dashboardUsers.id, { onDelete: "restrict" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -664,6 +669,13 @@ export const contacts = pgTable(
     index("contacts_agent_idx").on(t.assignedAgentUserId),
     index("contacts_last_contact_idx").on(t.lastContactAt),
     index("contacts_email_idx").on(t.email),
+    index("contacts_next_action_due_idx").on(t.nextActionDueAt),
+    check("contacts_next_action_check", sql`(
+      (${t.nextActionId} is null and ${t.nextActionKind} is null and ${t.nextActionPurpose} is null and ${t.nextActionDueAt} is null and ${t.nextActionAssignedUserId} is null)
+      or (${t.nextActionId} is not null and ${t.nextActionKind} is not null and ${t.nextActionPurpose} is not null and ${t.nextActionDueAt} is not null and ${t.nextActionAssignedUserId} is not null
+        and ${t.nextActionKind} in ('call','email','text','meeting','custom') and char_length(${t.nextActionPurpose}) <= 240 and char_length(btrim(${t.nextActionPurpose})) >= 1
+        and ${t.nextFollowUpAt} is not null and ${t.nextFollowUpAt} = (((${t.nextActionDueAt} at time zone 'America/New_York')::date + time '12:00') at time zone 'UTC'))
+    )`),
     check("contacts_about_check", sql`char_length(${t.about}) <= 2000`),
     check("contacts_personal_details_check", sql`case when jsonb_typeof(${t.personalDetails}) = 'array' then jsonb_array_length(${t.personalDetails}) <= 20 and octet_length(${t.personalDetails}::text) <= 50000 else false end`),
     // Both null, or a real calendar day. February 29 is allowed because the

@@ -1,6 +1,6 @@
 // Ephemeral synthetic state for the explicitly selected Interactive samples
 // mode. Nothing is sent to a service, account, localStorage or production API.
-import { previewContacts, contactNeeds, timelineFor } from "./contact-fixtures.mjs";
+import { previewContacts, contactNeeds, timelineFor, SAMPLE_AGENT_ID } from "./contact-fixtures.mjs";
 import { projectContactNeedSummary } from "../../lib/contacts/needs-summary.ts";
 
 const copy = value => value === undefined ? undefined : structuredClone(value);
@@ -8,7 +8,7 @@ const sessionContacts = new Map(previewContacts.map(contact => [contact.id, copy
 const sessionNeeds = new Map(Object.entries(contactNeeds).map(([id, needs]) => [id, copy(needs)]));
 const sessionTimeline = new Map();
 
-export const SAMPLE_ACTOR = { userId: "sample-agent", role: "admin", brokerageKey: "design-preview" };
+export const SAMPLE_ACTOR = { userId: SAMPLE_AGENT_ID, role: "admin", brokerageKey: "design-preview" };
 export function getPreviewScenario() {
   return typeof window === "undefined" ? "records" : new URLSearchParams(window.location.search).get("scenario") || "records";
 }
@@ -35,6 +35,18 @@ export function readSampleContacts() {
 export function readSampleContact(id) { return readSampleContacts().find(contact => contact.id === id); }
 export function readSampleTimeline(id) {
   return copy([...(interactiveSamples() ? sessionTimeline.get(id) || [] : []), ...timelineFor(id)]);
+}
+/** Home receives controlled task titles, not private purpose/outcome details. */
+export function readSampleActionActivity() {
+  if (!interactiveSamples()) return [];
+  return [...sessionTimeline].flatMap(([id, items]) => {
+    const contact = sessionContacts.get(id);
+    if (!contact) return [];
+    return items.filter(item => item.type === "task").map(item => ({
+      id: `contact:${item.id}`, kind: "contact_task", summary: item.title,
+      subject: contact.name, at: item.at, href: `/contacts?open=${encodeURIComponent(id)}`,
+    }));
+  });
 }
 export function replaceSampleContact(contact) { sessionContacts.set(contact.id, copy(contact)); }
 export function replaceSampleNeeds(id, needs) { sessionNeeds.set(id, copy(needs)); }

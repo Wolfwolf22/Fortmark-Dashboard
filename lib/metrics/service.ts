@@ -45,6 +45,7 @@ import {
   type MetricGroup,
 } from "./types.ts";
 import { monthWindow } from "./window.ts";
+import { attentionIsOverdue, compareAttention } from "./attention.ts";
 
 /** How many events the Home feed carries. Enough to be useful, not a log. */
 export const ACTIVITY_LIMIT = 8;
@@ -98,7 +99,7 @@ async function attempt<T>(
 /** Overdue first, then soonest; ties broken by subject so order is stable. */
 function orderAttention(items: AttentionItem[]): AttentionItem[] {
   return [...items].sort(
-    (a, b) => a.daysAway - b.daysAway || a.subject.localeCompare(b.subject)
+    compareAttention
   );
 }
 
@@ -223,8 +224,8 @@ function combineAttention(
   ]);
   return available({
     items,
-    overdueCount: items.filter((i) => i.daysAway < 0).length,
-    soonCount: items.filter((i) => i.daysAway >= 0 && i.daysAway <= DEADLINE_SOON_DAYS).length,
+    overdueCount: items.filter(attentionIsOverdue).length,
+    soonCount: items.filter((i) => !attentionIsOverdue(i) && i.daysAway <= DEADLINE_SOON_DAYS).length,
   });
 }
 

@@ -237,6 +237,15 @@ const { data, loading } = useQuery(
 - Notes, activity and needs load older records with scoped, stable cursors.
   Display loaded counts honestly; never label a partial page as a complete
   history. Completing the final page keeps keyboard focus on its control.
+- Next action leads the contact file, before Details, in one quiet card with
+  a glass icon well, purpose, exact Eastern due time, owner and state. Reuse
+  the existing card shadow and input tokens. Complete, edit and cancel are
+  explicit actions; completion requires an outcome and can schedule a successor
+  in the same save. Task completion never implies a client interaction.
+- Timed actions become overdue at their deadline; legacy reminders remain
+  day-based. Home, contact filters, snapshot counts and list rows share this
+  rule. Keep current content visible during clock refreshes. Preserve drafts
+  across failed saves, assignee refreshes and explicit conflict review.
 
 ## Copy checklist (every string you write)
 

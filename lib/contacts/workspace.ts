@@ -20,6 +20,8 @@ export function contactWorkspaceRequest(filters: ContactQuery, search: string, p
 }
 
 /** Allow the boundary to pass before asking for the new day's figures; DST-safe. */
-export function nextContactRefreshDelay(at: Date): number {
-  return Math.max(1, startOfNextBusinessDay(at).getTime() - at.getTime() + 50);
+export function nextContactRefreshDelay(at: Date, timedActions = false): number {
+  const dayBoundary = startOfNextBusinessDay(at).getTime() - at.getTime() + 50;
+  const clockBoundary = timedActions ? 60_000 - (at.getTime() % 60_000) + 50 : Infinity;
+  return Math.max(1, Math.min(dayBoundary, clockBoundary));
 }

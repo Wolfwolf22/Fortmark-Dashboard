@@ -2,9 +2,12 @@
 // the real stored-record UI; no database, account or service is connected.
 import { businessDayKey } from "../../lib/metrics/business-day.ts";
 import { followUpInstant } from "../../lib/contacts/follow-up.ts";
+import { businessLocalToUtc, nextActionDayMirror } from "../../lib/contacts/next-action.ts";
 
 export const contactFixtureNow = new Date();
 export const CONTACT_FIXTURE_REVISION = "2026-10-29T12:00:00.000Z";
+export const SAMPLE_AGENT_ID = "30000000-0000-4000-8000-000000000001";
+export const SAMPLE_COLLEAGUE_ID = "30000000-0000-4000-8000-000000000002";
 const instant = (days) => new Date(contactFixtureNow.getTime() + days * 86_400_000).toISOString();
 const day = (days) => {
   const date = new Date(`${businessDayKey(contactFixtureNow)}T12:00:00Z`);
@@ -14,21 +17,21 @@ const day = (days) => {
 const follow = (days) => followUpInstant(day(days));
 const base = {
   phone: "+12025550101", stage: "lead", source: "referral", intent: "buy",
-  assignedAgentId: "sample-agent", assignedAgentName: "Sample Agent", ownedByViewer: true,
+  assignedAgentId: SAMPLE_AGENT_ID, assignedAgentName: "Sample Agent", ownedByViewer: true,
   recordSource: "db", notes: "", birthday: null,
   about: "", personalDetails: [],
   updatedAt: CONTACT_FIXTURE_REVISION,
   createdDate: instant(-45), lastContactDate: instant(-3), lastTouchDate: instant(-3),
   editable: { firstName: "Sample", lastName: "Contact", preferredName: "", company: "Sample Company" },
 };
-export const contactAgents = [{ id: "sample-agent", name: "Sample Agent" }, { id: "sample-colleague", name: "Sample Colleague" }];
+export const contactAgents = [{ id: SAMPLE_AGENT_ID, name: "Sample Agent" }, { id: SAMPLE_COLLEAGUE_ID, name: "Sample Colleague" }];
 export const previewContacts = [
   { ...base, id: "sample-due-today", name: "Sample Due Today", email: "sample.today@example.com", stage: "qualified", source: "website", nextFollowUpDate: follow(0), neighborhood: "Fort Lauderdale", budget: 750000, createdDate: instant(-5), lastContactDate: instant(-1), lastTouchDate: instant(-1), editable: { ...base.editable, lastName: "Due Today" } },
   { ...base, id: "sample-overdue", name: "Sample Overdue Follow-up", email: "sample.overdue@example.com", stage: "representation", source: "referral", nextFollowUpDate: follow(-3), neighborhood: "Fort Lauderdale", budget: 800000, lastContactDate: instant(-18), lastTouchDate: instant(-18), birthday: { month: 11, day: 12 }, notes: "Synthetic legacy note. This is sample content for the visual preview.", about: "Synthetic client information for your reference. Prefers a calm pace and a short written recap after a conversation.\nThis does not describe a real person.", personalDetails: [{ label: "Preferred contact time", value: "Sample weekday mornings" }, { label: "A longer named detail for wrapping and readable reference", value: "Synthetic detail with a longer value that should wrap cleanly on a small screen. <strong>This markup stays plain text.</strong>\nA second line remains readable." }], editable: { ...base.editable, lastName: "Overdue Follow-up" } },
   { ...base, id: "sample-upcoming", name: "Sample Upcoming Follow-up", email: "sample.upcoming@example.com", stage: "under_contract", source: "sphere", nextFollowUpDate: follow(4), neighborhood: "Fort Lauderdale", budget: 450000, lastContactDate: instant(-2), lastTouchDate: instant(-2), editable: { ...base.editable, lastName: "Upcoming Follow-up" } },
   { ...base, id: "sample-quiet", name: "Sample Quiet Relationship", email: "sample.quiet@example.com", stage: "lead", source: "open_house", intent: "sell", nextFollowUpDate: undefined, lastContactDate: instant(-35), lastTouchDate: undefined, editable: { ...base.editable, lastName: "Quiet Relationship" } },
   { ...base, id: "sample-past-client", name: "Sample Past Client", email: "sample.past@example.com", stage: "past_client", source: "past_client", intent: "other", lastContactDate: instant(-50), lastTouchDate: instant(-50), editable: { ...base.editable, lastName: "Past Client" } },
-  { ...base, id: "sample-colleague-contact", name: "Sample Colleague Contact", email: "sample.colleague@example.com", stage: "appointment", source: "social", assignedAgentId: "sample-colleague", assignedAgentName: "Sample Colleague", ownedByViewer: false, editable: { ...base.editable, lastName: "Colleague Contact" } },
+  { ...base, id: "sample-colleague-contact", name: "Sample Colleague Contact", email: "sample.colleague@example.com", stage: "appointment", source: "social", assignedAgentId: SAMPLE_COLLEAGUE_ID, assignedAgentName: "Sample Colleague", ownedByViewer: false, editable: { ...base.editable, lastName: "Colleague Contact" } },
   { ...base, id: "sample-labeled-fallback", name: "Sample Labeled Fallback", email: "sample.fallback@example.com", stage: "contacted", source: "other", intent: "other", recordSource: "sample", updatedAt: undefined, editable: undefined, notes: "Sample-record fallback: notes and client needs are intentionally unavailable in this source mode." },
   { ...base, id: "sample-long-history", name: "Sample Long History", email: "sample.history@example.com", stage: "past_client", source: "past_client", intent: "other", lastContactDate: instant(-60), lastTouchDate: instant(-60), notes: "Synthetic long-history contact. Every note, activity and client need is a fixture for paged-history review.", editable: { ...base.editable, lastName: "Long History" } },
   ...Array.from({ length: 23 }, (_, index) => ({
@@ -43,6 +46,29 @@ export const previewContacts = [
     editable: { ...base.editable, lastName: index === 22 ? "Contact With a Long Compound Name" : `Contact ${index + 1}` },
   })),
 ];
+
+// Real action DTOs with synthetic identities. Every legacy day mirror is
+// derived from the same due instant, never an independent fixture date.
+const actionAt = (days, time) => {
+  const result = businessLocalToUtc(day(days), time);
+  if (!result.ok) throw new Error("Invalid synthetic action time");
+  return result.dueAt;
+};
+const actionCases = [
+  ["sample-due-today", "call", "Sample call to confirm the preferred showing times.", actionAt(0, "17:00"), SAMPLE_AGENT_ID],
+  ["sample-overdue", "email", "Sample email to review the property shortlist and agree on a next step.", actionAt(-3, "10:15"), SAMPLE_AGENT_ID],
+  ["sample-upcoming", "meeting", "Sample meeting to review financing questions.", actionAt(4, "14:30"), SAMPLE_AGENT_ID],
+  ["sample-past-client", "call", "Sample pending call retained after the relationship left the open pipeline.", actionAt(-1, "11:00"), SAMPLE_AGENT_ID],
+  ["sample-colleague-contact", "text", "Sample text to confirm the appointment with the assigned agent.", actionAt(1, "11:00"), SAMPLE_COLLEAGUE_ID],
+  ["sample-contact-23", "custom", "Sample longer purpose: prepare a clear written recap of the client's priorities, compare the next property options and confirm timing with the assigned agent. This synthetic action tests readable wrapping on a small screen.", actionAt(2, "09:45"), SAMPLE_AGENT_ID],
+];
+for (const [index, [id, kind, purpose, dueAt, assigneeId]] of actionCases.entries()) {
+  const contact = previewContacts.find(item => item.id === id);
+  contact.nextAction = { id: `40000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`, kind, purpose, dueAt, assigneeId, assigneeName: contactAgents.find(agent => agent.id === assigneeId).name };
+  contact.nextFollowUpDate = nextActionDayMirror(dueAt);
+}
+// Deliberately retain a date-only reminder for legacy comparison.
+previewContacts.find(contact => contact.id === "sample-contact-01").nextFollowUpDate = follow(0);
 
 export const contactNotes = {
   "sample-overdue": [

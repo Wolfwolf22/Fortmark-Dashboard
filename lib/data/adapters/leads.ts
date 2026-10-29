@@ -29,6 +29,7 @@ import type { NoteView } from "../../contacts/notes.ts";
 import type { CreateNeedInput, NeedView, UpdateNeedInput } from "../../contacts/needs.ts";
 import type { LinkedTransaction } from "../../contacts/linked.ts";
 import type { Birthday } from "../../contacts/birthday.ts";
+import type { NextActionInput } from "../../contacts/next-action.ts";
 import { HISTORY_PAGE_SIZE, type HistoryPage } from "../../contacts/history.ts";
 
 export type { LeadFilters };
@@ -143,6 +144,26 @@ export async function getLead(id: string): Promise<Lead | undefined> {
   } catch (error) {
     if (error instanceof LeadsError && error.status === 404) return undefined;
     throw error;
+  }
+}
+
+/** Only people who can already read the contact may own its next action. */
+export async function getNextActionAssignees(id: string): Promise<{ id: string; name: string }[]> {
+  if ((await getLeadSource()) === "sample") return [];
+  const { items } = await request<{ items: { id: string; name: string }[] }>(`/api/contacts/${encodeURIComponent(id)}/next-action`);
+  return items;
+}
+
+/** Never retry a mutation: an unanswered request may have committed. */
+export async function updateNextAction(id: string, input: NextActionInput): Promise<Lead | undefined> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try {
+    const { contact } = await request<{ contact: Lead }>(`/api/contacts/${encodeURIComponent(id)}/next-action`, {
+      method: "POST", body: JSON.stringify(input),
+    });
+    return contact;
+  } finally {
+    bumpDataVersion();
   }
 }
 

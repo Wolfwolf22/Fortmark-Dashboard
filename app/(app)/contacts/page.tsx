@@ -43,7 +43,7 @@ function readQuery(params: URLSearchParams): ContactQuery {
   return second.ok ? second.query : {};
 }
 
-/** Contacts-only refresh on return and business midnight; no polling loop. */
+/** Refresh on return, business midnight and minute boundaries for timed actions. */
 function useContactRefreshKey(): number {
   const [key, setKey] = useState(0);
   useEffect(() => {
@@ -56,7 +56,7 @@ function useContactRefreshKey(): number {
     };
     const schedule = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => { refresh(); schedule(); }, nextContactRefreshDelay(new Date()));
+      timer = setTimeout(() => { refresh(); schedule(); }, nextContactRefreshDelay(new Date(), true));
     };
     const resume = () => { refresh(); schedule(); };
     schedule();

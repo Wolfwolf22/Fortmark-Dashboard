@@ -419,23 +419,25 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
 // =============================================================================
 {
   const service = code("lib/ai/actions/service.ts");
-  const batch = service.slice(service.indexOf("await db.batch(["), service.indexOf("} catch {", service.indexOf("await db.batch([")));
+  const batchAt = service.indexOf("await db.batch([");
+  const catchAt = service.indexOf("} catch", batchAt);
+  const batch = service.slice(batchAt, catchAt);
 
   check("the four writes are one batch, not four awaits",
     batch.includes("db.batch([") &&
       (batch.match(/\bawait\b/g) ?? []).length === 1);
-  check("the batch updates the contact", /update\(contacts\)[\s\S]{0,200}nextFollowUpAt: followUpAt/.test(batch));
+  check("the batch updates the contact through its pending-action guard", /update\(contacts\)[\s\S]{0,200}nextFollowUpAt: guardedLegacyFollowUpAt\(followUpAt\)/.test(batch));
   check("the batch records the CRM activity", /insert\(contactActivities\)/.test(batch));
   check("the batch writes the audit event", /insert\(auditEvents\)/.test(batch));
   check("the batch transitions the action to executed",
     /update\(aiPreparedActions\)[\s\S]{0,160}status: "executed"/.test(batch));
 
   // If the transaction rolls back, nothing may claim otherwise.
-  const after = service.slice(service.indexOf("await db.batch(["));
-  check("a rolled-back batch marks the action failed, never executed",
-    /catch \{[\s\S]{0,400}release\(db, actionId, "failed"/.test(after));
+  const after = service.slice(catchAt, service.indexOf("async function executeStageChange", catchAt));
+  check("a rolled-back batch marks a pending-action race stale and other failures failed",
+    after.includes("isPendingNextActionConflict(error)") && after.includes('release(db, actionId, "stale", "stale")') && after.includes('release(db, actionId, "failed", "unavailable")'));
   check("a rolled-back batch reports failure to the caller",
-    /catch \{[\s\S]{0,500}return \{ ok: false, reason: "unavailable" \}/.test(after));
+    after.includes("catch (error)") && after.includes('return { ok: false, reason: "unavailable" }'));
 }
 
 // =============================================================================

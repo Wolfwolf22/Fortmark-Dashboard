@@ -28,6 +28,7 @@ import {
   isCalendarDay,
   startOfNextBusinessDay,
 } from "../metrics/business-day.ts";
+import { nextActionStatus } from "./next-action.ts";
 
 export type FollowUpState = "none" | "overdue" | "due_today" | "future";
 
@@ -52,6 +53,12 @@ export function followUpStatus(nextFollowUpDate: string | Date | null | undefine
   const daysAway = dayDiff(day, businessDayKey(now));
   const state: FollowUpState = daysAway < 0 ? "overdue" : daysAway === 0 ? "due_today" : "future";
   return { state, day, daysAway };
+}
+
+/** Timed next actions become overdue at their time; older reminders remain day-based. */
+export function effectiveFollowUpStatus(contact: { nextAction?: { dueAt: string } | null; nextFollowUpDate?: string } | null | undefined, now = new Date()): FollowUpStatus {
+  const action = contact?.nextAction;
+  return action ? nextActionStatus(action, now) : followUpStatus(contact?.nextFollowUpDate, now);
 }
 
 /** Due today or overdue: what Home's Needs attention queue chases. */

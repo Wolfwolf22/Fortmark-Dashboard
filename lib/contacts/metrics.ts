@@ -17,9 +17,10 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { contactActivities, contacts } from "../db/schema.ts";
 import type { Actor } from "../auth/actor.ts";
-import { visibleTo } from "./service.ts";
-import { displayName } from "./domain.ts";
-import { followUpDueBy, followUpStatus } from "./follow-up.ts";
+import { agentNames, visibleTo } from "./service.ts";
+import { contactNextAction, displayName } from "./domain.ts";
+import { effectiveFollowUpStatus, followUpDueBy } from "./follow-up.ts";
+import { nextActionAttentionFields } from "../metrics/attention.ts";
 import {
   ACTIVE_CLIENT_STAGES,
   ALL_CONTACT_STAGES,
@@ -110,6 +111,11 @@ export async function contactAttention(ctx: Ctx, now: Date): Promise<AttentionIt
       lastName: contacts.lastName,
       preferredName: contacts.preferredName,
       nextFollowUpAt: contacts.nextFollowUpAt,
+      nextActionId: contacts.nextActionId,
+      nextActionKind: contacts.nextActionKind,
+      nextActionPurpose: contacts.nextActionPurpose,
+      nextActionDueAt: contacts.nextActionDueAt,
+      nextActionAssignedUserId: contacts.nextActionAssignedUserId,
     })
     .from(contacts)
     .where(
@@ -119,13 +125,15 @@ export async function contactAttention(ctx: Ctx, now: Date): Promise<AttentionIt
         sql`${contacts.nextFollowUpAt} is not null and ${contacts.nextFollowUpAt} <= ${dueBy}`
       )
     )
-    .orderBy(contacts.nextFollowUpAt)
+    .orderBy(sql`coalesce(${contacts.nextActionDueAt}, ${contacts.nextFollowUpAt})`, contacts.id)
     .limit(50);
 
+  const names = await agentNames(ctx.db, Array.from(new Set(rows.flatMap(row => row.nextActionAssignedUserId ? [row.nextActionAssignedUserId] : []))));
   return rows.map((row) => {
     // The same classifier the Leads column and the drawer use, so "N days
     // overdue" here and "Overdue" there can never be two answers.
-    const status = followUpStatus(row.nextFollowUpAt as Date, now);
+    const action = contactNextAction(row, row.nextActionAssignedUserId ? names.get(row.nextActionAssignedUserId) : undefined);
+    const status = effectiveFollowUpStatus({ nextAction: action, nextFollowUpDate: row.nextFollowUpAt?.toISOString() }, now);
     return {
       id: `follow-up:${row.id}`,
       kind: "follow_up_due" as const,
@@ -134,6 +142,7 @@ export async function contactAttention(ctx: Ctx, now: Date): Promise<AttentionIt
       dueDate: status.day as string,
       daysAway: status.daysAway as number,
       href: contactHref(row.id),
+      ...(action ? nextActionAttentionFields(action, now) : {}),
     };
   });
 }
@@ -147,6 +156,7 @@ function describeActivity(
 ): { kind: ActivityItem["kind"]; summary: string } {
   if (kind === "system") return { kind: "contact_created", summary: `${name} added` };
   if (kind === "status_change") return { kind: "contact_stage_changed", summary };
+  if (kind === "task") return { kind: "contact_task", summary };
   return { kind: "contact_touch", summary };
 }
 

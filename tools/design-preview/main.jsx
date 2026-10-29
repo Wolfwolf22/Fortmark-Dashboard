@@ -84,13 +84,13 @@ function PreviewControls() {
       </label>}
     </div>
     {interactive && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
-      Only contact stages, client needs and client information can be saved in these synthetic samples. Notes and other actions remain disabled. Reload or Reset samples discards all sample changes.
+      Only contact stages, next actions, client needs and client information can be saved in these synthetic samples. Notes and other actions remain disabled. Reload or Reset samples discards all sample changes.
     </p>}
     {route === "/contacts" && scenario === "conflict" && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
-      Conflict rehearsal: change a sample contact's Company, then save. The refused save reveals a predefined newer sample version. Review latest details to compare it with your kept draft. No draft is written.
+      Conflict rehearsal: change a sample contact's Company or next action, then save. The refused save reveals a predefined newer sample version. Review latest details to compare it with your kept draft. No draft is written.
     </p>}
     {writeBlocked && <div role="alert" className="flex items-center justify-center gap-3 border-b border-border bg-card px-4 py-2 text-xs">
-      <span>{interactive ? "This action is disabled in interactive samples. Only contact stages, needs and client information can be saved." : "Design preview is read-only. No records were changed."}</span>
+      <span>{interactive ? "This action is disabled in interactive samples. Only contact stages, next actions, needs and client information can be saved." : "Design preview is read-only. No records were changed."}</span>
       <button type="button" className="font-semibold underline underline-offset-4" onClick={() => setWriteBlocked(false)}>Dismiss</button>
     </div>}
   </>;

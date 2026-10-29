@@ -215,7 +215,7 @@ check("transaction aggregates use the list's own visibility predicate", (() => {
 check("contact aggregates use the list's own visibility predicate", (() => {
   const src = readFileSync("lib/contacts/metrics.ts", "utf8");
   const uses = src.match(/visibleTo\(ctx\.actor\)/g) ?? [];
-  return src.includes('import { visibleTo } from "./service.ts"') && uses.length >= 4;
+  return /import\s*\{[^}]*\bvisibleTo\b[^}]*\}\s*from "\.\/service\.ts"/.test(src) && uses.length >= 4;
 })());
 check("no metrics query runs without the predicate", (() => {
   for (const path of ["lib/transactions/metrics.ts", "lib/contacts/metrics.ts"]) {
@@ -492,7 +492,8 @@ check("the recent-activity feed reads events, not the audit log", (() => {
 })());
 check("needs-attention has no score, only dated facts", (() => {
   const src = code("components/home/widgets/compliance.tsx");
-  return !/score|health|\/100/i.test(src) && src.includes("daysAway");
+  const timing = code("lib/metrics/attention.ts");
+  return !/score|health|\/100/i.test(src + timing) && src.includes("item.dueDate") && src.includes("attentionHint(item)") && timing.includes("daysAway");
 })());
 
 // --- Focus order matches what is on screen -------------------------------------------
