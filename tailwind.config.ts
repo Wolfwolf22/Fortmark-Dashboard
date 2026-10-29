@@ -69,17 +69,17 @@ const config: Config = {
         display: ["var(--font-archivo-black)", "system-ui", "sans-serif"],
       },
       borderRadius: {
-        card: "0.75rem",
-        panel: "0.5rem",
+        card: "1rem",
+        panel: "0.75rem",
         composer: "1rem",
-        lg: "0.75rem",
-        md: "0.625rem",
-        sm: "0.5rem",
+        lg: "0.5rem",
+        md: "0.5rem",
+        sm: "0.375rem",
       },
       boxShadow: {
-        card: "0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.06)",
+        card: "0 1px 2px rgb(0 0 0 / 0.025), 0 3px 14px rgb(0 0 0 / 0.025)",
         "card-hover":
-          "0 2px 4px rgb(0 0 0 / 0.05), 0 16px 32px rgb(0 0 0 / 0.09)",
+          "0 2px 4px rgb(0 0 0 / 0.035), 0 6px 18px rgb(0 0 0 / 0.045)",
         pop: "0 4px 12px rgb(0 0 0 / 0.08), 0 12px 32px rgb(0 0 0 / 0.10)",
       },
       letterSpacing: {

@@ -1192,17 +1192,16 @@ const ALLOWED_ENV = {
     /prefers-reduced-motion: reduce[\s\S]{0,120}animation-duration: 0\.01ms/.test(css));
   check("the hero's summary reads the real attention queue, nothing generated",
     hero.includes("metrics.attention") && !/Math\.random|faker|sample/i.test(hero));
-  check("an empty queue says so plainly", hero.includes("Nothing requires immediate attention."));
+  check("an empty queue describes scheduled work without claiming deal health", hero.includes("No scheduled items due"));
   check("due phrases are exact", dueText(-3) === "3 days overdue" && dueText(-1) === "1 day overdue" &&
     dueText(0) === "Due today" && dueText(1) === "Due tomorrow" && dueText(5) === "Due in 5 days");
 }
 
 // --- Theme contrast, computed rather than asserted by class ---------------
 //
-// The card derives its metadata colours from `--foreground` at reduced opacity
-// instead of `--muted-foreground`. This checks that the choice actually pays:
-// ratios are computed from the committed CSS variables, for both themes, so a
-// future token edit that quietly drops a label under AA fails here.
+// Shared secondary ink and profile-specific foreground treatments must both
+// remain readable. Ratios are computed from the committed CSS variables, for
+// both themes, so a future token edit that drops a label under AA fails here.
 {
   const css = readFileSync("app/globals.css", "utf8");
 
@@ -1247,25 +1246,24 @@ const ALLOWED_ENV = {
   const darkFg = readVar(".dark", "foreground");
   const darkCard = readVar(".dark", "card");
   const mutedLight = readVar(":root", "muted-foreground");
+  const mutedDark = readVar(".dark", "muted-foreground");
 
   const parsed =
     lightFg !== null && lightCard !== null && darkFg !== null &&
-    darkCard !== null && mutedLight !== null;
+    darkCard !== null && mutedLight !== null && mutedDark !== null;
   check("theme tokens parsed from globals.css", parsed);
 
   if (parsed) {
     check("light card is white, light text is black", lightFg === 0 && lightCard === 1);
     check("dark card is near-black, dark text is white", darkFg === 1 && darkCard > 0 && darkCard < 0.2);
 
-    // The reason the change was needed: the shared muted token is identical in
-    // both themes and lands under AA on a white card.
     check(
-      "muted-foreground really is below AA on a light card",
-      contrast(mutedLight, lightCard, 1) < 4.5
+      "shared secondary ink clears AA on a light card",
+      contrast(mutedLight, lightCard, 1) >= 4.5
     );
     check(
-      "muted-foreground is the same value in both themes",
-      readVar(".dark", "muted-foreground") === mutedLight
+      "shared secondary ink clears AA on a dark card",
+      contrast(mutedDark, darkCard, 1) >= 4.5
     );
 
     // Light mode — labels at /70, honest-absence text at /55.
@@ -1278,24 +1276,23 @@ const ALLOWED_ENV = {
     check('dark: "Not added" clears AA', contrast(darkFg, darkCard, 0.55) >= 4.5);
     check("dark: credential values clear AAA", contrast(darkFg, darkCard, 1) >= 7);
 
-    // Both themes improve, which is why the card needs no theme-specific rule.
+    // Credential emphasis stays stronger than ordinary secondary ink.
     check(
-      "both themes improve on the shared muted token",
+      "credential labels retain emphasis over shared secondary ink",
       contrast(lightFg, lightCard, 0.7) > contrast(mutedLight, lightCard, 1) &&
-        contrast(darkFg, darkCard, 0.7) > contrast(mutedLight, darkCard, 1)
+        contrast(darkFg, darkCard, 0.7) > contrast(mutedDark, darkCard, 1)
     );
 
     // Non-text contrast for control boundaries (WCAG 1.4.11, 3:1).
     //
-    // `--input` measures 1.28:1 on a white card and 1.38:1 on the dark one,
-    // which is why the outlined button vanished. Every control boundary on the
-    // card now sits at `foreground/45`.
+    // Shared field boundaries and the profile's foreground/45 treatment both
+    // need 3:1, so an accessible local override cannot hide a broken token.
     const inputLight = readVar(":root", "input");
     const inputDark = readVar(".dark", "input");
     if (inputLight !== null && inputDark !== null) {
       check(
-        "the previous --input border really was below the 3:1 threshold",
-        contrast(inputLight, lightCard, 1) < 3 && contrast(inputDark, darkCard, 1) < 3
+        "shared input borders clear 3:1 in both themes",
+        contrast(inputLight, lightCard, 1) >= 3 && contrast(inputDark, darkCard, 1) >= 3
       );
     }
 
@@ -3158,8 +3155,14 @@ const ALLOWED_ENV = {
     // The phone bar shows the mark alone; from sm the wordmark alone.
     check("the wordmark fits the bar's brand slot", 110 <= 200);
   }
+  const renderedBrandHeight = (asset: string) => {
+    const image = railSrc.slice(railSrc.indexOf(`assetPath("/brand/${asset}")`));
+    const height = image.slice(0, 300).match(/className="[^"]*\bh-(\d+)\b/);
+    return height ? Number(height[1]) : 0;
+  };
   check("the wordmark box is taller than the mark to compensate for padding",
-    railSrc.includes("h-8 w-auto") && railSrc.includes("h-5 w-auto"));
+    renderedBrandHeight("fortmark-wordmark-white.png") > renderedBrandHeight("fortmark-logomark-white.png") &&
+      renderedBrandHeight("fortmark-logomark-white.png") > 0);
   check("brand images are not stretched by a square box",
     !/width=\{28\}[\s\S]{0,40}height=\{28\}/.test(railSrc));
   // The bar is black in both themes, so it carries only the white marks —

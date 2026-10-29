@@ -26,13 +26,15 @@
     --secondary: 0 0% 94%;
     --secondary-foreground: 0 0% 0%;
     --muted: 0 0% 96%;
-    --muted-foreground: 0 0% 55%;
+    /* Brand gray is a primitive; small text needs a darker semantic ink. */
+    --muted-foreground: 0 0% 40%;
     --accent: 0 0% 94%;
     --accent-foreground: 0 0% 0%;
     --destructive: 0 23% 44%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 92%;
-    --input: 0 0% 89%;
+    --border: 0 0% 89%;
+    /* Controls need a visible boundary; decorative dividers stay quieter. */
+    --input: 0 0% 54%;
     --ring: 0 0% 0%;
     --track: 0 0% 92%;
     --tint: 0 0% 96%;
@@ -67,13 +69,13 @@
     --secondary: 0 0% 12%;
     --secondary-foreground: 0 0% 100%;
     --muted: 0 0% 10%;
-    --muted-foreground: 0 0% 55%;
+    --muted-foreground: 0 0% 64%;
     --accent: 0 0% 12%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 25% 65%;
     --destructive-foreground: 0 0% 0%;
     --border: 0 0% 15%;
-    --input: 0 0% 18%;
+    --input: 0 0% 46%;
     --ring: 0 0% 100%;
     --track: 0 0% 15%;
     --tint: 0 0% 10%;
@@ -108,6 +110,13 @@
 
   :focus-visible {
     @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  @media (forced-colors: active) {
+    :focus-visible {
+      outline: 2px solid Highlight;
+      outline-offset: 2px;
+    }
   }
 }
 

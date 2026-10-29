@@ -24,7 +24,7 @@ export function Segmented<T extends string>({
       role="radiogroup"
       aria-label={ariaLabel}
       className={cn(
-        "inline-flex items-center gap-0.5 rounded-full bg-tint p-1",
+        "inline-flex max-w-full items-center gap-0 rounded-panel bg-tint p-1 sm:gap-0.5",
         className
       )}
     >
@@ -38,7 +38,7 @@ export function Segmented<T extends string>({
             aria-checked={active}
             onClick={() => onChange(option.value)}
             className={cn(
-              "rounded-full px-3 py-1 text-[13px] font-semibold transition-colors duration-150",
+              "min-h-10 rounded-lg px-2 py-1 text-[13px] font-semibold transition-colors duration-150 sm:min-h-9 sm:px-3",
               active
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:text-foreground"

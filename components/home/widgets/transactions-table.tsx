@@ -255,6 +255,7 @@ function TransactionsBody({
           icon={Workflow}
           title="No transactions in this period"
           description="Widen the range or change the stage filter."
+          className="py-7"
         />
       </div>
     );

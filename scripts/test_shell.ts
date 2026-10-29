@@ -57,7 +57,7 @@ check("content is wide but bounded", shell.includes("max-w-[1520px]") && bar.inc
 check("the bar is always black with the dark token scope", bar.includes('className="dark sticky top-0'));
 check("phones get a scrolling section strip, not a hamburger",
   bar.includes("function MobileNav") && bar.includes("overflow-x-auto") && bar.includes("xl:hidden"));
-check("the desktop tabs appear only where they fit", bar.includes('className="ml-2 hidden items-center gap-1.5 xl:ml-4 xl:flex'));
+check("the desktop tabs appear only where they fit", /<nav[^>]+aria-label="Primary"[^>]+className="[^"]*\bhidden\b[^"]*\bxl:flex\b/.test(bar));
 check("search opens the one palette from both controls",
   (bar.match(/onClick=\{\(\) => setCommandOpen\(true\)\}/g) ?? []).length === 2);
 check("no notification count is invented", !/unread\s*=\s*\d/.test(src("components/layout/notifications-bell.tsx")));

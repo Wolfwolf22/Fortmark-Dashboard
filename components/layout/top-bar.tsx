@@ -4,7 +4,7 @@
  * The dashboard's top navigation — the whole shell chrome.
  *
  * It replaced the left rail. One row on desktop: the FortMark wordmark, the
- * sections as small rectangular tabs, the unified search (which opens ⌘K —
+ * sections as quiet text tabs, the unified search (which opens ⌘K —
  * there is no second search), then the real utilities: create, notifications,
  * settings, theme and the account.
  *
@@ -48,12 +48,13 @@ import { assetPath } from "@/lib/routes";
 import { useUiStore } from "@/lib/stores/ui";
 import { cn } from "@/lib/utils";
 
-/** Rectangular tab: ivory when selected, a quiet outline otherwise. */
+/** Text navigation with one persistent marker for the current section. */
 const TAB =
-  "inline-flex h-9 shrink-0 items-center rounded-md border px-3 text-[13px] font-semibold tracking-[-0.005em] transition-[background-color,border-color,color] duration-200 ease-out";
-const TAB_ACTIVE = "border-white bg-white text-black";
+  "relative inline-flex h-11 shrink-0 items-center justify-center px-3 text-[13px] font-medium tracking-[-0.005em] transition-colors duration-150 ease-out";
+const TAB_ACTIVE =
+  "font-semibold text-foreground after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-foreground";
 const TAB_IDLE =
-  "border-white/10 bg-white/[0.03] text-white/70 hover:border-white/25 hover:bg-white/[0.07] hover:text-white";
+  "text-muted-foreground hover:text-foreground";
 
 function NavTab({ item, pathname }: { item: NavItem; pathname: string }) {
   const onShellClick = useShellLinkClick();
@@ -122,10 +123,10 @@ function MobileNav({ pathname }: { pathname: string }) {
   }, [pathname]);
 
   return (
-    <nav aria-label="Primary" className="border-t border-white/10 xl:hidden">
+    <nav aria-label="Primary" className="border-t border-border xl:hidden">
       <div
         ref={strip}
-        className="flex gap-1.5 overflow-x-auto px-4 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex gap-1 overflow-x-auto px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:px-6"
       >
         {NAV_ITEMS.map((item) => {
           const active = isActivePath(item.href, pathname);
@@ -135,7 +136,7 @@ function MobileNav({ pathname }: { pathname: string }) {
               href={item.href}
               aria-current={active ? "page" : undefined}
               onClick={(e) => onShellClick(e, item.href)}
-              className={cn(TAB, "h-8 px-2.5 text-[12.5px]", active ? TAB_ACTIVE : TAB_IDLE)}
+              className={cn(TAB, "text-[13px]", active ? TAB_ACTIVE : TAB_IDLE)}
             >
               {item.label}
             </Link>
@@ -153,8 +154,8 @@ export function TopBar({ profile }: { profile: ShellProfile }) {
   const settingsActive = isActivePath("/settings", pathname);
 
   return (
-    <header className="dark sticky top-0 z-40 border-b border-white/10 bg-black text-foreground">
-      <div className="mx-auto flex h-14 w-full max-w-[1520px] items-center gap-3 px-4 md:px-6 lg:h-16">
+    <header className="dark sticky top-0 z-40 border-b border-border bg-background text-foreground">
+      <div className="mx-auto flex h-16 w-full max-w-[1520px] items-center gap-1 px-3 max-[359px]:h-auto max-[359px]:min-h-16 max-[359px]:flex-wrap max-[359px]:py-2 sm:gap-2 md:px-6 xl:gap-4">
         {/* Brand. `assetPath` because next/image does not apply the zone
             basePath to a string src (see the history in git: the rail's mark
             404ed without it). The link carries the accessible name once. */}
@@ -162,7 +163,7 @@ export function TopBar({ profile }: { profile: ShellProfile }) {
           href="/"
           aria-label="FortMark home"
           onClick={(e) => onShellClick(e, "/")}
-          className="flex shrink-0 items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          className="flex min-h-11 shrink-0 items-center rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
           <Image
             src={assetPath("/brand/fortmark-logomark-white.png")}
@@ -177,12 +178,12 @@ export function TopBar({ profile }: { profile: ShellProfile }) {
             alt=""
             width={110}
             height={32}
-            className="hidden h-8 w-auto sm:block"
+            className="hidden h-7 w-auto sm:block"
             priority
           />
         </Link>
 
-        <nav aria-label="Primary" className="ml-2 hidden items-center gap-1.5 xl:ml-4 xl:flex">
+        <nav aria-label="Primary" className="ml-1 hidden h-16 items-center gap-0.5 xl:flex">
           {PRIMARY_NAV.map((item) => (
             <NavTab key={item.href} item={item} pathname={pathname} />
           ))}
@@ -193,25 +194,25 @@ export function TopBar({ profile }: { profile: ShellProfile }) {
         <button
           type="button"
           onClick={() => setCommandOpen(true)}
-          className="mx-auto hidden h-9 min-w-[11rem] max-w-[26rem] flex-1 items-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-3 text-[13px] text-white/55 transition-colors hover:border-white/25 hover:text-white/80 md:flex"
+          className="ml-auto hidden h-11 min-w-[10rem] max-w-[22rem] flex-1 items-center gap-2.5 rounded-md bg-accent/50 px-3 text-[13px] text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground md:flex"
           aria-label="Search (Command K)"
           data-command-trigger=""
         >
           <Search className="h-4 w-4 shrink-0" aria-hidden />
           <span className="flex-1 truncate text-left">Search clients, deals, listings…</span>
-          <Kbd>⌘K</Kbd>
+          <Kbd className="border-0 bg-transparent text-muted-foreground">⌘K</Kbd>
         </button>
         <button
           type="button"
           onClick={() => setCommandOpen(true)}
-          className="ml-auto flex h-9 w-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-white/70 transition-colors hover:text-white md:hidden"
+          className="ml-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground md:hidden"
           aria-label="Search"
           data-command-trigger=""
         >
           <Search className="h-4 w-4" aria-hidden />
         </button>
 
-        <div className="flex shrink-0 items-center gap-1 md:gap-1.5">
+        <div className="flex shrink-0 items-center max-[359px]:w-full max-[359px]:justify-end sm:gap-0.5">
           <NewMenu />
           <NotificationsBell />
           <Tooltip>
@@ -222,10 +223,10 @@ export function TopBar({ profile }: { profile: ShellProfile }) {
                 aria-current={settingsActive ? "page" : undefined}
                 onClick={(e) => onShellClick(e, "/settings")}
                 className={cn(
-                  "flex h-9 w-9 items-center justify-center rounded-md border transition-colors",
+                  "flex h-11 w-11 items-center justify-center rounded-md transition-colors duration-150",
                   settingsActive
-                    ? "border-white bg-white text-black"
-                    : "border-transparent text-muted-foreground hover:border-border hover:bg-accent hover:text-foreground"
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
                 )}
               >
                 <Settings className="h-[18px] w-[18px]" aria-hidden />
@@ -233,10 +234,8 @@ export function TopBar({ profile }: { profile: ShellProfile }) {
             </TooltipTrigger>
             <TooltipContent>Settings</TooltipContent>
           </Tooltip>
-          <div className="hidden sm:block">
-            <ThemeToggle />
-          </div>
-          <div className="ml-1 flex items-center border-l border-white/10 pl-1.5">
+          <ThemeToggle />
+          <div className="ml-0.5 flex items-center border-l border-border pl-0.5 sm:ml-2 sm:pl-2">
             <ProfileIdentity display={profile.display} editable={profile.editable} compact />
           </div>
         </div>

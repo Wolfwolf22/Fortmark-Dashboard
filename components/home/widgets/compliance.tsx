@@ -83,6 +83,7 @@ function AttentionBody({ data }: { data: AttentionMetrics }) {
         icon={ShieldCheck}
         title="Nothing needs attention this week"
         description="Overdue deadlines and follow-ups that are due will appear here."
+        className="py-7"
       />
     );
   }

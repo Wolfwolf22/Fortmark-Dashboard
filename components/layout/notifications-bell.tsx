@@ -31,13 +31,13 @@ export function NotificationsBell() {
             <button
               type="button"
               aria-label={`Notifications${unread ? ` (${unread} unread)` : ""}`}
-              className="relative flex h-9 w-9 items-center justify-center rounded-md border border-transparent text-muted-foreground transition-colors hover:border-border hover:bg-accent hover:text-foreground"
+              className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
             >
               <Bell className="h-[18px] w-[18px]" aria-hidden />
               {unread > 0 && (
                 <span
                   aria-hidden
-                  className="absolute right-2 top-2 h-2 w-2 rounded-full bg-foreground ring-2 ring-background"
+                  className="absolute right-2.5 top-2.5 h-1.5 w-1.5 rounded-full bg-foreground ring-2 ring-background"
                 />
               )}
             </button>

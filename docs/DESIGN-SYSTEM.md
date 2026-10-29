@@ -1,7 +1,8 @@
 # FortMark dashboard — operative design & code contract
 
-Read this before touching any feature. It is the binding contract between the
-foundation and every page build. `docs/PLAN.md` holds the rationale.
+Read this before touching any feature. This document describes the implemented
+foundation and the current shell/Home direction. It takes precedence over the
+original build proposal in `docs/PLAN.md`, which records historical rationale.
 
 ## Brand, in one paragraph
 
@@ -19,12 +20,12 @@ Use ONLY the semantic Tailwind tokens (they resolve per theme):
 
 | Class | Meaning |
 |---|---|
-| `bg-background` | app ground (#F5F5F5 light / #000 dark) |
-| `bg-card` | card surface (white / #111) |
+| `bg-background` | app ground (96% gray light / black dark) |
+| `bg-card` | card surface (white light / 7% gray dark) |
 | `text-foreground` | primary ink |
-| `text-muted-foreground` | gray #8C8C8C labels/captions |
-| `border-border` | hairlines (#EAEAEA / #262626) |
-| `border-input` | field borders |
+| `text-muted-foreground` | readable secondary ink (40% gray light / 64% gray dark) |
+| `border-border` | quiet decorative hairlines (89% gray light / 15% gray dark) |
+| `border-input` | visible control boundaries (54% gray light / 46% gray dark) |
 | `bg-tint` | inset chips, tracks, hover surfaces |
 | `bg-track` | progress tracks |
 | `bg-primary text-primary-foreground` | black fill / white ink (inverted in dark) |
@@ -35,12 +36,26 @@ Use ONLY the semantic Tailwind tokens (they resolve per theme):
 `text-green-600`, `bg-gray-*` — all forbidden). Status color goes through
 `<StatusPill tone>` / `text-status-*` tokens only, badge-sized only.
 
+The brand primitives remain black, white, `--fm-gray: #8C8C8C`, and
+`--fm-surface: #333333`. The neutral gray primitive is for the brand palette and
+chart structure; **it is not the small-text color**. Text uses semantic ink
+tokens so the light and dark themes can meet contrast requirements. Never fade
+secondary text with opacity. Reserve the quiet `border` token for decoration;
+fields and outlined buttons use `input` so their boundaries remain visible.
+
+At the defined base surfaces, secondary ink exceeds 4.5:1 and input boundaries
+exceed 3:1 in both themes. New tinted surfaces and token opacity modifiers need
+their own contrast check; a token does not make every possible pairing accessible.
+
 ## Typography
 
 - Archivo only. `font-sans` (body, weights 400–800 via `font-medium|semibold|bold`)
   and `font-display` (Archivo Black) — nothing else.
 - Display headings: use the `.text-display` utility (uppercase, tight leading).
-- Micro-labels: use `.text-micro` (11px uppercase gray, wide tracking).
+- Micro-labels: use `.text-micro` (11px uppercase secondary ink, wide tracking)
+  for section eyebrows and table labels, not for every supporting sentence.
+- Card titles: Archivo 600, 15px, sentence case, snug leading. Supporting
+  descriptions use readable secondary ink with relaxed leading.
 - Numerals in stats/tables: add `.tabular`.
 
 ## Components you MUST reuse (do not re-implement)
@@ -97,18 +112,41 @@ const { data, loading } = useQuery(
 - Errors: say what went wrong and how to fix it.
 - Row click targets are real `<button>`/`<Link>` (keyboard reachable). NO
   dead `#` anchors anywhere; stubbed actions are buttons with visible result.
-- Focus rings are global (`:focus-visible`) — do not disable outlines.
-- Motion: 150–200ms ease-out; hover lift = `hover:shadow-card-hover` +
-  optional `hover:-translate-y-0.5`. Nothing bouncy.
+- Focus rings are global (`:focus-visible`): 2px monochrome ring and 2px offset;
+  forced-colors mode also receives a visible system outline. Never remove focus
+  treatment without an equally visible replacement.
+- Shared buttons: default and icon 40px; large 44px; small and compact icon
+  36px, with a 40px minimum on small screens. Icon-only buttons need an accessible
+  name; tooltips supplement the name. Preserve touch targets when adding classes.
+- Motion: 150–200ms ease-out for controls. Static cards do not lift or gain a
+  deeper hover shadow; use a subtle surface change for an actual clickable item.
+  Existing page-entry motion respects `prefers-reduced-motion`. Nothing bouncy.
 - Dark mode must be checked for every screen: cards separate by border, not
   shadow; images/plates already work in both.
 
 ## Layout
 
-- Page content lives inside `app/(app)/*` under the shell (rail + top bar,
-  already built). Pages render their content only — no page-level titles
-  (the top bar shows the title) unless the design needs a section header.
-- Bento/cards: `Card` (24px radius). Inner panels `rounded-panel` (16px).
+- Page content lives inside `app/(app)/*` under the shared horizontal shell.
+  Keep the existing FortMark logo and Archivo identity. Core destinations stay
+  in primary navigation; secondary destinations stay in More. Search, New,
+  notifications and account controls remain available without dominating content.
+- Home opens with a compact, theme-aware editorial welcome row: a 36–48px
+  greeting, actual date and role, and a slender attention summary. It is not a
+  large black cover card. The approved tagline is not repeated on Home.
+- The business snapshot follows with the reporting period at the upper right
+  and four consistent metric cells. A cell that links to its underlying records
+  is a real Link with visible keyboard focus. Each metric retains its source,
+  coverage, and missing-data caveats; visual polish never changes its meaning.
+- Keep core work widgets visible early in the page. Avoid oversized greetings,
+  empty decorative bands, and repeated headings that push transactions and
+  follow-ups out of view.
+- Bento/cards: `rounded-card` (16px); inner panels/popovers `rounded-panel`
+  (12px); controls `rounded-lg` or `rounded-md` (8px); composer 16px. Light cards
+  use a restrained shadow and quiet edge; dark cards separate through borders.
+- Shared cards and widgets use 20px insets. Widget headers use a compact 32px
+  icon backing, sentence-case title, optional 11px period caption, and named
+  period/expand controls. Titles may wrap instead of disappearing into ellipses.
+  Expanded widgets preserve the same content and keyboard-accessible dialog.
 - Tables: 13px, `.text-micro` headers, paginate past ~10-12 rows with a
   quiet "Showing x–y of z" + Previous/Next buttons.
 

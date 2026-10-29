@@ -15,9 +15,9 @@ export function ThemeToggle() {
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
-          variant="outline"
+          variant="ghost"
           size="icon"
-          className="h-9 w-9"
+          className="h-11 w-11 shrink-0 text-muted-foreground hover:bg-accent hover:text-foreground"
           aria-label={
             mounted && resolvedTheme === "dark"
               ? "Switch to light mode"

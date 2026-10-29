@@ -26,11 +26,10 @@ export function NewMenu() {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          {/* Outline, not filled: in the top bar the only solid white element
-              should be the selected section. Icon-only until xl. */}
-          <Button variant="outline" className="h-9 w-9 px-0 xl:w-auto xl:px-3" aria-label="New" data-new-trigger>
+          {/* The launcher shares the shell's quiet utility treatment. */}
+          <Button variant="ghost" className="h-11 w-11 shrink-0 px-0 text-muted-foreground hover:bg-accent hover:text-foreground 2xl:w-auto 2xl:px-3" aria-label="New" data-new-trigger>
             <Plus />
-            <span className="hidden xl:inline">New</span>
+            <span className="hidden 2xl:inline">New</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48">

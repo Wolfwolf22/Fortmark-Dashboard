@@ -78,19 +78,19 @@ export function WidgetCard({
   const [expanded, setExpanded] = React.useState(false);
 
   const header = (
-    <div className="flex items-start justify-between gap-2 p-6 pb-4">
-      <div className="flex min-w-0 items-center gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-tint">
-          <Icon className="h-4 w-4" aria-hidden />
+    <div className="flex items-start justify-between gap-2 px-5 pb-4 pt-5">
+      <div className="flex min-w-0 items-center gap-2.5 pt-0.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-tint text-muted-foreground">
+          <Icon className="h-4 w-4" aria-hidden="true" />
         </span>
         <div className="min-w-0">
-          <h3 className="truncate text-[15px] font-bold leading-tight">{title}</h3>
+          <h3 className="text-[15px] font-semibold leading-snug tracking-[-0.01em]">{title}</h3>
           {preset != null && (
-            <p className="text-micro mt-0.5">{periodSublabel(preset)}</p>
+            <p className="mt-1 text-[11px] font-medium leading-4 text-muted-foreground">{periodSublabel(preset)}</p>
           )}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-0.5">
         {headerExtra}
         {onPresetChange && preset != null && (
           <DropdownMenu>
@@ -146,10 +146,10 @@ export function WidgetCard({
 
   return (
     <>
-      <Card className={cn("flex h-full flex-col transition-shadow duration-200 hover:shadow-card-hover", className)}>
+      <Card className={cn("flex h-full flex-col", className)}>
         {header}
         <WidgetExpandContext.Provider value={{ expanded: false }}>
-          <div className={cn("min-h-0 flex-1 px-6 pb-6", contentClassName)}>{children}</div>
+          <div className={cn("min-h-0 flex-1 px-5 pb-5", contentClassName)}>{children}</div>
         </WidgetExpandContext.Provider>
       </Card>
 
@@ -157,8 +157,8 @@ export function WidgetCard({
         <DialogContent className="flex h-[85vh] w-[min(1100px,92vw)] max-w-none flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-tint">
-                <Icon className="h-4 w-4" aria-hidden />
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-tint text-muted-foreground">
+                <Icon className="h-4 w-4" aria-hidden="true" />
               </span>
               {title}
             </DialogTitle>

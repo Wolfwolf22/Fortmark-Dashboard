@@ -32,3 +32,6 @@ dev-server.log
 /test-results/
 /playwright-report/
 /blob-report/
+
+# Local design preview output.
+/tools/design-preview/dist/

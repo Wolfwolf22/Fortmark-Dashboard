@@ -18,7 +18,8 @@
  * em dash and says why underneath — never a zero, which would be a claim.
  */
 import Link from "next/link";
-import { FlaskConical } from "lucide-react";
+import { ArrowUpRight, FlaskConical } from "lucide-react";
+import { DateRangeSelector } from "@/components/layout/date-range-selector";
 import { useHomeMetrics } from "./metrics-provider";
 import { UnavailableBody } from "./metric-state";
 import { isFirstUse } from "@/lib/metrics/home-layout";
@@ -102,6 +103,25 @@ export function figures(metrics: BrokerageMetrics): Figure[] {
 export function DailyBrief() {
   const { metrics, loading, error } = useHomeMetrics();
 
+  const heading = (
+    <div className="mb-3 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+      <div>
+        <p className="text-micro">
+          Business snapshot{metrics ? <> / <span className="text-foreground">{scopeLabel(metrics.scope, metrics.contactsScope)}</span></> : null}
+        </p>
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          {metrics ? `Monthly figures cover ${monthLabel(metrics.monthStart)}` : "Current business and monthly production"}
+        </p>
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+        <p className="text-micro">Reporting period</p>
+        <div className="max-w-full overflow-x-auto py-1 [scrollbar-width:thin]">
+          <DateRangeSelector />
+        </div>
+      </div>
+    </div>
+  );
+
   // A request that failed is not a request still in flight. Without this
   // branch a failed fetch left the skeleton pulsing indefinitely — the widgets
   // below said "Metrics could not be loaded" while the headline band above
@@ -109,7 +129,8 @@ export function DailyBrief() {
   // it by reading the code; the same sentence the widgets use goes here.
   if (error) {
     return (
-      <section aria-label="Daily brief" className="mb-6" role="status">
+      <section aria-label="Daily brief" className="mb-7" role="status">
+        {heading}
         <UnavailableBody
           availability="unavailable"
           detail="Metrics could not be loaded. Refresh to retry."
@@ -120,11 +141,12 @@ export function DailyBrief() {
 
   if (loading || !metrics) {
     return (
-      <section aria-label="Daily brief" className="mb-5">
-        <div className="h-3 w-48 animate-pulse rounded bg-tint" />
-        <div className="mt-3 grid grid-cols-2 overflow-hidden rounded-card border-x gap-px border-y border-border bg-border sm:grid-cols-4">
+      <section aria-label="Daily brief" className="mb-7">
+        {heading}
+        <div className="grid grid-cols-2 overflow-hidden rounded-card border-x gap-px border-y border-border bg-border sm:grid-cols-4">
           {Array.from({ length: 4 }, (_, i) => (
-            <div key={i} className="bg-card px-4 py-5 sm:px-5 sm:py-6">
+            <div key={i} className="bg-card px-4 py-5 sm:px-5">
+              <div className="mb-4 h-3 w-24 animate-pulse rounded bg-tint" />
               <div className="h-8 w-20 animate-pulse rounded bg-tint" />
               <div className="mt-3 h-3 w-24 animate-pulse rounded bg-tint" />
             </div>
@@ -138,15 +160,8 @@ export function DailyBrief() {
   const firstUse = isFirstUse(metrics);
 
   return (
-    <section aria-label="Daily brief" className="mb-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <p className="text-micro">
-          Business snapshot · <span className="text-foreground">{scopeLabel(metrics.scope, metrics.contactsScope)}</span>
-        </p>
-        <p className="text-micro">
-          Monthly figures cover {monthLabel(metrics.monthStart)}
-        </p>
-      </div>
+    <section aria-label="Daily brief" className="mb-7">
+      {heading}
 
       {metrics.source === "sample" && (
         <p
@@ -166,17 +181,29 @@ export function DailyBrief() {
           cells without a border on each side collapsing into a double line. */}
       <dl className="mt-3 grid grid-cols-2 overflow-hidden rounded-card border-x gap-px border-y border-border bg-border sm:grid-cols-4">
         {rows.map((figure) => (
-          <div key={figure.label} className="bg-card px-4 py-5 sm:px-5 sm:py-6">
+          <div key={figure.label} className="group relative min-w-0 bg-card p-4 transition-colors hover:bg-accent/40 sm:px-5">
+            <dt className="min-h-8 text-[12px] font-medium leading-snug text-muted-foreground sm:min-h-5 sm:text-[13px]">
+              {figure.value !== null ? (
+                <Link
+                  href={figure.label === "Active clients" ? ROUTES.contacts : ROUTES.transactions}
+                  className="flex items-start justify-between gap-2 after:absolute after:inset-0 focus-visible:ring-inset"
+                  aria-label={`View ${figure.label.toLowerCase()}`}
+                >
+                  {figure.label}
+                  <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" aria-hidden />
+                </Link>
+              ) : figure.label}
+            </dt>
             <dd
               className={cn(
-                "font-display leading-none tracking-[-0.02em] tabular",
-                figure.value ? "text-[32px] sm:text-4xl" : "text-[32px] text-muted-foreground sm:text-4xl"
+                "mt-3 font-semibold tracking-[-0.04em] tabular",
+                figure.value ? "text-[32px] sm:text-[36px]" : "text-[32px] text-muted-foreground sm:text-[36px]",
+                "leading-none"
               )}
             >
               {figure.value ?? "—"}
             </dd>
-            <dt className="mt-2.5 text-[13px] font-semibold leading-tight">{figure.label}</dt>
-            <p className="mt-1 text-xs leading-snug text-muted-foreground">{figure.note}</p>
+            <dd className="mt-2 text-xs leading-relaxed text-muted-foreground">{figure.note}</dd>
           </div>
         ))}
       </dl>
