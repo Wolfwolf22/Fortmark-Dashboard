@@ -43,7 +43,7 @@ import {
   type FollowUpChangeInput,
 } from "./domain.ts";
 import { canTransition, requiresEngagementNotice } from "./stages.ts";
-import { visibleTo } from "./visibility.ts";
+import { contactFamilyIds, visibleTo } from "./visibility.ts";
 import { contactOrder, contactWhere, filterPredicates } from "./list-sql.ts";
 import { DEFAULT_PAGE_SIZE, isPaged, MAX_PAGE_SIZE, type ContactQuery } from "./filters.ts";
 import type { LeadPage, LeadSnapshot } from "./windows.ts";
@@ -81,6 +81,7 @@ export type ServiceFailure =
   | "invalid_phone"
   | "invalid_note"
   | "invalid_need"
+  | "invalid_merge"
   | "invalid_action"
   | "invalid_request"
   | "invalid_revision"
@@ -241,11 +242,23 @@ export async function getContact(ctx: Ctx, id: string): Promise<Lead | null> {
   const rows = await ctx.db
     .select()
     .from(contacts)
-    .where(and(eq(contacts.id, id), visibleTo(ctx.actor)))
+    .where(and(eq(contacts.id, id), visibleTo(ctx.actor, { includeMerged: true })))
     .limit(1);
-  const row = rows[0];
+  let row = rows[0];
   if (!row || !canSee(ctx.actor, row)) return null;
-  return (await bundle(ctx, [row], true))[0] ?? null;
+  const book = row.brokerageKey, owner = row.assignedAgentUserId, seen = new Set([id]);
+  for (let hop = 0; row.mergedIntoContactId && hop < 32; hop++) {
+    const targetId = row.mergedIntoContactId;
+    if (seen.has(targetId)) return null;
+    seen.add(targetId);
+    const target = await ctx.db.select().from(contacts).where(and(eq(contacts.id, targetId), visibleTo(ctx.actor, { includeMerged: true }))).limit(1);
+    const primary = target[0];
+    if (!primary || primary.brokerageKey !== book || primary.assignedAgentUserId !== owner) return null;
+    row = primary;
+  }
+  if (row.mergedIntoContactId) return null;
+  const resolved = (await bundle(ctx, [row], true))[0];
+  return resolved ? { ...resolved, ...(row.id !== id ? { requestedContactId: id } : {}) } : null;
 }
 
 /** The activity history of one contact, newest first. Scoped like a read. */
@@ -256,7 +269,7 @@ export async function listActivities(ctx: Ctx, id: string, limit = 50): Promise<
   return ctx.db
     .select()
     .from(contactActivities)
-    .where(eq(contactActivities.contactId, id))
+    .where(eq(contactActivities.contactId, contact.id))
     .orderBy(desc(contactActivities.occurredAt))
     .limit(Math.min(Math.max(limit, 1), 200));
 }
@@ -753,7 +766,7 @@ export async function getTimeline(ctx: Ctx, id: string, limit = 100): Promise<Se
       .where(
         and(
           eq(auditEvents.eventType, "contact_updated"),
-          sql`${auditEvents.safeMetadata}->>'contactId' = ${id}`,
+          sql`${auditEvents.safeMetadata}->>'contactId' in (${contactFamilyIds(ctx.actor, id)})`,
           sql`${auditEvents.safeMetadata}->>'field' = 'nextFollowUpAt'`
         )
       )
@@ -771,7 +784,7 @@ export async function getTimeline(ctx: Ctx, id: string, limit = 100): Promise<Se
       .where(
         and(
           inArray(auditEvents.eventType, [...TIMELINE_DOMAIN_EVENTS]),
-          sql`${auditEvents.safeMetadata}->>'contactId' = ${id}`
+          sql`${auditEvents.safeMetadata}->>'contactId' in (${contactFamilyIds(ctx.actor, id)})`
         )
       )
       .orderBy(desc(auditEvents.createdAt))

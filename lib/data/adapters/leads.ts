@@ -30,6 +30,9 @@ import type { CreateNeedInput, NeedView, UpdateNeedInput } from "../../contacts/
 import type { LinkedTransaction } from "../../contacts/linked.ts";
 import type { Birthday } from "../../contacts/birthday.ts";
 import type { NextActionInput } from "../../contacts/next-action.ts";
+import type { ImportCommitInput, ImportPreview, ImportPreviewInput, ImportResult } from "../../contacts/import.ts";
+import type { DuplicateSuggestionsPage } from "../../contacts/duplicates.ts";
+import type { ContactMergeInput, ContactMergeResult, MergeReview } from "../../contacts/merge.ts";
 import { HISTORY_PAGE_SIZE, type HistoryPage } from "../../contacts/history.ts";
 
 export type { LeadFilters };
@@ -165,6 +168,30 @@ export async function updateNextAction(id: string, input: NextActionInput): Prom
   } finally {
     bumpDataVersion();
   }
+}
+
+export async function previewContactImport(input: ImportPreviewInput): Promise<ImportPreview> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  return request<ImportPreview>("/api/contacts/import/preview", { method: "POST", body: JSON.stringify(input) }, { read: true });
+}
+export async function commitContactImport(input: ImportCommitInput): Promise<ImportResult> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try { return await request<ImportResult>("/api/contacts/import", { method: "POST", body: JSON.stringify(input) }); }
+  finally { bumpDataVersion(); }
+}
+export async function getContactDuplicates(cursor?: string): Promise<DuplicateSuggestionsPage> {
+  if ((await getLeadSource()) === "sample") return { pairs: [], scannedContacts: 0, totalContacts: 0, hasMore: false, nextCursor: null };
+  const query = cursor ? `?${new URLSearchParams({ cursor })}` : "";
+  return request<DuplicateSuggestionsPage>(`/api/contacts/duplicates${query}`);
+}
+export async function getContactMergeReview(primaryId: string, duplicateId: string): Promise<MergeReview> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  return request<MergeReview>("/api/contacts/merge/review", { method: "POST", body: JSON.stringify({ primaryId, duplicateId }) }, { read: true });
+}
+export async function mergeContacts(input: ContactMergeInput): Promise<ContactMergeResult> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try { return await request<ContactMergeResult>("/api/contacts/merge", { method: "POST", body: JSON.stringify(input) }); }
+  finally { bumpDataVersion(); }
 }
 
 /**

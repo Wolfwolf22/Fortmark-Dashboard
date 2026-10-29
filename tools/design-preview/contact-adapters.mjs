@@ -1,5 +1,6 @@
 import { applyQuery, snapshotOf } from "../../lib/contacts/windows.ts";
-import { previewContacts, contactAgents, contactNotes } from "./contact-fixtures.mjs";
+import { contactAgents } from "./contact-fixtures.mjs";
+import { allPreviewContacts } from "./import-merge-fixtures.mjs";
 import { visualTransactions } from "./visual-fixtures.mjs";
 import { announceReadOnly } from "./read-only.mjs";
 import { HISTORY_PAGE_SIZE, decodeHistoryCursor, historyPage } from "../../lib/contacts/history.ts";
@@ -11,7 +12,10 @@ import { nextActionMutationSchema, nextActionDayMirror, nextActionSetEvent, chec
 import { toTimeline } from "../../lib/contacts/timeline.ts";
 import { bumpDataVersion } from "../../lib/data/store.ts";
 import { z } from "zod";
-import { SAMPLE_ACTOR, getPreviewScenario, interactiveSamples, canWriteSample, readSampleContacts, readSampleContact, readSampleNeeds, readSampleTimeline, replaceSampleContact, replaceSampleNeeds, appendSampleTimeline, nextSampleRevision } from "./sample-session.mjs";
+import { LeadsError } from "./contact-errors.mjs";
+export { LeadsError } from "./contact-errors.mjs";
+export { previewContactImport, commitContactImport, getContactDuplicates, getContactMergeReview, mergeContacts } from "./import-merge-adapters.mjs";
+import { SAMPLE_ACTOR, getPreviewScenario, interactiveSamples, canWriteSample, readSampleContacts, readSampleContact, readSampleRawContacts, readSampleNeeds, readSampleNotes, readSampleTransactionIds, readSampleTimeline, replaceSampleContact, replaceSampleNeeds, appendSampleTimeline, nextSampleRevision } from "./sample-session.mjs";
 
 const copy = value => value === undefined ? undefined : structuredClone(value);
 const scenario = getPreviewScenario;
@@ -37,16 +41,13 @@ const remoteProjection = contact => {
 };
 const rows = () => readSampleContacts().map(remoteProjection);
 let failedOnce = false;
-export class LeadsError extends Error {
-  constructor(code, status = 403, fields = []) { super(`Design preview: ${code}`); this.name = "LeadsError"; this.code = code; this.status = status; this.fields = fields; }
-}
 const readOnly = () => { announceReadOnly(); return Promise.reject(new LeadsError("preview_read_only", 403)); };
 export const createLead = readOnly;
 export const markContacted = readOnly;
 export const logTouch = readOnly;
 export const changeFollowUp = readOnly;
 export async function updateContact(id, patch) {
-  const contact = previewContacts.find(item => item.id === id);
+  const contact = allPreviewContacts.find(item => item.id === id);
   if (scenario() === "conflict" && contact?.recordSource === "db" && !remoteReads.has(id)) {
     // Select a predefined newer read projection. No draft field is written and
     // the base fixture remains immutable; this only exercises a refused save.
@@ -72,6 +73,7 @@ export const addNote = readOnly;
 export const deleteNote = readOnly;
 function invalid(error) { return new LeadsError("invalid", 400, [...new Set(error.issues.map(issue => String(issue.path[0] || "input")))]); }
 function writable(id) {
+  if (readSampleRawContacts().find(item => item.id === id)?.mergedIntoContactId) throw new LeadsError("merged_contact", 409);
   const contact = readSampleContact(id);
   if (!contact) throw new LeadsError("not_found", 404);
   if (!canWriteSample(contact)) throw new LeadsError("preview_read_only", 403);
@@ -81,7 +83,7 @@ function revision(contact, expected) {
   if (!z.string().datetime().safeParse(expected).success) throw new LeadsError("invalid_revision", 400, ["expectedUpdatedAt"]);
   if (Date.parse(expected) !== Date.parse(contact.updatedAt)) throw new LeadsError("conflict", 409);
 }
-function event(id, type, title, at) { appendSampleTimeline(id, { id: crypto.randomUUID(), type, title, at, by: "Sample Agent" }); }
+function event(id, type, title, at) { appendSampleTimeline(id, { id: crypto.randomUUID(), type, title, at, by: "Sample Agent" }, undefined, type !== "need"); }
 function actionAssignees(contact) {
   if (!contact || contact.recordSource !== "db") return [];
   // The fixture actor is an eligible active Admin; the only other eligible
@@ -98,7 +100,7 @@ function actionEvent(id, eventName, action, at, summary = "") {
   items.forEach(item => appendSampleTimeline(id, item));
 }
 export async function updateNextAction(id, input) {
-  const fixture = previewContacts.find(item => item.id === id);
+  const fixture = allPreviewContacts.find(item => item.id === id);
   if (scenario() === "conflict" && fixture?.recordSource === "db" && !remoteActionReads.has(id)) {
     remoteActionReads.add(id);
     throw new LeadsError("conflict", 409);
@@ -184,7 +186,7 @@ export async function updateNeed(id, needId, patch) {
   return { need: copy(need), changed: plan.changed };
 }
 export async function getLeadSource() { return "db"; }
-export async function getLead(id) { return copy(rows().find(contact => contact.id === id)); }
+export async function getLead(id) { const contact = readSampleContact(id); return copy(contact ? remoteProjection(contact) : undefined); }
 export async function getLeads(filters = {}, range) {
   const result = rows().filter(contact => {
     if (filters.stage?.length && !filters.stage.includes(contact.stage)) return false;
@@ -213,7 +215,7 @@ export async function getLeadsPage(query) {
 }
 export async function getLeadSnapshot() { return copy(snapshotOf(rows(), new Date(), SAMPLE_ACTOR.userId)); }
 export async function getTimeline(id) { return copy(rows().some(contact => contact.id === id) ? readSampleTimeline(id) : []); }
-export async function getNotes(id) { return copy(rows().some(contact => contact.id === id) ? contactNotes[id] || [] : []); }
+export async function getNotes(id) { return copy(rows().some(contact => contact.id === id) ? readSampleNotes(id) : []); }
 export async function getNeeds(id) { return copy(rows().some(contact => contact.id === id) ? readSampleNeeds(id) : []); }
 function historyCursor(cursor) {
   if (!cursor) return undefined;
@@ -237,6 +239,6 @@ export async function getEligibleContacts(query) {
 }
 export async function getLinkedTransactions(id) {
   if (scenario() === "empty") return [];
-  const ids = id === "sample-upcoming" ? ["sample-financing"] : id === "sample-overdue" ? ["sample-offer"] : [];
+  const ids = readSampleTransactionIds(id);
   return copy(visualTransactions.filter(deal => ids.includes(deal.id)).map(({ id, address, city, stage }) => ({ id, address, city, stage })));
 }

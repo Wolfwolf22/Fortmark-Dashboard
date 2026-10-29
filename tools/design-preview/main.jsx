@@ -21,6 +21,7 @@ import ListingDetailPage from "@/app/(app)/listings/[id]/page";
 import TransactionsPage from "@/app/(app)/transactions/page";
 import ContactsPage from "@/app/(app)/contacts/page";
 import { PREVIEW_WRITE_EVENT } from "./read-only.mjs";
+import { sampleImportCsv } from "./import-merge-fixtures.mjs";
 
 installPreviewTransport();
 // In-memory only: dragging in this review never touches account storage.
@@ -68,6 +69,7 @@ function PreviewControls() {
       <span>{interactive ? "Changes stay in memory. Reload resets. No live services." : "Read-only sample data. No live accounts or services."}</span>
       <PreviewLink href="/settings" className="ml-1 font-semibold text-foreground underline underline-offset-4">View foundations</PreviewLink>
       {route === "/contacts" && <PreviewLink href="/contacts?open=sample-long-history" className="font-semibold text-foreground underline underline-offset-4">Long history case</PreviewLink>}
+      {route === "/contacts" && <a href={`data:text/csv;charset=utf-8,${encodeURIComponent(sampleImportCsv)}`} download="fortmark-synthetic-contacts.csv" className="font-semibold text-foreground underline underline-offset-4">Sample CSV</a>}
       {interactive && <button type="button" className="font-semibold text-foreground underline underline-offset-4" onClick={() => window.location.reload()}>Reset samples</button>}
       {["/transactions", "/contacts"].includes(route) && <label className="ml-2 flex items-center gap-2">Preview data
         <select aria-label={route === "/contacts" ? "Preview contact data" : "Preview transaction data"} value={scenario} className="rounded border border-input bg-card px-2 py-1 text-foreground" onChange={event => {
@@ -84,13 +86,13 @@ function PreviewControls() {
       </label>}
     </div>
     {interactive && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
-      Only contact stages, next actions, client needs and client information can be saved in these synthetic samples. Notes and other actions remain disabled. Reload or Reset samples discards all sample changes.
+      Contact stages, next actions, needs, client information, CSV import and duplicate merges can save these synthetic samples. Other writes remain blocked. Reload or Reset samples discards every change.
     </p>}
     {route === "/contacts" && scenario === "conflict" && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
-      Conflict rehearsal: change a sample contact's Company or next action, then save. The refused save reveals a predefined newer sample version. Review latest details to compare it with your kept draft. No draft is written.
+      Conflict rehearsal: change a sample contact's Company or next action, or review a duplicate merge, then save. The refused save reveals a predefined newer sample version. Review latest details to compare it with your kept draft. No draft is written.
     </p>}
     {writeBlocked && <div role="alert" className="flex items-center justify-center gap-3 border-b border-border bg-card px-4 py-2 text-xs">
-      <span>{interactive ? "This action is disabled in interactive samples. Only contact stages, next actions, needs and client information can be saved." : "Design preview is read-only. No records were changed."}</span>
+      <span>{interactive ? "This write is disabled in interactive samples. Only stages, next actions, needs, client information, import and duplicate merge can save." : "Design preview is read-only. No records were changed."}</span>
       <button type="button" className="font-semibold underline underline-offset-4" onClick={() => setWriteBlocked(false)}>Dismiss</button>
     </div>}
   </>;

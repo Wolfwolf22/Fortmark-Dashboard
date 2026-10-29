@@ -246,6 +246,52 @@ const { data, loading } = useQuery(
   day-based. Home, contact filters, snapshot counts and list rows share this
   rule. Keep current content visible during clock refreshes. Preserve drafts
   across failed saves, assignee refreshes and explicit conflict review.
+- Import contacts and Review duplicates are quiet secondary actions beside
+  New contact, offered only to roles that can write. They open dedicated review
+  dialogs; choosing a file or opening a suggestion never writes a contact.
+- CSV import follows file or paste, column mapping, row checking and correction,
+  explicit add/update/skip decisions, final review, then saved results. Keep the
+  raw file local and send only mapped fields for checking. Respect the shared
+  1 MiB, 250-row and 50-column limits. Corrections require a new row check before
+  saving; lock editing while a check is pending so its response cannot erase a
+  newer draft. Show validation errors and actual row counts without fake progress.
+- Exact email/phone and in-file matches require an explicit separate-contact
+  choice before Add. Similar-name hints are advisory and do not require that
+  override. Updates name the saved target and its reviewed revision; blank
+  imported fields leave saved values in place and imported notes become separate
+  notes. Final review shows human source/stage labels and the actual field values;
+  saved results report the server's added, updated and skipped outcomes.
+- Same-name candidates must remain distinguishable in cards, update options,
+  selected-target summaries and final review. Include phone, with email as a
+  fallback, in update options; include company and human stage in the option
+  label and selected-target summary where available. Never make the person choose
+  between identical name-only options when identifying details exist.
+- Duplicate Review is advisory and scoped to one owner's book. Choose the
+  primary contact, explicitly choose conflicting field versions, and review
+  retained-record counts. Primary and duplicate cards keep email, phone and
+  company visible through final review so same-name records remain identifiable.
+  After success the footer offers Close and Open primary contact, without
+  returning to completed merge choices. Nonconflicting defaults may fill blanks. Structured
+  next actions and date-only reminders both participate in the pending-schedule
+  choice: retain a sole schedule by default; if both exist, require a choice.
+  Choosing none explicitly clears pending schedules, with action history retained.
+  Engagement acknowledgement follows the shared stage-transition rule; keeping
+  the primary's existing Representation stage does not ask again.
+- Merge retains notes, needs, activity and linked records. The duplicate remains
+  an archived record pointing to the primary, and old links open the primary.
+  Do not promise unmerge. Freeze both contact revisions and history fingerprints;
+  a stale review keeps explicit choices but requires a deliberate review of fresh
+  versions. Exact retries reuse their request identity for both import and merge.
+- Import and duplicate dialogs fit 320px screens with wrapping values, a bounded
+  height, pinned heading/actions and one scrolling body. Full comparison text
+  stays readable without extra static-value tab stops or nested scroll regions.
+  Moving to a new review step or recovering from a failed review resets that
+  body to the top and focuses its heading; field choices preserve the scroll position.
+  Import pagination announces its range and focuses the first new row. Duplicate
+  scans report examined contacts and loaded suggestions honestly: an empty
+  intermediate page still offers Continue checking, and completing the last page
+  keeps its control present for focus. Retry returns to a stable review control;
+  closing returns focus to the toolbar action that opened the dialog.
 
 ## Copy checklist (every string you write)
 

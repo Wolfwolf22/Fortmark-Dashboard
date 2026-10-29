@@ -3,6 +3,7 @@ import "server-only";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { auditEvents, contactActivities } from "../db/schema.ts";
 import { loadContact } from "./access.ts";
+import { contactFamilyIds } from "./visibility.ts";
 import { agentNames, type Ctx, type ServiceResult } from "./service.ts";
 import { TIMELINE_DOMAIN_EVENTS } from "./events.ts";
 import { toTimeline, type TimelineItem } from "./timeline.ts";
@@ -30,11 +31,11 @@ export async function getTimelinePage(ctx: Ctx, contactId: string, options: { pa
       .from(contactActivities).where(and(eq(contactActivities.contactId, contactId), boundary(activityStamp, activityId)))
       .orderBy(desc(activityStamp), desc(activityId)).limit(limit),
     ctx.db.select({ id: auditEvents.id, createdAt: auditEvents.createdAt, actorUserId: auditEvents.actorUserId, safeMetadata: auditEvents.safeMetadata })
-      .from(auditEvents).where(and(eq(auditEvents.eventType, "contact_updated"), sql`${auditEvents.safeMetadata}->>'contactId' = ${contactId}`,
+      .from(auditEvents).where(and(eq(auditEvents.eventType, "contact_updated"), sql`${auditEvents.safeMetadata}->>'contactId' in (${contactFamilyIds(ctx.actor, contactId)})`,
         sql`${auditEvents.safeMetadata}->>'field' = 'nextFollowUpAt'`, sql`${auditEvents.safeMetadata}->>'followUp' in ('scheduled', 'rescheduled', 'completed')`, boundary(eventStamp, eventId)))
       .orderBy(desc(eventStamp), desc(eventId)).limit(limit),
     ctx.db.select({ id: auditEvents.id, eventType: auditEvents.eventType, createdAt: auditEvents.createdAt, actorUserId: auditEvents.actorUserId, safeMetadata: auditEvents.safeMetadata })
-      .from(auditEvents).where(and(inArray(auditEvents.eventType, [...TIMELINE_DOMAIN_EVENTS]), sql`${auditEvents.safeMetadata}->>'contactId' = ${contactId}`, boundary(eventStamp, eventId)))
+      .from(auditEvents).where(and(inArray(auditEvents.eventType, [...TIMELINE_DOMAIN_EVENTS]), sql`${auditEvents.safeMetadata}->>'contactId' in (${contactFamilyIds(ctx.actor, contactId)})`, boundary(eventStamp, eventId)))
       .orderBy(desc(eventStamp), desc(eventId)).limit(limit),
   ]);
   const userIds = new Set<string>();

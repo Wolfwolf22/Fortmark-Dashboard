@@ -143,6 +143,10 @@ export function toTimeline(input: {
     const meta = a.safeMetadata ?? {};
     const by = nameOf(a.actorUserId);
     const at = a.occurredAt.toISOString();
+    if (a.kind === "task" && meta.event === "contact_merged") {
+      items.push({ id: a.id, type: "task", title: "Contact files merged", at, by, rank: RANK_TOUCH });
+      continue;
+    }
 
     const actionTitles: Record<string, string> = {
       next_action_created: "Next action scheduled", next_action_edited: "Next action updated",

@@ -69,6 +69,7 @@ const OPEN = OPEN_PIPELINE_STAGES as readonly string[];
 
 /** Whether one lead satisfies every filter in the query. `viewerId` resolves `mine`. */
 export function leadMatches(lead: Lead, query: ContactQuery, now: Date, viewerId?: string): boolean {
+  if (lead.mergedIntoContactId) return false;
   const w = queryWindows(now);
   if (query.stage?.length && !query.stage.includes(lead.stage)) return false;
   if (query.source?.length && !query.source.includes(lead.source)) return false;

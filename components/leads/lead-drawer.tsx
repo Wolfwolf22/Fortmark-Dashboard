@@ -97,6 +97,7 @@ export interface LeadDrawerProps {
   leadId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onContactRedirect?: (id: string) => void;
   refreshKey?: number;
 }
 
@@ -166,10 +167,13 @@ function describe(error: unknown): string {
   return "The change could not be saved. Try again.";
 }
 
-export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadDrawerProps) {
+export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refreshKey = 0 }: LeadDrawerProps) {
   const { data, loading, error: loadError, refetch } = useQuery<Lead | undefined>(() => (leadId ? getLead(leadId) : Promise.resolve(undefined)), [leadId, refreshKey]);
   // Guard against stale data from a previously opened lead.
-  const lead = data && data.id === leadId ? data : undefined;
+  const lead = data && (data.id === leadId || data.requestedContactId === leadId) ? data : undefined;
+  useEffect(() => {
+    if (open && data?.requestedContactId === leadId && data.id !== leadId) onContactRedirect?.(data.id);
+  }, [open, data?.id, data?.requestedContactId, leadId, onContactRedirect]);
   const sample = lead?.recordSource === "sample";
 
   // A stored contact carries its owner's name; only the sample roster needs the agents adapter.
@@ -180,7 +184,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
   const abilities = leadAbilities(useSessionUser().role);
   const setQuickCreate = useUiStore((s) => s.setQuickCreate);
 
-  const linked = useQuery(() => (leadId && lead && !sample ? getLinkedTransactions(leadId) : Promise.resolve([])), [leadId, lead?.id, sample, refreshKey]);
+  const linked = useQuery(() => (lead && !sample ? getLinkedTransactions(lead.id) : Promise.resolve([])), [leadId, lead?.id, sample, refreshKey]);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -316,6 +316,7 @@ export function toLead(bundle: ContactBundle): Lead {
   const lastContact = row.lastContactAt ?? bundle.latestActivity?.occurredAt ?? row.createdAt;
   return {
     id: row.id,
+    ...(row.mergedIntoContactId ? { mergedIntoContactId: row.mergedIntoContactId } : {}),
     name: displayName(row),
     email: row.email ?? "",
     phone: row.phoneE164 ?? "",

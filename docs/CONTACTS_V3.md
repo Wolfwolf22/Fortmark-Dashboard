@@ -4,6 +4,12 @@ Status: **Built and certified on Preview. NOT in Production.**
 Branch: `claude/dashboard-status-yir55p` · Production baseline: `74ff9d4` (Leads V2), untouched.
 Schema record: [`CONTACTS_V3_SCHEMA_PROPOSAL.md`](./CONTACTS_V3_SCHEMA_PROPOSAL.md) (APPROVED / APPLIED TO PREVIEW).
 
+**Current local release — 2026-10-29:** the reliability, client-context, Next Action,
+CSV import and reviewed-merge additions below are implemented and verified locally.
+The historical Preview certification above does not certify these additions on a
+deployment. Migrations **0015–0018 remain unapplied to live databases**; Production
+was not changed by this work.
+
 ## What changed
 
 ### Who sees what
@@ -273,3 +279,136 @@ backend checks, 54 actual PostgreSQL cross-view checks, 30 UI/state checks and
 61 real-adapter checks. The isolated preview adds 10 next-action contract
 groups alongside its 11 existing groups. Browser verification uses synthetic,
 memory-only samples; this is separate from authenticated deployment testing.
+
+## CSV import and reviewed contact merge — 2026-10-29
+
+### CSV review and commit
+
+The import dialog parses CSV locally before sending only the mapped, corrected
+fields for a read-only server preview. Bounds are **1 MiB, 250 data rows, 50
+columns and 10,000 characters per cell**; mapped requests are also bounded to
+1 MiB. The parser handles a UTF-8 BOM, CRLF/LF records, comma/semicolon/tab
+delimiters, quoted multiline cells and escaped quotes. Malformed quoting or
+inconsistent row widths are refused rather than silently changing the file's
+meaning. Cells remain text; formulas are never evaluated.
+
+Supported mappings are first name, last name, preferred name/full name, email,
+phone, company, source, stage, About and Notes. A full name is preserved as the
+preferred/display name rather than guessed into first and last names. Email and
+phone use the shared normalization rules; source/stage accept known enum values
+and stable display labels. Row field errors can be corrected and checked again
+before applying anything.
+
+Each reviewed row has an explicit add, update or skip decision. Exact normalized
+email/phone matches and in-file duplicate identifiers default to skip. Creating
+a separate record despite an exact match requires an explicit separate-record
+choice; updating requires a selected target and its reviewed revision. Similar
+names are advisory and never cause an automatic merge. Preview shows at most 50
+candidates per row and states when more exist. The full exact-match set,
+including identifiers retained on merged aliases, still participates in the
+review fingerprint and commit guard.
+
+Imports and duplicate suggestions use the caller's own contact book, including
+for administrators. New contacts belong to the caller and default to Lead.
+An update never reassigns ownership. **Blank mapped values do not clear saved
+fields.** CSV Notes append separate chronological note records; neither existing
+notes nor the legacy note column is overwritten. A blank-only, unchanged update
+is reported as skipped without changing its revision or history. Imported stage
+changes follow the normal lifecycle graph; entering Representation or Active
+client requires the batch engagement acknowledgement. Importing does not send
+messages, create deals or invent a last-contact touch.
+
+Preview writes nothing. Commit rechecks the reviewed exact identifiers and
+target revisions at the guarded receipt statement, locks existing matches and
+targets, and commits all accepted row changes, notes, history, audits and the
+receipt in one transaction. A stale review returns `409` with no partial import.
+The concurrency point is that receipt snapshot: a manual contact creation that
+arrives afterwards may coexist, ordered after the import. Shared identifiers
+remain legal; this is not a uniqueness constraint on client email or phone.
+
+A stable request UUID identifies one exact reviewed payload. Retrying it returns
+the saved row IDs, added/updated/skipped results and counts without creating
+contacts or appending notes again. Reusing the UUID for a changed payload returns
+`409 request_conflict`. Mutations are never automatically retried by the adapter;
+an unavailable response refreshes shared reads while preserving the review.
+
+### Duplicate review and merge
+
+Duplicate review is advisory. Each page checks at most 100 primary contacts and
+returns a bounded pair page with scanned/total coverage, continuation state and
+an opaque cursor. An empty page with more coverage remaining says to continue
+checking, rather than declaring the whole book clear. Name similarity alone
+never proves that two people are the same.
+
+A merge requires two writable, unmerged records in the same owner's book and
+brokerage. The review shows both records, their conflicting fields, pending
+actions/reminders and the data that will be preserved. Conflicts require explicit
+winner choices. Separate contact and transaction permissions remain in force;
+linked-transaction counts include only deals the caller may see. Assignment or
+merging never grants someone new access to a personal contact book.
+
+The commit locks both parents and their existing child rows, checks the opening
+contact revisions and complete private-history fingerprints, then writes a
+guarded receipt before moving data. All five relationship references are moved:
+`contact_notes`, `contact_needs`, `contact_activities`,
+`contact_opportunities` and `transaction_parties`. Existing note tombstones,
+need statuses, authors and historical timestamps retain their lifetimes.
+Unselected legacy note text becomes append-only notes, with Unicode-safe ordered
+chunks where necessary, so choosing a field winner does not discard that text.
+
+At most one pending action or legacy reminder is retained by the reviewed
+choice. Unselected structured actions receive cancellation history rather than
+being presented as completed. The merge retains the latest recorded outreach
+time from the two files; it does not stamp a new touch. A stale parent, child or
+history snapshot aborts the whole transaction. Receipt recovery also covers an
+identical retry whose winner commits while the second caller is still reviewing
+its preflight snapshot.
+
+The source remains an archived tombstone with `merged_into_contact_id` and
+`merged_at`; its pending action and reminder mirror are cleared. Ancestor
+aliases are flattened to the primary file. Normal lists, search and counts
+exclude tombstones; old contact links resolve through a bounded, scoped
+canonical chain, including when another merge finishes during the read. Original
+audit IDs remain intact and authorized canonical history reads the alias family.
+
+Migration 0018 routes child inserts/reference updates through a locked canonical
+lookup on exactly those five tables. An already-authorized child write that
+waited for a concurrent merge therefore lands on the primary record, with the
+same owner and brokerage enforced at each hop. New stale mutations do not edit
+the tombstone. Request receipts are not rerouted, and no global book-version
+trigger or ownership expansion is introduced.
+
+CSV values and merge field content are absent from URLs, logs and audit
+metadata. Audits and receipts contain IDs, actions, field names and counts only.
+Private notes, outcomes and review values remain in their authorized contact
+views and render as plain text. Merge fingerprints cover hidden references for
+concurrency protection without exposing hidden transaction counts or contents.
+
+### Migration and verification status
+
+`0018_contact_import_merge.sql` is prepared locally. It adds the paired merge
+pointer/timestamp, import and merge request receipts, and the five canonical
+child-routing triggers. **0015–0018 are still unapplied to live databases.**
+Deploying this release requires the pending migrations to be applied through the
+reviewed deployment process first. No live migration, build, environment change
+or deployment was performed for this local update.
+
+Local verification covers **4,990 counted checks**, plus the unnumbered personal
+workspace suite. New coverage includes 51 parser/import PostgreSQL checks, 103
+duplicate checks, 74 merge PostgreSQL checks, 29 review UI/state checks and 87
+actual-adapter checks using synthetic fetch responses. The complete suite's
+groups passed across the initial run, its resumed tail and targeted reruns after
+an outdated read-only-POST source assertion and the final UI regressions were
+updated. Final TypeScript and whitespace checks passed. Browser verification
+uses isolated synthetic samples and is separate from authenticated live-data
+certification.
+
+Browser review completed a four-row synthetic import (two added, one updated,
+one skipped), including correcting an invalid email and distinguishing two
+same-name update targets. Reviewed merge preserved the selected company and
+pending action, both client needs, notes, cancellation history and two deal
+links, and reduced the visible contact count once. A separate conflict rehearsal
+refused a stale merge and showed the newer version with explicit choices kept.
+At 320×568, the dialogs fit without horizontal overflow, body scrolling reset
+between review steps, fixed actions stayed available and the success Close
+action returned to the contact list. No live records were used.

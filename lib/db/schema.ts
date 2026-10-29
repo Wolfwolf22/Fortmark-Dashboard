@@ -661,6 +661,9 @@ export const contacts = pgTable(
     nextActionPurpose: text("next_action_purpose"),
     nextActionDueAt: timestamp("next_action_due_at", { withTimezone: true }),
     nextActionAssignedUserId: uuid("next_action_assigned_user_id").references(() => dashboardUsers.id, { onDelete: "restrict" }),
+    /** Merged sources remain archived tombstones; normal reads use the keeper. */
+    mergedIntoContactId: uuid("merged_into_contact_id").references((): AnyPgColumn => contacts.id, { onDelete: "restrict" }),
+    mergedAt: timestamp("merged_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -670,6 +673,8 @@ export const contacts = pgTable(
     index("contacts_last_contact_idx").on(t.lastContactAt),
     index("contacts_email_idx").on(t.email),
     index("contacts_next_action_due_idx").on(t.nextActionDueAt),
+    index("contacts_merged_into_idx").on(t.mergedIntoContactId),
+    check("contacts_merge_pointer_check", sql`(${t.mergedIntoContactId} is null and ${t.mergedAt} is null) or (${t.mergedIntoContactId} is not null and ${t.mergedAt} is not null and ${t.mergedIntoContactId} <> ${t.id} and ${t.stage} = 'archived')`),
     check("contacts_next_action_check", sql`(
       (${t.nextActionId} is null and ${t.nextActionKind} is null and ${t.nextActionPurpose} is null and ${t.nextActionDueAt} is null and ${t.nextActionAssignedUserId} is null)
       or (${t.nextActionId} is not null and ${t.nextActionKind} is not null and ${t.nextActionPurpose} is not null and ${t.nextActionDueAt} is not null and ${t.nextActionAssignedUserId} is not null
@@ -1092,3 +1097,21 @@ export const contactCreateRequests = pgTable("contact_create_requests", {
   primaryKey({ name: "contact_create_requests_pkey", columns: [t.brokerageKey, t.actorUserId, t.requestId] }),
   check("contact_create_requests_payload_hash_check", sql`length(${t.payloadHash}) = 64`),
 ]);
+
+/** Durable batch receipts contain safe IDs/counts only, never submitted CSV values. */
+export const contactImportRequests = pgTable("contact_import_requests", {
+  actorUserId: uuid("actor_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  requestId: uuid("request_id").notNull(), payloadHash: text("payload_hash").notNull(),
+  result: jsonb("result").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [primaryKey({ name: "contact_import_requests_pkey", columns: [t.actorUserId, t.requestId] }), check("contact_import_requests_hash_check", sql`length(${t.payloadHash}) = 64`)]);
+
+export const contactMergeRequests = pgTable("contact_merge_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  actorUserId: uuid("actor_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  keeperId: uuid("keeper_id").notNull().references(() => contacts.id, { onDelete: "restrict" }),
+  sourceId: uuid("source_id").notNull().references(() => contacts.id, { onDelete: "restrict" }),
+  requestId: uuid("request_id").notNull(), payloadHash: text("payload_hash").notNull(),
+  result: jsonb("result").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [uniqueIndex("contact_merge_requests_actor_request_idx").on(t.actorUserId, t.requestId), check("contact_merge_requests_hash_check", sql`length(${t.payloadHash}) = 64`)]);

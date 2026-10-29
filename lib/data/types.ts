@@ -409,6 +409,9 @@ export type LeadSourceOfRecord = "db" | "sample";
 
 export interface Lead {
   id: string;
+  /** An old contact URL resolved to this primary file. Never used for writes. */
+  requestedContactId?: string;
+  mergedIntoContactId?: string;
   name: string;
   email: string;
   phone: string;

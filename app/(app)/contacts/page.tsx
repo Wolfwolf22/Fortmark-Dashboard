@@ -15,7 +15,7 @@
  */
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Users } from "lucide-react";
+import { CopyCheck, FileUp, Plus, Users } from "lucide-react";
 import { PageIntro } from "@/components/common/page-intro";
 import { useSessionUser } from "@/components/layout/session-user";
 import { LeadDrawer } from "@/components/leads/lead-drawer";
@@ -23,9 +23,11 @@ import { leadAbilities } from "@/components/leads/lead-shared";
 import { LeadsFilters } from "@/components/leads/leads-filters";
 import { LeadsSnapshotStrip } from "@/components/leads/leads-snapshot";
 import { LeadsTable } from "@/components/leads/leads-table";
+import { ContactImport } from "@/components/leads/contact-import";
+import { ContactDuplicates } from "@/components/leads/contact-duplicates";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getLeadAgents, getLeadSnapshot, getLeadsPage, queryFields } from "@/lib/data/adapters/leads";
+import { commitContactImport, getContactDuplicates, getContactMergeReview, getLeadAgents, getLeadSnapshot, getLeadsPage, mergeContacts, previewContactImport, queryFields } from "@/lib/data/adapters/leads";
 import { useQuery } from "@/lib/data/hooks";
 import { matchingView, parseContactQuery, type ContactQuery, type SortDir, type SortKey } from "@/lib/contacts/filters";
 import { useUiStore } from "@/lib/stores/ui";
@@ -103,6 +105,8 @@ function LeadsPageInner() {
   const router = useRouter();
   const setQuickCreate = useUiStore((s) => s.setQuickCreate);
   const abilities = leadAbilities(useSessionUser().role);
+  const [importOpen, setImportOpen] = useState(false);
+  const [duplicatesOpen, setDuplicatesOpen] = useState(false);
 
   const urlKey = searchParams.toString();
   const filters = useMemo(() => readQuery(new URLSearchParams(urlKey)), [urlKey]);
@@ -205,10 +209,14 @@ function LeadsPageInner() {
   return (
     <div className="space-y-4">
       <PageIntro icon={Users} title="Contacts" description="Manage relationships, follow-ups, and activity." action={abilities.canWrite ? (
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          <Button type="button" variant="outline" className="min-h-11 flex-1 sm:flex-none" onClick={() => setImportOpen(true)}><FileUp aria-hidden />Import contacts</Button>
+          <Button type="button" variant="outline" className="min-h-11 flex-1 sm:flex-none" onClick={() => setDuplicatesOpen(true)}><CopyCheck aria-hidden />Review duplicates</Button>
           <Button type="button" className="min-h-11 w-full sm:w-auto" onClick={() => setQuickCreate("lead")}>
             <Plus aria-hidden />
             New contact
           </Button>
+          </div>
         ) : undefined} />
 
       <LeadsSnapshotStrip
@@ -249,7 +257,11 @@ function LeadsPageInner() {
         showAgent={abilities.sees === "brokerage"}
       />
 
-      <LeadDrawer leadId={drawerId} open={drawerOpen} onOpenChange={handleDrawerOpenChange} refreshKey={refreshKey} />
+      <LeadDrawer leadId={drawerId} open={drawerOpen} onOpenChange={handleDrawerOpenChange} refreshKey={refreshKey} onContactRedirect={(id) => navigate({ ...latest.current }, "replace", id)} />
+      {abilities.canWrite && <>
+        <ContactImport open={importOpen} onOpenChange={setImportOpen} onPreview={previewContactImport} onCommit={commitContactImport} onDone={() => { list.refetch(); snapshot.refetch(); }} />
+        <ContactDuplicates open={duplicatesOpen} onOpenChange={setDuplicatesOpen} onList={getContactDuplicates} onReview={getContactMergeReview} onMerge={mergeContacts} onDone={() => { list.refetch(); snapshot.refetch(); }} onOpenContact={(id) => navigate({ ...latest.current }, "push", id)} />
+      </>}
     </div>
   );
 }

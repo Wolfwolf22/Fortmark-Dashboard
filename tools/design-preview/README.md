@@ -51,7 +51,7 @@ the real page's Retry action then recovers the sample records.
 ## Contacts and follow-ups
 
 Contacts now renders the actual list, filters, paging and contact drawer.
-Thirty-one synthetic contacts exercise two pages and include due-today, overdue,
+Thirty-four synthetic contacts exercise two pages and include due-today, overdue,
 upcoming, never-touched, past-client, colleague-owned and labeled sample-fallback
 cases. The preview reuses the production pure query evaluator for filters, sorts,
 snapshot counts and pagination. Changing filters preserves preview scenarios
@@ -153,6 +153,55 @@ These checks cover revision/stage conflicts, optional information save/clear,
 Other validation and clearing, legacy status changes, source-precedence summaries,
 Home/list/filter agreement, complete long-history paging, blocked writes,
 network rejection, unchanged base fixtures and read-only scenario recovery.
+
+## Contact import and duplicate review
+
+The actual Contacts toolbar opens the production CSV import and duplicate-review
+dialogs. **Sample CSV** in the preview banner downloads a wholly synthetic file;
+its content is also exported as `sampleImportCsv` for deterministic checks.
+It includes a new contact, an existing-contact update, a repeated row, an invalid
+email and an ambiguous exact match. Both paste and file inputs use the real CSV
+parser/mapping controls. Only Interactive samples can commit an import or merge.
+
+The duplicate pair is **Sample Morgan River**, IDs
+`60000000-0000-4000-8000-000000000001` and
+`60000000-0000-4000-8000-000000000002`. They have different scalar fields, two
+pending actions and distinct notes, needs, activity, opportunities and linked
+deals. The same-name/email decoy ending `0003` belongs to the colleague's book.
+It never appears in this actor's import matches or duplicate suggestions and
+cannot be updated or merged across that boundary. The old demonstration
+contacts receive unique synthetic phones in read copies to avoid false matches
+from their formerly shared example number. Duplicate scanning uses the real
+bounded pagination helper and truthful own-book counts.
+The older readable sample URLs retain their IDs; import/duplicate review uses
+stable synthetic UUID aliases for those records so strict mutation schemas also
+work when reviewing an older visual fixture.
+
+Imports normalize through the production pure schema and identify exact matches
+and repeated file rows before an explicit add/update/skip choice. Similar-name
+advisories do not block adding. Blank update cells keep saved values, and imported
+notes append as structured notes. No imported contact receives a real-touch date.
+Import requests have in-memory payload receipts, so an identical retry cannot
+append notes or create contacts twice; a changed payload under the same request
+ID is refused.
+
+Merge review uses the real conflict/default/field-selection and pending-action
+helpers. The local commit compares both contact revisions and complete child
+fingerprints before moving any record. It retains child IDs, converts an
+unselected legacy note into structured notes, records cancellation of unselected
+pending actions, and keeps the latest existing touch rather than inventing one.
+The archived source points to the keeper and leaves list/Home counts. Opening
+the old source ID resolves the canonical contact; direct writes to the retired ID
+are refused. Merge receipts prevent repeated transfers and history entries.
+
+The read-only conflict scenario also supports the duplicate pair: the first
+refused merge exposes a predefined newer company/version for explicit review.
+All subsequent writes remain blocked. Reload/Reset discards imports, merges,
+receipts and child transfers. Base fixtures and live services never change.
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-import-merge-session.mjs
+```
 
 ## Structured next actions
 

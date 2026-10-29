@@ -127,6 +127,13 @@
       "when": 1793322000000,
       "tag": "0017_contact_next_action",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793408400000,
+      "tag": "0018_contact_import_merge",
+      "breakpoints": true
     }
   ]
 }

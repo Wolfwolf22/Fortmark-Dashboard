@@ -34,6 +34,12 @@ export function failure(reason: ServiceFailure): NextResponse {
       return NextResponse.json({ error: "invalid_date" }, { status: 400, headers: NO_STORE });
     case "conflict":
       return NextResponse.json({ error: "conflict" }, { status: 409, headers: NO_STORE });
+    case "request_conflict":
+      return NextResponse.json({ error: "request_conflict" }, { status: 409, headers: NO_STORE });
+    case "invalid_request":
+      return NextResponse.json({ error: "invalid", fields: ["body"] }, { status: 400, headers: NO_STORE });
+    case "invalid_merge":
+      return NextResponse.json({ error: "invalid", fields: ["merge"] }, { status: 400, headers: NO_STORE });
     case "invalid_revision":
       return NextResponse.json({ error: "invalid", fields: ["expectedUpdatedAt"] }, { status: 400, headers: NO_STORE });
     case "invalid_action":
