@@ -77,10 +77,10 @@ const config: Config = {
         sm: "0.375rem",
       },
       boxShadow: {
-        card: "0 1px 2px rgb(0 0 0 / 0.025), 0 3px 14px rgb(0 0 0 / 0.025)",
-        "card-hover":
-          "0 2px 4px rgb(0 0 0 / 0.035), 0 6px 18px rgb(0 0 0 / 0.045)",
-        pop: "0 4px 12px rgb(0 0 0 / 0.08), 0 12px 32px rgb(0 0 0 / 0.10)",
+        card: "var(--shadow-card)",
+        "card-hover": "var(--shadow-card-hover)",
+        pop: "var(--shadow-pop)",
+        "icon-glass": "var(--shadow-icon-glass)",
       },
       letterSpacing: {
         micro: "0.1em",

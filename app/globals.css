@@ -55,6 +55,15 @@
     --status-bad-bg: 0 18% 95%;
 
     --radius: 1rem;
+
+    /* Neutral elevation: contact, ambient depth, then a restrained top glint. */
+    --shadow-card: 0 1px 3px rgb(0 0 0 / 0.045), 0 10px 28px -12px rgb(0 0 0 / 0.12), 0 28px 48px -32px rgb(0 0 0 / 0.16), inset 0 1px 0 rgb(255 255 255 / 0.95);
+    --shadow-card-hover: 0 2px 4px rgb(0 0 0 / 0.055), 0 12px 30px -12px rgb(0 0 0 / 0.14), 0 28px 48px -28px rgb(0 0 0 / 0.16), inset 0 1px 0 rgb(255 255 255 / 0.95);
+    --shadow-pop: 0 4px 12px rgb(0 0 0 / 0.08), 0 12px 32px rgb(0 0 0 / 0.10), inset 0 1px 0 rgb(255 255 255 / 0.95);
+    --icon-glass-top: 0 0% 100%;
+    --icon-glass-bottom: 0 0% 93%;
+    --icon-glass-border: 0 0% 0% / 0.08;
+    --shadow-icon-glass: inset 0 1px 0 rgb(255 255 255 / 0.95), inset 0 -1px 0 rgb(0 0 0 / 0.025), 0 2px 3px rgb(0 0 0 / 0.04), 0 5px 12px -8px rgb(0 0 0 / 0.18);
   }
 
   .dark {
@@ -94,6 +103,14 @@
     --status-warn-bg: 42 18% 9%;
     --status-bad: 0 20% 66%;
     --status-bad-bg: 0 16% 10%;
+
+    --shadow-card: 0 1px 3px rgb(0 0 0 / 0.32), 0 12px 28px -16px rgb(0 0 0 / 0.8), inset 0 1px 0 rgb(255 255 255 / 0.045);
+    --shadow-card-hover: 0 2px 4px rgb(0 0 0 / 0.4), 0 14px 30px -16px rgb(0 0 0 / 0.85), inset 0 1px 0 rgb(255 255 255 / 0.06);
+    --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.45), 0 24px 48px rgb(0 0 0 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.06);
+    --icon-glass-top: 0 0% 22%;
+    --icon-glass-bottom: 0 0% 11%;
+    --icon-glass-border: 0 0% 100% / 0.1;
+    --shadow-icon-glass: inset 0 1px 0 rgb(255 255 255 / 0.11), inset 0 -1px 0 rgb(0 0 0 / 0.2), 0 2px 4px rgb(0 0 0 / 0.3), 0 6px 12px -8px rgb(0 0 0 / 0.7);
   }
 
   * {
@@ -116,6 +133,27 @@
     :focus-visible {
       outline: 2px solid Highlight;
       outline-offset: 2px;
+    }
+  }
+}
+
+@layer components {
+  /* A small polished icon well, not a blurred content surface. Keep layout
+     and radius on the consumer; this class owns its material and icon ink. */
+  .fm-icon-glass {
+    border: 1px solid hsl(var(--icon-glass-border));
+    background-color: hsl(var(--card));
+    background-image: linear-gradient(145deg, hsl(var(--icon-glass-top)), hsl(var(--icon-glass-bottom)));
+    box-shadow: var(--shadow-icon-glass);
+    color: hsl(var(--foreground));
+  }
+
+  @media (forced-colors: active) {
+    .fm-icon-glass {
+      border-color: CanvasText;
+      background: Canvas;
+      box-shadow: none;
+      color: CanvasText;
     }
   }
 }

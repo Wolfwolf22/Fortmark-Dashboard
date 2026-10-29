@@ -26,10 +26,10 @@ export function NewMenu() {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          {/* The launcher shares the shell's quiet utility treatment. */}
-          <Button variant="ghost" className="h-11 w-11 shrink-0 px-0 text-muted-foreground hover:bg-accent hover:text-foreground 2xl:w-auto 2xl:px-3" aria-label="New" data-new-trigger>
+          {/* One clear creation action; supporting utilities stay quiet. */}
+          <Button className="h-11 w-11 shrink-0 px-0 md:w-auto md:px-3" aria-label="New" data-new-trigger>
             <Plus />
-            <span className="hidden 2xl:inline">New</span>
+            <span className="hidden md:inline">New</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48">

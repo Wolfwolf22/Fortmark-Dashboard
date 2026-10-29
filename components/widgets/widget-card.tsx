@@ -5,6 +5,7 @@ import { CalendarRange, Maximize2 } from "lucide-react";
 import { type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { IconWell } from "@/components/ui/icon-well";
 import {
   Dialog,
   DialogContent,
@@ -80,9 +81,7 @@ export function WidgetCard({
   const header = (
     <div className="flex items-start justify-between gap-2 px-5 pb-4 pt-5">
       <div className="flex min-w-0 items-center gap-2.5 pt-0.5">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-tint text-muted-foreground">
-          <Icon className="h-4 w-4" aria-hidden="true" />
-        </span>
+        <IconWell icon={Icon} />
         <div className="min-w-0">
           <h3 className="text-[15px] font-semibold leading-snug tracking-[-0.01em]">{title}</h3>
           {preset != null && (
@@ -157,9 +156,7 @@ export function WidgetCard({
         <DialogContent className="flex h-[85vh] w-[min(1100px,92vw)] max-w-none flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-tint text-muted-foreground">
-                <Icon className="h-4 w-4" aria-hidden="true" />
-              </span>
+              <IconWell icon={Icon} />
               {title}
             </DialogTitle>
             {preset != null && (

@@ -1,5 +1,6 @@
 import { type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { IconWell } from "@/components/ui/icon-well";
 
 /** Quiet empty state: says what's empty and what to do about it. */
 export function EmptyState({
@@ -18,14 +19,14 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-2 py-12 text-center",
+        "flex flex-col items-center justify-center gap-2 py-9 text-center",
         className
       )}
     >
-      {Icon && <Icon className="mb-1 h-6 w-6 text-muted-foreground" aria-hidden />}
+      {Icon && <IconWell icon={Icon} className="mb-1.5" />}
       <p className="text-sm font-semibold">{title}</p>
       {description && (
-        <p className="max-w-xs text-[13px] text-muted-foreground">{description}</p>
+        <p className="max-w-xs text-[13px] leading-relaxed text-muted-foreground">{description}</p>
       )}
       {action && <div className="mt-2">{action}</div>}
     </div>

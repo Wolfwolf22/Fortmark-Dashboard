@@ -129,7 +129,7 @@ export function DailyBrief() {
   // it by reading the code; the same sentence the widgets use goes here.
   if (error) {
     return (
-      <section aria-label="Daily brief" className="mb-7" role="status">
+      <section aria-label="Daily brief" className="mb-5" role="status">
         {heading}
         <UnavailableBody
           availability="unavailable"
@@ -141,9 +141,9 @@ export function DailyBrief() {
 
   if (loading || !metrics) {
     return (
-      <section aria-label="Daily brief" className="mb-7">
+      <section aria-label="Daily brief" className="mb-5">
         {heading}
-        <div className="grid grid-cols-2 overflow-hidden rounded-card border-x gap-px border-y border-border bg-border sm:grid-cols-4">
+        <div className="grid grid-cols-2 overflow-hidden rounded-card border-x gap-px border-y border-border bg-border shadow-card sm:grid-cols-4">
           {Array.from({ length: 4 }, (_, i) => (
             <div key={i} className="bg-card px-4 py-5 sm:px-5">
               <div className="mb-4 h-3 w-24 animate-pulse rounded bg-tint" />
@@ -160,7 +160,7 @@ export function DailyBrief() {
   const firstUse = isFirstUse(metrics);
 
   return (
-    <section aria-label="Daily brief" className="mb-7">
+    <section aria-label="Daily brief" className="mb-5">
       {heading}
 
       {metrics.source === "sample" && (
@@ -179,9 +179,9 @@ export function DailyBrief() {
       {/* One aligned numeric field, divided by hairlines — not four cards. The
           1px gap over a border-coloured background draws the rules between
           cells without a border on each side collapsing into a double line. */}
-      <dl className="mt-3 grid grid-cols-2 overflow-hidden rounded-card border-x gap-px border-y border-border bg-border sm:grid-cols-4">
+      <dl className="mt-3 grid grid-cols-2 overflow-hidden rounded-card border-x gap-px border-y border-border bg-border shadow-card sm:grid-cols-4">
         {rows.map((figure) => (
-          <div key={figure.label} className="group relative min-w-0 bg-card p-4 transition-colors hover:bg-accent/40 sm:px-5">
+          <div key={figure.label} className="group relative min-w-0 bg-card p-4 transition-colors hover:bg-accent/40 sm:px-5 sm:py-5">
             <dt className="min-h-8 text-[12px] font-medium leading-snug text-muted-foreground sm:min-h-5 sm:text-[13px]">
               {figure.value !== null ? (
                 <Link

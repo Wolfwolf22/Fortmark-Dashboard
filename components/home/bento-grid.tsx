@@ -42,7 +42,7 @@ import { spanFor, visibleWidgets } from "./widget-visibility";
 
 // `grid-flow-row-dense` lets a later, narrower module fill a gap a reordered
 // layout would otherwise leave. Spans live in the widget registry.
-const GRID_CLASS = "grid grid-flow-row-dense grid-cols-1 gap-4 md:grid-cols-6 xl:grid-cols-12 xl:gap-5";
+const GRID_CLASS = "grid grid-flow-row-dense grid-cols-1 gap-4 md:grid-cols-6 xl:grid-cols-12";
 
 function SortableWidget({ id }: { id: WidgetId }) {
   const def = WIDGETS[id];
@@ -129,7 +129,7 @@ export function BentoGrid() {
   return (
     <>
       <DailyBrief />
-      <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-base font-semibold tracking-[-0.02em]">Your workspace</h2>
         <p className="hidden text-xs text-muted-foreground sm:block">Priorities, activity and production</p>
       </div>

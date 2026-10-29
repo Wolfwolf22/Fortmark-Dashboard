@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { IconWell } from "@/components/ui/icon-well";
 import { WidgetCard, useWidgetExpanded } from "@/components/widgets/widget-card";
 import { MetricState } from "@/components/home/metric-state";
 import { useHomeMetrics } from "@/components/home/metrics-provider";
@@ -96,9 +97,7 @@ function ActivityBody({ items }: { items: ActivityItem[] }) {
               href={item.href}
               className="-mx-2 flex items-center gap-3 rounded-lg px-2 py-3 transition-colors duration-150 hover:bg-tint"
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-tint">
-                <Icon className="h-4 w-4 text-muted-foreground" aria-hidden />
-              </span>
+              <IconWell icon={Icon} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-semibold">{item.summary}</p>
                 <p className="text-micro mt-0.5">{formatRelative(item.at)}</p>

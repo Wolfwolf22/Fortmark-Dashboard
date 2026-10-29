@@ -275,7 +275,8 @@ const ROLES: [string, Actor][] = [["agent (owner)", AGENT], ["admin", ADMIN], ["
   check("notes: authorship is the actor and the time is the server's", stored.authorUserId === AGENT.userId && (stored.createdAt as Date).toISOString() === NOW.toISOString() && stored.deletedAt === undefined);
   const audit = audits(m)[0];
   check("notes: the audit records the contact, the note and the action only", audit.eventType === "contact_note_created" && Object.keys(audit.safeMetadata).sort().join() === "action,contactId,noteId" && audit.safeMetadata.action === "create" && audit.safeMetadata.contactId === CID);
-  check("notes: NOT ONE WORD of the note is in the audit row", !JSON.stringify(audit).match(/Sensitive|mother|412|flexible|seller/i));
+  // Match numeric fixture values as tokens, not accidental UUID substrings.
+  check("notes: NOT ONE WORD of the note is in the audit row", !JSON.stringify(audit).match(/Sensitive|mother|\b412\b|flexible|seller/i));
   check("notes: a note is not a touch — nothing on the contact or its activity history is written", count(m, contacts) === 0 && count(m, contactActivities) === 0);
 
   const res: Record<string, Awaited<ReturnType<typeof addNote>>> = {};
@@ -362,7 +363,7 @@ const ROLES: [string, Actor][] = [["agent (owner)", AGENT], ["admin", ADMIN], ["
 
 // --- Needs --------------------------------------------------------------------------------------
 {
-  const NEED_TEXT = /Brickell|Balcony|quiet building|500000|900000|Fort Lauderdale|Victoria|Pool|412|Near a good school/;
+  const NEED_TEXT = /Brickell|Balcony|quiet building|\b(?:500000|900000|412)\b|Fort Lauderdale|Victoria|Pool|Near a good school/;
   const t = world();
   const { m, ctx } = ctxFor(AGENT, t);
   const created = await createNeed(ctx, CID, { kind: "buy", areas: ["Fort Lauderdale"], priceMinCents: 50_000_000, priceMaxCents: 90_000_000, mustHaves: ["Pool"], additionalRequirements: "Near a good school", minBaths: 2.5 }, NOW);

@@ -47,6 +47,31 @@ At the defined base surfaces, secondary ink exceeds 4.5:1 and input boundaries
 exceed 3:1 in both themes. New tinted surfaces and token opacity modifiers need
 their own contrast check; a token does not make every possible pairing accessible.
 
+## Surface depth and icon wells
+
+- `shadow-card` is the shared static card elevation in both themes. It combines
+  a small contact shadow, a broad ambient falloff and a restrained inset top edge.
+  In dark mode the neutral border and inner highlight carry the separation;
+  the shadow provides supporting depth. Do not add bespoke shadows to each card.
+- `shadow-pop` gives dialogs and popovers a higher elevation than workspace
+  cards. `shadow-card-hover` is reserved for an actual interactive surface;
+  a static panel does not change elevation when the pointer crosses it.
+  Small moving controls, such as switch thumbs, use a compact `shadow-sm`
+  rather than a broad panel shadow.
+- Use `IconWell` from `components/ui/icon-well.tsx` for small decorative icons.
+  Its `.fm-icon-glass` material supplies the faint
+  neutral edge, a subtle monochrome specular gradient, inset glint,
+  `shadow-icon-glass`, and full foreground ink. The consumer supplies dimensions,
+  alignment and radius: normally a 32–40px well with a 16px icon.
+- Do not combine `.fm-icon-glass` with competing `bg-*`, `border-*`, faded ink,
+  or custom shadow classes. The glyph stays crisp and opaque. Decorative wells
+  do not replace accessible button names or the minimum control target.
+  The same well is used in widget headers, the attention summary, recent
+  activity rows, and empty-state icons so the material remains consistent.
+- Glass is confined to these small icon backings. Reading surfaces, metric
+  cells and controls remain opaque; no backdrop blur, translucent text, colored
+  glow, oversized specular gradients or decorative glass panels.
+
 ## Typography
 
 - Archivo only. `font-sans` (body, weights 400–800 via `font-medium|semibold|bold`)
@@ -62,7 +87,7 @@ their own contrast check; a token does not make every possible pairing accessibl
 
 All in `components/ui/`: Button, Badge, Card, Input, Textarea, Label, Select,
 DropdownMenu, Dialog, Sheet, Tooltip, Popover, Tabs, Table, Switch, Checkbox,
-Separator, Skeleton, ScrollArea, Command, Kbd, Segmented, PillProgress,
+Separator, Skeleton, ScrollArea, Command, Kbd, Segmented, PillProgress, IconWell,
 StatusPill (+ `LISTING_STATUS_PILL` map), DeltaBadge, EmptyState.
 
 Charts: `ChartFrame`, `ChartTooltipFrame`, `chartColor()` in
@@ -118,18 +143,22 @@ const { data, loading } = useQuery(
 - Shared buttons: default and icon 40px; large 44px; small and compact icon
   36px, with a 40px minimum on small screens. Icon-only buttons need an accessible
   name; tooltips supplement the name. Preserve touch targets when adding classes.
-- Motion: 150–200ms ease-out for controls. Static cards do not lift or gain a
-  deeper hover shadow; use a subtle surface change for an actual clickable item.
+- Motion: 150–200ms ease-out for controls. Static cards retain their base
+  elevation on hover and never lift. Use a subtle surface change for an actual
+  clickable item; any interactive elevation must use the shared shadow token.
   Existing page-entry motion respects `prefers-reduced-motion`. Nothing bouncy.
-- Dark mode must be checked for every screen: cards separate by border, not
-  shadow; images/plates already work in both.
+- Dark mode must be checked for every screen: cards keep a visible neutral edge
+  and restrained inset highlight alongside their base elevation. Shadows alone
+  must never define a boundary; images/plates already work in both.
 
 ## Layout
 
 - Page content lives inside `app/(app)/*` under the shared horizontal shell.
   Keep the existing FortMark logo and Archivo identity. Core destinations stay
-  in primary navigation; secondary destinations stay in More. Search, New,
-  notifications and account controls remain available without dominating content.
+  in primary navigation; secondary destinations stay in More. New is the one
+  primary creation action: white on the black header, with its label visible
+  from `md` and a 44px plus control on phones. Search, notifications, settings,
+  theme and account controls use quiet supporting treatments and remain available.
 - Home opens with a compact, theme-aware editorial welcome row: a 36–48px
   greeting, actual date and role, and a slender attention summary. It is not a
   large black cover card. The approved tagline is not repeated on Home.
@@ -140,11 +169,16 @@ const { data, loading } = useQuery(
 - Keep core work widgets visible early in the page. Avoid oversized greetings,
   empty decorative bands, and repeated headings that push transactions and
   follow-ups out of view.
+- Keep vertical rhythm deliberate: 16–20px between related content groups and
+  20px standard card insets. Hero, snapshot and workspace headings should form
+  a compact progression, not three separate cover sections. Preserve readable
+  line spacing and touch targets while reducing empty vertical space.
 - Bento/cards: `rounded-card` (16px); inner panels/popovers `rounded-panel`
   (12px); controls `rounded-lg` or `rounded-md` (8px); composer 16px. Light cards
-  use a restrained shadow and quiet edge; dark cards separate through borders.
+  use a soft layered shadow and quiet edge; dark cards combine a neutral border,
+  inner top highlight and soft base depth through the same elevation token.
 - Shared cards and widgets use 20px insets. Widget headers use a compact 32px
-  icon backing, sentence-case title, optional 11px period caption, and named
+  `.fm-icon-glass` backing, sentence-case title, optional 11px period caption, and named
   period/expand controls. Titles may wrap instead of disappearing into ellipses.
   Expanded widgets preserve the same content and keyboard-accessible dialog.
 - Tables: 13px, `.text-micro` headers, paginate past ~10-12 rows with a
