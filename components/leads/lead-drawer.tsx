@@ -26,7 +26,7 @@
  * list refetches on its own.
  */
 import Link from "next/link";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowRight, ArrowRightLeft, CalendarClock, Pencil, Phone, ShieldCheck, UserCheck, UserRound, Workflow, type LucideIcon } from "lucide-react";
 import { useSessionUser } from "@/components/layout/session-user";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -59,13 +59,15 @@ import { Lead, LeadStage, LEAD_SOURCE_LABELS, LEAD_STAGES, LEAD_STAGE_LABELS, TR
 import { cn, formatDate, formatRelative, initials } from "@/lib/utils";
 import { businessDayKey } from "@/lib/metrics/business-day";
 import { followUpLabel, followUpStatus, formatFollowUpDay, isFollowUpDue, noRecentTouch, NO_TOUCH_LABEL } from "@/lib/contacts/follow-up";
-import { requiresEngagementNotice } from "@/lib/contacts/stages";
+import { allowedStageTransitions, canTransition, requiresEngagementNotice } from "@/lib/contacts/stages";
 import type { Birthday } from "@/lib/contacts/birthday";
 import { useUiStore } from "@/lib/stores/ui";
 import { leadAbilities } from "./lead-shared";
 import { EngagementNotice } from "./engagement-notice";
 import { LeadBirthday } from "./lead-birthday";
 import { LeadEditForm } from "./lead-edit-form";
+import { ClientInfo } from "./client-info";
+import type { ClientInfoSave } from "@/lib/contacts/client-info";
 import { LeadNeeds } from "./lead-needs";
 import { LeadNotes } from "./lead-notes";
 import { LeadTimeline } from "./lead-timeline";
@@ -181,7 +183,16 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
   const [notice, setNotice] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [confirmArchiveFrom, setConfirmArchiveFrom] = useState<LeadStage | null>(null);
   const [pendingStage, setPendingStage] = useState<LeadStage | null>(null);
+  const [pendingStageFrom, setPendingStageFrom] = useState<LeadStage | null>(null);
+  const [stageFocusTarget, setStageFocusTarget] = useState<LeadStage | null>(null);
+
+  useEffect(() => {
+    if (!stageFocusTarget || lead?.stage !== stageFocusTarget || saving) return;
+    const target = document.getElementById(stageFocusTarget === "archived" ? "lead-stage-restore" : "lead-stage-select");
+    if (target) { target.focus(); setStageFocusTarget(null); }
+  }, [stageFocusTarget, lead?.stage, saving, panel]);
 
   // The direct follow-up control (no touch involved).
   const [followUpDay, setFollowUpDay] = useState("");
@@ -203,7 +214,10 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
     setNotice(null);
     setPanel(null);
     setConfirmArchive(false);
+    setConfirmArchiveFrom(null);
     setPendingStage(null);
+    setPendingStageFrom(null);
+    setStageFocusTarget(null);
   }
 
   async function run(action: () => Promise<unknown>): Promise<boolean> {
@@ -233,19 +247,21 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
 
   /** Moving into a formally-engaged stage asks first; anything else goes straight through. */
   function changeStage(stage: LeadStage) {
-    if (!lead || stage === lead.stage) return;
+    if (!lead || saving || !canTransition(lead.stage, stage)) return;
     if (requiresEngagementNotice(lead.stage, stage)) {
       setPendingStage(stage);
+      setPendingStageFrom(lead.stage);
       return;
     }
-    void run(() => updateLeadStage(lead.id, stage));
+    void run(() => updateLeadStage(lead.id, stage, { expectedStage: lead.stage }));
   }
 
   async function confirmEngagement() {
-    if (!lead || !pendingStage) return;
+    if (!lead || !pendingStage || !pendingStageFrom) return;
     const stage = pendingStage;
-    const ok = await run(() => updateLeadStage(lead.id, stage, { engagementAcknowledged: true }));
+    const ok = await run(() => updateLeadStage(lead.id, stage, { engagementAcknowledged: true, expectedStage: pendingStageFrom }));
     setPendingStage(null);
+    setPendingStageFrom(null);
     if (ok) setNotice(`Stage changed to ${LEAD_STAGE_LABELS[stage]}.`);
   }
 
@@ -277,11 +293,37 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
     return ok;
   }
 
+  async function saveClientInfo(patch: ClientInfoSave): Promise<boolean> {
+    if (!lead || saving) return false;
+    setSaving(true); setError(null); setNotice(null);
+    try {
+      const { changed } = await updateContact(lead.id, patch);
+      setNotice(changed.length ? "Client information saved." : "No changes to save.");
+      return true;
+    } catch (error) {
+      refetch();
+      if (error instanceof LeadsError && error.status === 409) throw error;
+      setError(describe(error));
+      return false;
+    } finally { setSaving(false); }
+  }
+
   async function archive(to: LeadStage) {
-    if (!lead) return;
-    const ok = await run(() => updateLeadStage(lead.id, to));
+    if (!lead || !canTransition(lead.stage, to)) return;
+    const expectedStage = to === "archived" ? confirmArchiveFrom : lead.stage;
+    if (!expectedStage) return;
+    if (expectedStage !== lead.stage) {
+      setConfirmArchive(false);
+      setConfirmArchiveFrom(null);
+      setError("This contact changed. Review the refreshed stage before archiving.");
+      setStageFocusTarget(lead.stage);
+      return;
+    }
+    const ok = await run(() => updateLeadStage(lead.id, to, { expectedStage }));
     if (!ok) return;
     setConfirmArchive(false);
+    setConfirmArchiveFrom(null);
+    setStageFocusTarget(to);
     setNotice(to === "archived" ? "Contact archived." : "Contact restored to Lead.");
   }
 
@@ -339,7 +381,8 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
 
   const heading = "text-sm font-semibold";
   const shownOwner = ownerName ?? (sample ? undefined : "Unnamed agent");
-  const stageChoices = lead && !LEAD_STAGES.includes(lead.stage) ? [...LEAD_STAGES, lead.stage] : LEAD_STAGES;
+  const stageChoices = lead?.stage === "archived" ? [lead.stage] : LEAD_STAGES.filter(stage =>
+    lead && (stage === lead.stage || allowedStageTransitions(lead.stage).includes(stage)));
   const linkedDeals = linked.data ?? [];
   const engaged = lead?.stage === "representation" || lead?.stage === "active_client";
 
@@ -509,7 +552,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
                     <div id="lead-panel-stage" className="mt-3 rounded-panel border border-border bg-tint p-4">
                       <p className={heading}>Stage</p>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <Select value={lead.stage} onValueChange={(v) => changeStage(v as LeadStage)} disabled={saving}>
+                        <Select value={lead.stage} onValueChange={(v) => changeStage(v as LeadStage)} disabled={saving || lead.stage === "archived"}>
                           <SelectTrigger id="lead-stage-select" aria-label="Contact stage" className="w-full sm:w-56">
                             <SelectValue />
                           </SelectTrigger>
@@ -522,24 +565,24 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
                           </SelectContent>
                         </Select>
                         {lead.stage === "archived" ? (
-                          <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => void archive("lead")}>
+                          <Button id="lead-stage-restore" type="button" size="sm" variant="outline" disabled={saving} onClick={() => void archive("lead")}>
                             Restore to Lead
                           </Button>
-                        ) : confirmArchive ? (
+                        ) : canTransition(lead.stage, "archived") && (confirmArchive ? (
                           <span role="group" aria-label="Confirm archive" className="flex flex-wrap items-center gap-2">
                             <span className="text-[13px] text-muted-foreground">Archive this contact?</span>
                             <Button type="button" size="sm" disabled={saving} onClick={() => void archive("archived")}>
                               Archive
                             </Button>
-                            <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => setConfirmArchive(false)}>
+                            <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => { setConfirmArchive(false); setConfirmArchiveFrom(null); }}>
                               Cancel
                             </Button>
                           </span>
                         ) : (
-                          <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => setConfirmArchive(true)}>
+                          <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => { setConfirmArchiveFrom(lead.stage); setConfirmArchive(true); }}>
                             Archive
                           </Button>
-                        )}
+                        ))}
                       </div>
                     </div>
                   )}
@@ -579,6 +622,13 @@ export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadD
                       <LeadBirthday key={lead.id} value={lead.birthday} revision={lead.updatedAt} canWrite={abilities.canWrite} saving={saving} onSave={saveBirthday} />
                     )}
                   </div>
+                </div>
+                <div className="mt-4 rounded-panel border border-border p-4">
+                  <ClientInfo lead={lead} canWrite={abilities.canWrite && !sample} saving={saving} onSave={saveClientInfo} onReload={async () => {
+                    const fresh = await getLead(lead.id);
+                    refetch();
+                    return fresh;
+                  }} />
                 </div>
               </section>
 

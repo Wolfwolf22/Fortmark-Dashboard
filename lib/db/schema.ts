@@ -637,6 +637,9 @@ export const contacts = pgTable(
     /** Normalised to E.164 on write. */
     phoneE164: text("phone_e164"),
     company: text("company"),
+    /** Optional, private relationship context; omitted from contact list DTOs. */
+    about: text("about").notNull().default(""),
+    personalDetails: jsonb("personal_details").$type<{ label: string; value: string }[]>().notNull().default([]),
     /**
      * Birthday, month and day only. A year is deliberately never stored: it is
      * not needed to remember a birthday, it would invite an age calculation
@@ -661,6 +664,8 @@ export const contacts = pgTable(
     index("contacts_agent_idx").on(t.assignedAgentUserId),
     index("contacts_last_contact_idx").on(t.lastContactAt),
     index("contacts_email_idx").on(t.email),
+    check("contacts_about_check", sql`char_length(${t.about}) <= 2000`),
+    check("contacts_personal_details_check", sql`case when jsonb_typeof(${t.personalDetails}) = 'array' then jsonb_array_length(${t.personalDetails}) <= 20 and octet_length(${t.personalDetails}::text) <= 50000 else false end`),
     // Both null, or a real calendar day. February 29 is allowed because the
     // year is unknown; February 30 and April 31 are not.
     check(
@@ -794,9 +799,11 @@ export const contactNeeds = pgTable(
       .notNull()
       .references(() => contacts.id, { onDelete: "cascade" }),
     kind: contactNeedKind("kind").notNull(),
+    kindOther: text("kind_other"),
     status: contactNeedStatus("status").notNull().default("active"),
     /** FortMark property-type values, validated by the service. */
     propertyTypes: text("property_types").array().notNull().default(sql`'{}'::text[]`),
+    propertyTypeOther: text("property_type_other"),
     /** Cities / neighbourhoods as FortMark names them. */
     areas: text("areas").array().notNull().default(sql`'{}'::text[]`),
     priceMinCents: bigint("price_min_cents", { mode: "number" }),
@@ -809,6 +816,7 @@ export const contactNeeds = pgTable(
     timelineNote: text("timeline_note"),
     /** Null when it does not apply (a seller, a lessor) or was not asked. */
     financing: contactNeedFinancing("financing"),
+    financingOther: text("financing_other"),
     mustHaves: text("must_haves").array().notNull().default(sql`'{}'::text[]`),
     avoid: text("avoid").array().notNull().default(sql`'{}'::text[]`),
     additionalRequirements: text("additional_requirements"),
@@ -822,6 +830,11 @@ export const contactNeeds = pgTable(
     check("contact_needs_price_check", sql`(${t.priceMinCents} is null or ${t.priceMinCents} >= 0) and (${t.priceMaxCents} is null or ${t.priceMaxCents} >= 0) and (${t.priceMinCents} is null or ${t.priceMaxCents} is null or ${t.priceMaxCents} >= ${t.priceMinCents})`),
     check("contact_needs_size_check", sql`(${t.minBeds} is null or ${t.minBeds} between 0 and 30) and (${t.minBaths} is null or (${t.minBaths} between 0 and 30 and (${t.minBaths} * 2) = trunc(${t.minBaths} * 2))) and (${t.minSqft} is null or ${t.minSqft} >= 0)`),
     check("contact_needs_bounds_check", sql`cardinality(${t.propertyTypes}) <= 8 and cardinality(${t.areas}) <= 12 and cardinality(${t.mustHaves}) <= 20 and cardinality(${t.avoid}) <= 20 and (${t.timelineNote} is null or char_length(${t.timelineNote}) <= 200) and (${t.additionalRequirements} is null or char_length(${t.additionalRequirements}) <= 2000)`),
+    // Nullable preserves old Other rows; newly saved content is required by
+    // the service to explain a selected Other. Inactive descriptions cannot linger.
+    check("contact_needs_kind_other_check", sql`${t.kindOther} is null or (${t.kind} = 'other' and char_length(btrim(${t.kindOther})) between 1 and 200)`),
+    check("contact_needs_property_type_other_check", sql`${t.propertyTypeOther} is null or ('other' = any(${t.propertyTypes}) and char_length(btrim(${t.propertyTypeOther})) between 1 and 200)`),
+    check("contact_needs_financing_other_check", sql`${t.financingOther} is null or (${t.financing} is not null and ${t.financing} = 'other' and char_length(btrim(${t.financingOther})) between 1 and 200)`),
   ]
 );
 

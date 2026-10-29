@@ -18,7 +18,7 @@ export function PreviewNavigation({ children }) {
     const sameSection = (params.get("view") || "/").split("?")[0] === href.split("?")[0];
     url.search = "";
     url.searchParams.set("view", href);
-    if (scenario && sameSection) url.searchParams.set("scenario", scenario);
+    if (scenario && (sameSection || scenario === "interactive")) url.searchParams.set("scenario", scenario);
     window.history[replace ? "replaceState" : "pushState"]({}, "", url);
     window.dispatchEvent(new PopStateEvent("popstate"));
     window.scrollTo(0, 0);
@@ -42,7 +42,8 @@ export function useSearchParams() {
 export const Link = forwardRef(function Link({ href = "/", children, onClick, prefetch, ...props }, ref) {
   const navigation = useContext(NavigationContext);
   const path = typeof href === "string" ? href : href.pathname || "/";
-  return <a {...props} ref={ref} href={`/?view=${encodeURIComponent(path)}`} onClick={(event) => {
+  const interactive = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("scenario") === "interactive";
+  return <a {...props} ref={ref} href={`/?view=${encodeURIComponent(path)}${interactive ? "&scenario=interactive" : ""}`} onClick={(event) => {
     onClick?.(event);
     if (!event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.shiftKey && event.button === 0) {
       event.preventDefault();

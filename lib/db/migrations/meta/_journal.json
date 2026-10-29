@@ -113,6 +113,13 @@
       "when": 1793232000000,
       "tag": "0015_contact_create_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793232000001,
+      "tag": "0016_contact_details_and_need_other",
+      "breakpoints": true
     }
   ]
 }

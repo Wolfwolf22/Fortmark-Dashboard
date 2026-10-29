@@ -223,6 +223,17 @@ const { data, loading } = useQuery(
   determine list intent, budget and areas. Legacy opportunities are a fallback
   only when no structured needs exist. Every saved requirement has a readable
   view, including historical needs and read-only roles.
+- Selecting Other for need type, property type or financing reveals a named
+  description field. Keep the user's draft when they change the selection; save
+  only the descriptions that still apply. Legacy Other records remain readable.
+- About this client is optional reference information under Details: a short
+  note and named label/value items. It has the same authorized read/write and
+  frozen-revision review as contact editing. Keep these values out of list DTOs,
+  search, existing AI tools and audit metadata; audit changed field names only.
+- Contact stage is the relationship lifecycle. Transaction stage describes an
+  individual deal. Stage menus show valid destinations, archived contacts use
+  explicit Restore, and an old confirmation cannot overwrite a newer stage.
+  A stage-only change does not count as a touch or move a linked deal.
 - Notes, activity and needs load older records with scoped, stable cursors.
   Display loaded counts honestly; never label a partial page as a complete
   history. Completing the final page keeps keyboard focus on its control.

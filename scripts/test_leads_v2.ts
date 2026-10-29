@@ -106,7 +106,7 @@ const render = (sqlObject: Parameters<PgDialect["sqlToQuery"]>[0]) => dialect.sq
 // --- Quick views ---------------------------------------------------------------------
 {
   check("quick views: All, My leads, Representation, Active clients, Due today, Overdue, No touch 14+", QUICK_VIEWS.map((v) => v.id).join() === "all,mine,representation,active_clients,due_today,overdue,no_touch_14");
-  check("quick views: Active clients is exactly the active_client stage and Representation its own", JSON.stringify((QUICK_VIEWS.find((v) => v.id === "active_clients")!.filters as ContactQuery).stage) === '["active_client"]' && JSON.stringify((QUICK_VIEWS.find((v) => v.id === "representation")!.filters as ContactQuery).stage) === '["representation"]');
+  check("quick views: Active client stage names its exact filter while Representation stays separate", QUICK_VIEWS.find((v) => v.id === "active_clients")!.label === "Active client stage" && JSON.stringify((QUICK_VIEWS.find((v) => v.id === "active_clients")!.filters as ContactQuery).stage) === '["active_client"]' && JSON.stringify((QUICK_VIEWS.find((v) => v.id === "representation")!.filters as ContactQuery).stage) === '["representation"]');
   check("quick views: My leads is the earlier stages only", (QUICK_VIEWS.find((v) => v.id === "mine")!.filters as ContactQuery).stage?.join() === "lead,contacted,qualified,appointment");
   check("there is no 'Unassigned' view: every contact has an owner", !QUICK_VIEWS.some((v) => /unassigned/i.test(v.id + v.label)));
   for (const v of QUICK_VIEWS) {
@@ -630,7 +630,7 @@ const edit = async (actor: Actor, patch: Record<string, unknown>, opts: { failOn
   const adapter = strip(src("lib/data/adapters/leads.ts"));
   check("adapter: a read that got no answer is retried once; a write never is", adapter.includes("async function fetchOnce") && adapter.includes("if (!read) return send();") && adapter.includes("first.status !== 502 && first.status !== 504") && adapter.includes("init?.method === undefined || init.method === \"GET\""));
   check("adapter: only the two name-search POSTs (contacts list, eligible contacts) are declared reads", (adapter.match(/read: true/g) ?? []).length === 2);
-  check("later migrations are the approved additive contact and personal workspace tables", (() => { const j = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] }; return j.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces,0015_contact_create_requests"; })());
+  check("later migrations are the approved additive contact and personal workspace tables", (() => { const j = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] }; return j.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces,0015_contact_create_requests,0016_contact_details_and_need_other"; })());
 }
 
 console.log(`\n${passed}/${passed + failures.length} Leads V2 checks passed`);

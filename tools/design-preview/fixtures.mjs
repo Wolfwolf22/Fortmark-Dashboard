@@ -1,6 +1,7 @@
 // Deliberately synthetic, nonpersistent fixtures for visual review only.
 import { visualTransactions } from "./visual-fixtures.mjs";
-import { previewContacts, contactFixtureNow } from "./contact-fixtures.mjs";
+import { contactFixtureNow } from "./contact-fixtures.mjs";
+import { readSampleContacts } from "./sample-session.mjs";
 import { ACTIVE_CLIENT_STAGES, LIFECYCLE_STAGES, OPEN_PIPELINE_STAGES } from "../../lib/contacts/stages.ts";
 import { followUpStatus } from "../../lib/contacts/follow-up.ts";
 import { businessDayKey, dayDiff } from "../../lib/metrics/business-day.ts";
@@ -53,29 +54,50 @@ monthly.forEach(point => {
 });
 Object.assign(metrics.leaderboard.data[0], { activeCount: active.length, closedCount: closedThisMonth.length, closedVolumeCents: sumCents(closedThisMonth, "contractPrice") });
 
-const thisMonthContacts = previewContacts.filter(contact => new Date(contact.createdDate) >= new Date(`${monthStart}T00:00:00Z`));
-const sourceCounts = new Map();
-thisMonthContacts.forEach(contact => sourceCounts.set(contact.source, (sourceCounts.get(contact.source) || 0) + 1));
-const contactAttention = previewContacts.flatMap(contact => {
-  if (!OPEN_PIPELINE_STAGES.includes(contact.stage)) return [];
-  const status = followUpStatus(contact.nextFollowUpDate, previewNow);
-  return status.state === "due_today" || status.state === "overdue" ? [{ id: `follow-up:${contact.id}`, kind: "follow_up_due", label: "Follow up", subject: contact.name, dueDate: status.day, daysAway: status.daysAway, href: `/contacts?open=${contact.id}` }] : [];
-});
-Object.assign(metrics.contacts.data, {
-  activeClients: previewContacts.filter(contact => ACTIVE_CLIENT_STAGES.includes(contact.stage)).length,
-  newLeadsThisMonth: thisMonthContacts.length,
-  followUpsDue: contactAttention.length,
-  lifecycle: LIFECYCLE_STAGES.map(stage => ({ stage, count: previewContacts.filter(contact => contact.stage === stage).length })),
-  newLeadsBySource: [...sourceCounts].map(([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count),
-});
-const transactionAttention = active.flatMap(deal => deal.milestones.flatMap(milestone => {
-  if (milestone.state === "done") return [];
-  const dueDate = businessDayKey(new Date(milestone.date));
-  const daysAway = dayDiff(dueDate, businessDayKey(previewNow));
-  return daysAway <= 7 ? [{ id: `deadline:${deal.id}:${milestone.id}`, kind: daysAway < 0 ? "deadline_overdue" : "deadline_soon", label: milestone.label, subject: deal.address, dueDate, daysAway, href: `/transactions?open=${deal.id}` }] : [];
-}));
-const attention = [...contactAttention, ...transactionAttention].sort((a, b) => a.daysAway - b.daysAway || a.id.localeCompare(b.id));
-Object.assign(metrics.attention.data, { items: attention, overdueCount: attention.filter(item => item.daysAway < 0).length, soonCount: attention.filter(item => item.daysAway >= 0).length });
+function contactFigures(contacts, at, month) {
+  const thisMonthContacts = contacts.filter(contact => new Date(contact.createdDate) >= new Date(`${month}T00:00:00Z`));
+  const sourceCounts = new Map();
+  thisMonthContacts.forEach(contact => sourceCounts.set(contact.source, (sourceCounts.get(contact.source) || 0) + 1));
+  const attention = contacts.flatMap(contact => {
+    if (!OPEN_PIPELINE_STAGES.includes(contact.stage)) return [];
+    const status = followUpStatus(contact.nextFollowUpDate, at);
+    return status.state === "due_today" || status.state === "overdue" ? [{ id: `follow-up:${contact.id}`, kind: "follow_up_due", label: "Follow up", subject: contact.name, dueDate: status.day, daysAway: status.daysAway, href: `/contacts?open=${contact.id}` }] : [];
+  });
+  return {
+    data: {
+      activeClients: contacts.filter(contact => ACTIVE_CLIENT_STAGES.includes(contact.stage)).length,
+      newLeadsThisMonth: thisMonthContacts.length,
+      followUpsDue: attention.length,
+      lifecycle: LIFECYCLE_STAGES.map(stage => ({ stage, count: contacts.filter(contact => contact.stage === stage).length })),
+      newLeadsBySource: [...sourceCounts].map(([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count),
+    },
+    attention,
+  };
+}
+function transactionAttentionAt(at) {
+  return active.flatMap(deal => deal.milestones.flatMap(milestone => {
+    if (milestone.state === "done") return [];
+    const dueDate = businessDayKey(new Date(milestone.date));
+    const daysAway = dayDiff(dueDate, businessDayKey(at));
+    return daysAway <= 7 ? [{ id: `deadline:${deal.id}:${milestone.id}`, kind: daysAway < 0 ? "deadline_overdue" : "deadline_soon", label: milestone.label, subject: deal.address, dueDate, daysAway, href: `/transactions?open=${deal.id}` }] : [];
+  }));
+}
+function setContactGroups(target, contacts, at) {
+  const derived = contactFigures(contacts, at, target.monthStart);
+  target.contacts.data = derived.data;
+  const attention = [...derived.attention, ...transactionAttentionAt(at)].sort((a, b) => a.daysAway - b.daysAway || a.id.localeCompare(b.id));
+  target.attention.data = { items: attention, overdueCount: attention.filter(item => item.daysAway < 0).length, soonCount: attention.filter(item => item.daysAway >= 0).length };
+}
+setContactGroups(metrics, readSampleContacts(), previewNow);
+
+/** A fresh view of the same ephemeral session used by all contact reads. */
+export function getPreviewMetrics() {
+  const result = structuredClone(metrics);
+  const at = new Date();
+  result.generatedAt = at.toISOString();
+  setContactGroups(result, readSampleContacts(), at);
+  return result;
+}
 
 const names = ["calendar", "documents", "messages", "notifications", "market", "team", "brokerage", "integrations", "reports"];
 const subsystems = Object.fromEntries(names.map(name => [name, "not_configured"]));
@@ -91,7 +113,7 @@ export function installPreviewTransport() {
       if (path === "/api/search") return json({ query: "", hits: [], providers: { contact: "available", transaction: "available", listing: "not_configured", agent: "available" }, truncated: false });
       return json({ error: "Design preview: changes are disabled." }, 403);
     }
-    if (path === "/api/metrics") return json(metrics);
+    if (path === "/api/metrics") return json(getPreviewMetrics());
     if (path === "/api/subsystems") return json({ subsystems });
     if (path === "/api/transactions/source") return json({ source: "db" });
     if (path === "/api/transactions") return json({ items: [] });

@@ -23,6 +23,7 @@ import { DateRangeSelector } from "@/components/layout/date-range-selector";
 import { useHomeMetrics } from "./metrics-provider";
 import { UnavailableBody } from "./metric-state";
 import { isFirstUse } from "@/lib/metrics/home-layout";
+import { activeClientsHref } from "@/lib/metrics/links";
 import { centsToDollars, monthLabel, scopeLabel } from "./metric-format";
 import { ROUTES } from "@/lib/routes";
 import { cn, formatCurrencyCompact } from "@/lib/utils";
@@ -185,7 +186,7 @@ export function DailyBrief() {
             <dt className="min-h-8 text-[12px] font-medium leading-snug text-muted-foreground sm:min-h-5 sm:text-[13px]">
               {figure.value !== null ? (
                 <Link
-                  href={figure.label === "Active clients" ? ROUTES.contacts : ROUTES.transactions}
+                  href={figure.label === "Active clients" ? activeClientsHref() : ROUTES.transactions}
                   className="flex items-start justify-between gap-2 after:absolute after:inset-0 focus-visible:ring-inset"
                   aria-label={`View ${figure.label.toLowerCase()}`}
                 >

@@ -181,3 +181,47 @@ integration test was skipped because PostgreSQL server binaries are unavailable
 on this host; the committed migrations and new receipt schema were exercised by
 the isolated PostgreSQL test harness. Live deployment and authenticated live-data
 certification remain separate from this local implementation.
+
+## Optional client context and Other descriptions — 2026-10-29
+
+Migration `0016_contact_details_and_need_other.sql` adds optional `contacts.about`
+and `personal_details`, plus nullable `kind_other`, `property_type_other` and
+`financing_other` on needs. It is additive and follows the still-required 0015
+creation-receipt migration. Neither has been applied to a live database by this
+local task.
+
+The client Details section now supports an About note (2,000 characters) and up
+to 20 named details (label 60, value 500). Blank rows are omitted; partial rows,
+unsupported NUL characters and over-limit text are refused. Authorized detail
+reads include these values; list results, search, existing AI tool DTOs and audit
+metadata exclude their content. Edits use the opening revision and explicit
+saved/draft conflict review. This is editable reference context, distinct from
+append-only chronological Notes.
+
+Other descriptions appear next to the relevant need choice, are limited to 200
+characters and render as plain text for every readable need status. New selected
+Other values must be described. Legacy Other rows without descriptions stay
+readable and may change status without a forced content rewrite. Changing a
+selection keeps the local draft but clears an inactive description on save.
+
+Contact-stage controls expose valid lifecycle moves and explicit archive/restore.
+The stage observed when an action or confirmation began is checked again at the
+write boundary, and competing changes roll back the entire transition/history
+batch. Stage predicates used by contact lists, snapshots, Home active-client and
+follow-up counts share one definition. Closing a relationship does not close its
+separate transaction. Sample stage updates also leave touch dates unchanged.
+
+Home attention formats its calendar-day due dates without a viewer-timezone
+shift, so a saved October 29 reminder stays October 29 in New York as well as
+on the contact profile. Home's Active clients total opens the matching shared
+three-stage contact filter. The exact-stage quick view keeps its existing URL
+contract and is labeled Active client stage to distinguish that narrower set.
+
+Local verification includes the complete project suite (more than 4,400 counted
+checks after the final targeted regressions), isolated PostgreSQL persistence
+and rollback checks, and 11 interactive-preview contract groups. Browser checks
+saved and read back About/named details and all three Other descriptions,
+changed/archived/restored a stage, checked the shared Home count, and inspected
+the editor at 390px and 320px with no horizontal overflow. Interactive samples
+allow only these changes in memory and reset on reload; live-data certification
+and deployment remain separate.

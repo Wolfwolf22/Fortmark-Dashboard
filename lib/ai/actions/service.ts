@@ -26,7 +26,7 @@ import { resolveActor, type Actor } from "../../auth/actor.ts";
 import type { Db } from "../../db/client.ts";
 import { aiPreparedActions, auditEvents, contactActivities, contacts } from "../../db/schema.ts";
 import { aiActionsEnabled, contactsDatabaseEnabled, type EnvLike } from "../../flags.ts";
-import { commitStageChange, planStageChange } from "../../contacts/service.ts";
+import { commitStageChange, planStageChange, StageChangeConflict } from "../../contacts/service.ts";
 import { nextContactUpdatedAt } from "../../contacts/reliability.ts";
 import { canWrite } from "../../contacts/domain.ts";
 import type { LeadStage } from "../../data/types.ts";
@@ -354,13 +354,13 @@ export async function prepareStageChange(
     { actor, db },
     row.id,
     input.toStage as LeadStage,
-    { mechanism: "ai_assisted", now: ctx.now }
+    { mechanism: "ai_assisted", now: ctx.now, expectedStage: row.stage }
   );
   if (!planned.ok) {
     if (planned.reason === "not_found" || planned.reason === "forbidden") {
       return { ok: false, reason: "not_found" };
     }
-    if (planned.reason === "invalid_transition") {
+    if (planned.reason === "invalid_transition" || planned.reason === "conflict") {
       return { ok: false, reason: "invalid_transition" };
     }
     return { ok: false, reason: "unavailable" };
@@ -689,13 +689,14 @@ async function executeStageChange(
 
   const planned = await planStageChange({ actor, db }, contact.id, payload.toStage as LeadStage, {
     mechanism: "ai_assisted",
+    expectedStage: payload.fromStage as LeadStage,
     metadata: { preparedActionId: claimed.id },
     now: ctx.now,
   });
   if (!planned.ok) {
     // The domain refuses it now even though it allowed it at preparation —
     // the record moved underneath, which is staleness by another name.
-    const stale = planned.reason === "invalid_transition";
+    const stale = planned.reason === "invalid_transition" || planned.reason === "conflict";
     await release(db, claimed.id, stale ? "stale" : "failed", planned.reason);
     return { ok: false, reason: stale ? "stale" : "not_found" };
   }
@@ -708,9 +709,13 @@ async function executeStageChange(
         .set({ status: "executed", executedAt: ctx.now })
         .where(eq(aiPreparedActions.id, claimed.id)),
     ]);
-  } catch {
+  } catch (error) {
     // Rolled back: the stage is unchanged, no activity, no audit, and the
     // action must not read as done.
+    if (error instanceof StageChangeConflict) {
+      await release(db, claimed.id, "stale", "stale");
+      return { ok: false, reason: "stale" };
+    }
     await release(db, claimed.id, "failed", "unavailable");
     return { ok: false, reason: "unavailable" };
   }

@@ -45,6 +45,11 @@ import { sampleDashboardEnabled } from "../lib/flags.ts";
 import { sampleBrokerageMetrics } from "../lib/data/sample-metrics.ts";
 import { isFirstUse, leaderboardVisible, mlsIsCompact } from "../lib/metrics/home-layout.ts";
 import { DEFAULT_WIDGET_ORDER } from "../lib/stores/widget-order.ts";
+import { activeClientsHref } from "../lib/metrics/links.ts";
+import { parseContactQuery } from "../lib/contacts/filters.ts";
+import { leadMatches } from "../lib/contacts/windows.ts";
+import { listSampleLeads } from "../lib/data/sample-leads.ts";
+import { ROUTES } from "../lib/routes.ts";
 
 /**
  * A file's code, with comments stripped.
@@ -388,6 +393,21 @@ check("the brief carries the four headline figures", (() => {
     (label) => src.includes(`label: "${label}"`)
   );
 })());
+check("Home's Active clients drill-through is a supported Contacts stage query", (() => {
+  const url = new URL(activeClientsHref(), "https://example.test");
+  const parsed = parseContactQuery((key) => url.searchParams.get(key));
+  return url.pathname === ROUTES.contacts && parsed.ok &&
+    parsed.query.stage?.join() === ACTIVE_CLIENT_STAGES.join() && !url.searchParams.has("view");
+})());
+check("the drill-through includes exactly the stages counted as active clients", (() => {
+  const url = new URL(activeClientsHref(), "https://example.test");
+  const parsed = parseContactQuery((key) => url.searchParams.get(key));
+  if (!parsed.ok) return false;
+  const contact = listSampleLeads()[0];
+  return ALL_CONTACT_STAGES.every(stage => leadMatches({ ...contact, stage }, parsed.query, NOW) ===
+    (ACTIVE_CLIENT_STAGES as readonly string[]).includes(stage));
+})());
+check("the Active clients figure uses the same tested drill-through", code("components/home/daily-brief.tsx").includes('href={figure.label === "Active clients" ? activeClientsHref() : ROUTES.transactions}'));
 check("a figure the source cannot state is an em dash, never a zero", (() => {
   const src = code("components/home/daily-brief.tsx");
   return src.includes('{figure.value ?? "—"}') && /value: deals \? /.test(src);

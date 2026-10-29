@@ -431,6 +431,9 @@ export interface Lead {
   createdDate: string; // ISO
   /** ISO row revision for conflict-safe edits. Present on stored contacts. */
   updatedAt?: string;
+  /** Private context, included only when one authorized contact is opened. */
+  about?: string;
+  personalDetails?: { label: string; value: string }[];
   /** ISO — the latest activity, or creation when there is none. */
   lastContactDate: string;
   /**

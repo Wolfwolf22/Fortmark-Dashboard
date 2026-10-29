@@ -82,7 +82,7 @@ try {
 
   for (const kind of NEED_KINDS) {
     const c = await addContact(`Kind ${kind}`);
-    const result = await createNeed(ctx, c.id, { kind }, NOW);
+    const result = await createNeed(ctx, c.id, { kind, ...(kind === "other" ? { kindOther: "Synthetic other need" } : {}) }, NOW);
     check(`${kind} need saves`, result.ok);
     const expected = kind === "rent" || kind === "lease" ? "lease" : kind;
     check(`${kind} matches identical DTO and SQL intent`, (await getContact(ctx, c.id))?.intent === expected && (await list({ intent: [expected] })).items.some((r) => r.id === c.id));

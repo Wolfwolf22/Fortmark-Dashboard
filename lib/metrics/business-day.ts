@@ -27,6 +27,15 @@ export const BUSINESS_TIME_ZONE = "America/New_York";
 
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+/** A calendar day, `YYYY-MM-DD`, as "Oct 29" without a viewer-timezone shift. */
+export function formatCalendarDayShort(day: string): string {
+  return new Date(`${day}T00:00:00.000Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 /** Wall-clock parts of an instant in a timezone. */
 function zonedParts(at: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {

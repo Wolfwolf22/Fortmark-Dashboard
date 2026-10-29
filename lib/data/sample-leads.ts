@@ -48,7 +48,6 @@ export function updateSampleLeadStage(id: string, stage: LeadStage): Lead | unde
   if (!lead) return undefined;
   if (!canTransition(lead.stage, stage)) return lead;
   lead.stage = stage;
-  lead.lastContactDate = now().toISOString();
   bumpDataVersion();
   return lead;
 }

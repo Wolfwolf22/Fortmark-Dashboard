@@ -792,7 +792,8 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
   check("preparation asks the domain whether the move is legal",
     /planStageChange\(/.test(prepareBlock));
   check("preparation derives the current stage from the row, never from input",
-    !/fromStage:\s*input\./.test(prepareBlock) && /expectedFingerprint = stageFingerprint\(row\)/.test(prepareBlock));
+    !/fromStage:\s*input\./.test(prepareBlock) && /expectedFingerprint = stageFingerprint\(row\)/.test(prepareBlock) &&
+      prepareBlock.includes("expectedStage: row.stage") && prepareBlock.includes('planned.reason === "conflict"'));
   check("preparation writes only the proposal row",
     /insertOrReusePending\(/.test(prepareBlock) &&
       !/update\(contacts\)/.test(prepareBlock) &&
@@ -810,8 +811,9 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
       /status: "executed"/.test(execBlock));
   check("execution does not duplicate the transition logic",
     !/canTransition/.test(execBlock) && !/insert\(contactActivities\)/.test(execBlock));
-  check("a rolled-back stage change marks the action failed, never executed",
-    /catch \{[\s\S]{0,300}release\(db, claimed\.id, "failed"/.test(execBlock));
+  check("a rolled-back stage change marks stale races distinctly and other failures as failed",
+    /catch \(error\)/.test(execBlock) && execBlock.includes("error instanceof StageChangeConflict") &&
+      execBlock.includes('release(db, claimed.id, "stale", "stale")') && execBlock.includes('release(db, claimed.id, "failed", "unavailable")'));
   check("each action type recomputes its own fingerprint",
     /claimed\.actionType === STAGE_ACTION_TYPE[\s\S]{0,120}stageFingerprint\(contact\)[\s\S]{0,80}followUpFingerprint\(contact\)/.test(service));
 
@@ -867,7 +869,7 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
   check("no contact writer treats required history as best-effort",
     !/History must never break the write it describes|Auditing must never break the write it describes/.test(raw));
   check("a failed stage change reports failure rather than partial success",
-    /catch \{[\s\S]{0,120}reason: "unavailable"/.test(manual));
+    manual.includes("error instanceof StageChangeConflict") && manual.includes('reason: "conflict"') && manual.includes('reason: "unavailable"'));
 
   // §5 — mechanism is additive; a manual change records what it always did.
   check("a manual change records no mechanism",

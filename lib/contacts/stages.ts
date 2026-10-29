@@ -108,8 +108,14 @@ export function isLifecycleStage(stage: ContactStage): stage is LifecycleStage {
  *   - same stage is not a transition
  */
 export function canTransition(from: ContactStage, to: ContactStage): boolean {
+  if (!isContactStage(from) || !isContactStage(to)) return false;
   if (from === to) return false;
   if (from === "archived") return to === "lead";
   if (from === "lost") return isLifecycleStage(to);
   return true;
+}
+
+/** The same graph drives offered destinations and server-side validation. */
+export function allowedStageTransitions(from: ContactStage): ContactStage[] {
+  return ALL_CONTACT_STAGES.filter((to) => canTransition(from, to));
 }

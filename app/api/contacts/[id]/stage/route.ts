@@ -33,6 +33,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (contactsSource() === "sample") {
     const current = getSampleLead(id);
     if (!current) return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
+    if (parsed.data.expectedStage && current.stage !== parsed.data.expectedStage) return NextResponse.json({ error: "conflict" }, { status: 409, headers: NO_STORE });
     if (!canTransition(current.stage, parsed.data.stage)) return failure("invalid_transition");
     return NextResponse.json({ contact: updateSampleLeadStage(id, parsed.data.stage) }, { headers: NO_STORE });
   }
@@ -42,8 +43,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   try {
     const result = await changeStage(actor.ctx, id, parsed.data.stage, new Date(), {
       engagementAcknowledged: parsed.data.engagementAcknowledged,
+      expectedStage: parsed.data.expectedStage,
     });
-    if (!result.ok) return failure(result.reason);
+    if (!result.ok) {
+      if (result.reason === "conflict") return NextResponse.json({ error: "conflict" }, { status: 409, headers: NO_STORE });
+      return failure(result.reason);
+    }
     return NextResponse.json({ contact: result.value }, { headers: NO_STORE });
   } catch (error) {
     return unexpected(error);

@@ -8,7 +8,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:auth": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_dashboard_access.ts",
-    "test": "npm run typecheck && npm run test:auth && npm run test:profile && npm run test:ai && npm run test:ai:tools && npm run test:ai:providers && npm run test:ai:actions && npm run test:mls && npm run test:transactions && npm run test:contacts && npm run test:follow-up && npm run test:atomicity && npm run test:leads && npm run test:contacts-v3 && npm run test:metrics && npm run test:mock-leak && npm run test:search && npm run test:team && npm run test:brokerage && npm run test:mls-identity && npm run test:shell && npm run test:workspaces && npm run test:contact-reliability && npm run test:needs-consistency && npm run test:need-read-view && npm run test:contact-history && npm run test:contact-workspace",
+    "test": "npm run typecheck && npm run test:auth && npm run test:profile && npm run test:ai && npm run test:ai:tools && npm run test:ai:providers && npm run test:ai:actions && npm run test:mls && npm run test:transactions && npm run test:contacts && npm run test:follow-up && npm run test:atomicity && npm run test:leads && npm run test:contacts-v3 && npm run test:metrics && npm run test:mock-leak && npm run test:search && npm run test:team && npm run test:brokerage && npm run test:mls-identity && npm run test:shell && npm run test:workspaces && npm run test:contact-reliability && npm run test:needs-consistency && npm run test:need-read-view && npm run test:contact-history && npm run test:contact-workspace && npm run test:contact-stages && npm run test:client-info-service && npm run test:need-other && npm run test:need-other-view && npm run test:stage-adapter && npm run test:client-info",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/migrate.mjs --force",
     "db:check": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/db_check.ts",
@@ -41,7 +41,13 @@
     "test:needs-consistency": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_needs_consistency.ts",
     "test:contact-history": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_contact_history.ts",
     "test:need-read-view": "node scripts/test_need_read_view.mjs",
-    "test:contact-workspace": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_contact_workspace.ts"
+    "test:contact-workspace": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_contact_workspace.ts",
+    "test:contact-stages": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_contact_stages.ts",
+    "test:client-info-service": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_client_info_service.ts",
+    "test:client-info": "node scripts/test_client_info.mjs",
+    "test:need-other": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_need_other.ts",
+    "test:need-other-view": "node scripts/test_need_other_view.mjs",
+    "test:stage-adapter": "node scripts/test_stage_adapter.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

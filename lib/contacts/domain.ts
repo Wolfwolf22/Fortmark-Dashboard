@@ -16,6 +16,7 @@ import { businessDayKey } from "../metrics/business-day.ts";
 import { decideFollowUp, type FollowUpOutcome } from "./follow-up.ts";
 import { ALL_CONTACT_STAGES } from "./stages.ts";
 import { birthdayChangeState, birthdaySchema, type Birthday } from "./birthday.ts";
+import { clientAboutSchema, clientPersonalDetailsSchema } from "./client-info.ts";
 import { projectContactNeedSummary } from "./needs-summary.ts";
 
 // --- Who ---------------------------------------------------------------------
@@ -84,6 +85,8 @@ export type CreateContactInput = z.infer<typeof createContactSchema>;
 
 export const contactStageChangeSchema = z.object({
   stage: z.enum(ALL_CONTACT_STAGES as [LeadStage, ...LeadStage[]]),
+  /** The stage observed before choosing a destination, including archive/restore. */
+  expectedStage: z.enum(ALL_CONTACT_STAGES as [LeadStage, ...LeadStage[]]).optional(),
   /** The person confirmed the engagement notice. Recorded; never taken to mean a document exists. */
   engagementAcknowledged: z.boolean().optional(),
 });
@@ -164,6 +167,8 @@ export const editContactSchema = z
     email: z.union([z.literal(""), z.string().trim().email().max(320)]).optional(),
     phone: z.string().trim().max(40).optional(),
     company: z.string().trim().max(EDITABLE_TEXT.max).optional(),
+    about: clientAboutSchema.optional(),
+    personalDetails: clientPersonalDetailsSchema.optional(),
     source: z.enum(SOURCES).optional(),
     /** Kept for compatibility. The screen no longer offers it: notes are their own records now. */
     notes: z.string().trim().max(5000).optional(),
@@ -176,12 +181,12 @@ export const editContactSchema = z
 export type EditContactInput = z.infer<typeof editContactSchema>;
 
 
-export type ContactEditField = "name" | "email" | "phone" | "company" | "source" | "notes" | "birthday";
+export type ContactEditField = "name" | "email" | "phone" | "company" | "source" | "notes" | "birthday" | "about" | "personalDetails";
 
 export type ContactEditPlan =
   | {
       ok: true;
-      set: Partial<Pick<ContactRow, "firstName" | "lastName" | "preferredName" | "email" | "phoneE164" | "company" | "source" | "notes" | "birthdayMonth" | "birthdayDay">>;
+      set: Partial<Pick<ContactRow, "firstName" | "lastName" | "preferredName" | "email" | "phoneE164" | "company" | "source" | "notes" | "birthdayMonth" | "birthdayDay" | "about" | "personalDetails">>;
       changed: ContactEditField[];
       /** How the birthday changed, when it did — never the date itself. */
       birthday?: "set" | "changed" | "cleared";
@@ -203,7 +208,7 @@ const blankToNull = (v: string | undefined | null): string | null => {
  * email is stored lower-case as it is on creation.
  */
 export function planContactEdit(
-  row: Pick<ContactRow, "firstName" | "lastName" | "preferredName" | "email" | "phoneE164" | "company" | "source" | "notes" | "birthdayMonth" | "birthdayDay">,
+  row: Pick<ContactRow, "firstName" | "lastName" | "preferredName" | "email" | "phoneE164" | "company" | "source" | "notes" | "birthdayMonth" | "birthdayDay"> & Partial<Pick<ContactRow, "about" | "personalDetails">>,
   patch: EditContactInput
 ): ContactEditPlan {
   const set: Extract<ContactEditPlan, { ok: true }>["set"] = {};
@@ -226,6 +231,11 @@ export function planContactEdit(
     apply("phoneE164", phone, "phone", row.phoneE164 ?? null);
   }
   if (patch.company !== undefined) apply("company", blankToNull(patch.company), "company", row.company ?? null);
+  if (patch.about !== undefined) apply("about", patch.about, "about", row.about ?? "");
+  if (patch.personalDetails !== undefined && JSON.stringify(patch.personalDetails) !== JSON.stringify(row.personalDetails ?? [])) {
+    set.personalDetails = patch.personalDetails;
+    changed.add("personalDetails");
+  }
   if (patch.source !== undefined) apply("source", patch.source, "source", row.source);
   if (patch.notes !== undefined) apply("notes", blankToNull(patch.notes), "notes", row.notes ?? null);
   let birthday: "set" | "changed" | "cleared" | undefined;
@@ -286,6 +296,7 @@ export interface ContactBundle {
   /** The latest activity, when any; lists carry only this one. */
   latestActivity?: ContactActivityRow;
   agentName?: string;
+  includePrivateDetails?: boolean;
 }
 
 export function toLead(bundle: ContactBundle): Lead {
@@ -307,6 +318,7 @@ export function toLead(bundle: ContactBundle): Lead {
     ...(bundle.viewerId ? { ownedByViewer: row.assignedAgentUserId === bundle.viewerId } : {}),
     createdDate: row.createdAt.toISOString(),
     updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : undefined,
+    ...(bundle.includePrivateDetails ? { about: row.about ?? "", personalDetails: row.personalDetails ?? [] } : {}),
     lastContactDate: lastContact.toISOString(),
     lastTouchDate: row.lastContactAt?.toISOString(),
     nextFollowUpDate: row.nextFollowUpAt?.toISOString(),

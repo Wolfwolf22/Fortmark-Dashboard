@@ -16,6 +16,7 @@ const base = {
   phone: "+12025550101", stage: "lead", source: "referral", intent: "buy",
   assignedAgentId: "sample-agent", assignedAgentName: "Sample Agent", ownedByViewer: true,
   recordSource: "db", notes: "", birthday: null,
+  about: "", personalDetails: [],
   updatedAt: CONTACT_FIXTURE_REVISION,
   createdDate: instant(-45), lastContactDate: instant(-3), lastTouchDate: instant(-3),
   editable: { firstName: "Sample", lastName: "Contact", preferredName: "", company: "Sample Company" },
@@ -23,7 +24,7 @@ const base = {
 export const contactAgents = [{ id: "sample-agent", name: "Sample Agent" }, { id: "sample-colleague", name: "Sample Colleague" }];
 export const previewContacts = [
   { ...base, id: "sample-due-today", name: "Sample Due Today", email: "sample.today@example.com", stage: "qualified", source: "website", nextFollowUpDate: follow(0), neighborhood: "Fort Lauderdale", budget: 750000, createdDate: instant(-5), lastContactDate: instant(-1), lastTouchDate: instant(-1), editable: { ...base.editable, lastName: "Due Today" } },
-  { ...base, id: "sample-overdue", name: "Sample Overdue Follow-up", email: "sample.overdue@example.com", stage: "representation", source: "referral", nextFollowUpDate: follow(-3), neighborhood: "Fort Lauderdale", budget: 800000, lastContactDate: instant(-18), lastTouchDate: instant(-18), birthday: { month: 11, day: 12 }, notes: "Synthetic legacy note. This is sample content for the read-only visual preview.", editable: { ...base.editable, lastName: "Overdue Follow-up" } },
+  { ...base, id: "sample-overdue", name: "Sample Overdue Follow-up", email: "sample.overdue@example.com", stage: "representation", source: "referral", nextFollowUpDate: follow(-3), neighborhood: "Fort Lauderdale", budget: 800000, lastContactDate: instant(-18), lastTouchDate: instant(-18), birthday: { month: 11, day: 12 }, notes: "Synthetic legacy note. This is sample content for the visual preview.", about: "Synthetic client information for your reference. Prefers a calm pace and a short written recap after a conversation.\nThis does not describe a real person.", personalDetails: [{ label: "Preferred contact time", value: "Sample weekday mornings" }, { label: "A longer named detail for wrapping and readable reference", value: "Synthetic detail with a longer value that should wrap cleanly on a small screen. <strong>This markup stays plain text.</strong>\nA second line remains readable." }], editable: { ...base.editable, lastName: "Overdue Follow-up" } },
   { ...base, id: "sample-upcoming", name: "Sample Upcoming Follow-up", email: "sample.upcoming@example.com", stage: "under_contract", source: "sphere", nextFollowUpDate: follow(4), neighborhood: "Fort Lauderdale", budget: 450000, lastContactDate: instant(-2), lastTouchDate: instant(-2), editable: { ...base.editable, lastName: "Upcoming Follow-up" } },
   { ...base, id: "sample-quiet", name: "Sample Quiet Relationship", email: "sample.quiet@example.com", stage: "lead", source: "open_house", intent: "sell", nextFollowUpDate: undefined, lastContactDate: instant(-35), lastTouchDate: undefined, editable: { ...base.editable, lastName: "Quiet Relationship" } },
   { ...base, id: "sample-past-client", name: "Sample Past Client", email: "sample.past@example.com", stage: "past_client", source: "past_client", intent: "other", lastContactDate: instant(-50), lastTouchDate: instant(-50), editable: { ...base.editable, lastName: "Past Client" } },
@@ -72,6 +73,10 @@ export const contactNeeds = {
     createdAt: instant(-90), updatedAt: new Date(contactFixtureNow.getTime() - Math.floor(index / 5) * 3_600_000).toISOString(),
   })),
 };
+contactNeeds["sample-overdue"].push(
+  { ...contactNeeds["sample-overdue"][0], id: "20000000-0000-4000-8000-000000000001", kind: "other", kindOther: "Synthetic relocation planning", propertyTypes: ["other"], propertyTypeOther: "Sample live/work loft", financing: "other", financingOther: "Sample employer-assisted financing", areas: ["Fort Lauderdale"], priceMinCents: null, priceMaxCents: null, minBeds: null, minBaths: null, minSqft: null, targetDate: null, timelineNote: null, mustHaves: [], avoid: [], additionalRequirements: "A populated Other example; every description is synthetic.", createdAt: instant(-12), updatedAt: instant(-6) },
+  { ...contactNeeds["sample-overdue"][0], id: "20000000-0000-4000-8000-000000000002", kind: "other", kindOther: null, propertyTypes: ["other"], propertyTypeOther: null, financing: "other", financingOther: null, status: "paused", areas: [], priceMinCents: null, priceMaxCents: null, minBeds: null, minBaths: null, minSqft: null, targetDate: null, timelineNote: "Synthetic legacy Other without saved descriptions", mustHaves: [], avoid: [], additionalRequirements: null, createdAt: instant(-20), updatedAt: instant(-15) }
+);
 export function timelineFor(id) {
   if (id === "sample-labeled-fallback" || id === "sample-quiet") return [];
   if (id === "sample-long-history") return Array.from({ length: 143 }, (_, index) => ({

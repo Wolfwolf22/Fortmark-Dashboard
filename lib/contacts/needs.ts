@@ -66,6 +66,7 @@ export const NEED_LIMITS = {
   avoid: 20,
   itemLength: 80,
   timelineNote: 200,
+  otherDescription: 200,
   additional: 2000,
   maxCents: 9_999_999_999_99,
   maxBeds: 30,
@@ -102,9 +103,13 @@ const optionalText = (max: number) =>
     .trim()
     .max(max)
     .transform((v) => (v === "" ? null : v));
+const otherDescription = optionalText(NEED_LIMITS.otherDescription)
+  .refine(value => value === null || !value.includes("\u0000"), "invalid text");
 
 const fields = {
+  kindOther: otherDescription.nullable(),
   propertyTypes: z.array(z.enum(NEED_PROPERTY_TYPES)).max(NEED_LIMITS.propertyTypes).transform((v) => Array.from(new Set(v))),
+  propertyTypeOther: otherDescription.nullable(),
   areas: list(NEED_LIMITS.areas),
   priceMinCents: cents.nullable(),
   priceMaxCents: cents.nullable(),
@@ -119,6 +124,7 @@ const fields = {
   targetDate: day.nullable(),
   timelineNote: optionalText(NEED_LIMITS.timelineNote).nullable(),
   financing: z.enum(NEED_FINANCING).nullable(),
+  financingOther: otherDescription.nullable(),
   mustHaves: list(NEED_LIMITS.mustHaves),
   avoid: list(NEED_LIMITS.avoid),
   additionalRequirements: optionalText(NEED_LIMITS.additional).nullable(),
@@ -126,6 +132,33 @@ const fields = {
 
 const priceOrdered = (v: { priceMinCents?: number | null; priceMaxCents?: number | null }) =>
   v.priceMinCents == null || v.priceMaxCents == null || v.priceMaxCents >= v.priceMinCents;
+
+type OtherSelections = {
+  kind?: NeedKind;
+  kindOther?: string | null;
+  propertyTypes?: readonly NeedPropertyType[];
+  propertyTypeOther?: string | null;
+  financing?: NeedFinancing | null;
+  financingOther?: string | null;
+};
+
+/** A hidden draft never becomes a saved requirement for an unselected Other. */
+export function normalizeNeedOther<T extends OtherSelections>(value: T) {
+  return {
+    ...value,
+    kindOther: value.kind === "other" ? value.kindOther?.trim() || null : null,
+    propertyTypeOther: value.propertyTypes?.includes("other") ? value.propertyTypeOther?.trim() || null : null,
+    financingOther: value.financing === "other" ? value.financingOther?.trim() || null : null,
+  };
+}
+
+export function missingNeedOther(value: OtherSelections): ("kindOther" | "propertyTypeOther" | "financingOther")[] {
+  const missing: ("kindOther" | "propertyTypeOther" | "financingOther")[] = [];
+  if (value.kind === "other" && !value.kindOther?.trim()) missing.push("kindOther");
+  if (value.propertyTypes?.includes("other") && !value.propertyTypeOther?.trim()) missing.push("propertyTypeOther");
+  if (value.financing === "other" && !value.financingOther?.trim()) missing.push("financingOther");
+  return missing;
+}
 
 /** Creating a need: a kind, and whatever else is known. Strict, so nothing unknown is half-honoured. */
 export const createNeedSchema = z
@@ -140,10 +173,17 @@ export const createNeedSchema = z
     targetDate: true,
     timelineNote: true,
     financing: true,
+    kindOther: true,
+    propertyTypeOther: true,
+    financingOther: true,
     additionalRequirements: true,
   })
   .strict()
-  .refine(priceOrdered, { message: "maximum is below minimum", path: ["priceMaxCents"] });
+  .refine(priceOrdered, { message: "maximum is below minimum", path: ["priceMaxCents"] })
+  .superRefine((value, ctx) => {
+    for (const field of missingNeedOther(value)) ctx.addIssue({ code: "custom", path: [field], message: "Describe the selected Other option." });
+  })
+  .transform(normalizeNeedOther);
 
 /** Changing a need: any field, or its status. `null` clears a scalar; an empty list clears a list. */
 export const updateNeedSchema = z
@@ -160,8 +200,11 @@ export type UpdateNeedInput = z.infer<typeof updateNeedSchema>;
 export interface NeedView {
   id: string;
   kind: NeedKind;
+  /** Optional on older DTOs; legacy Other records may have no description. */
+  kindOther?: string | null;
   status: NeedStatus;
   propertyTypes: NeedPropertyType[];
+  propertyTypeOther?: string | null;
   areas: string[];
   priceMinCents: number | null;
   priceMaxCents: number | null;
@@ -171,6 +214,7 @@ export interface NeedView {
   targetDate: string | null;
   timelineNote: string | null;
   financing: NeedFinancing | null;
+  financingOther?: string | null;
   mustHaves: string[];
   avoid: string[];
   additionalRequirements: string | null;
@@ -180,7 +224,9 @@ export interface NeedView {
 
 export const NEED_EDITABLE_FIELDS = [
   "kind",
+  "kindOther",
   "propertyTypes",
+  "propertyTypeOther",
   "areas",
   "priceMinCents",
   "priceMaxCents",
@@ -190,6 +236,7 @@ export const NEED_EDITABLE_FIELDS = [
   "targetDate",
   "timelineNote",
   "financing",
+  "financingOther",
   "mustHaves",
   "avoid",
   "additionalRequirements",
@@ -198,7 +245,7 @@ export type NeedField = (typeof NEED_EDITABLE_FIELDS)[number] | "status";
 
 export type NeedPlan =
   | { ok: true; set: Partial<Omit<NeedView, "id" | "createdAt" | "updatedAt">>; changed: NeedField[]; status?: { from: NeedStatus; to: NeedStatus } }
-  | { ok: false; reason: "price" };
+  | { ok: false; reason: "price" | "other" };
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -211,11 +258,19 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 export function planNeedUpdate(current: NeedView, patch: UpdateNeedInput): NeedPlan {
   const set: Record<string, unknown> = {};
   const changed: NeedField[] = [];
+  // Status transitions stay possible for pre-description legacy rows. Any
+  // content save must describe all effective Other selections. Validate the
+  // merged row so a partial patch cannot evade a selected Other's requirement.
+  const contentSave = NEED_EDITABLE_FIELDS.some(field => patch[field] !== undefined);
+  const supplied = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+  const effective = normalizeNeedOther({ ...current, ...supplied });
+  if (contentSave && missingNeedOther(effective).length) return { ok: false, reason: "other" };
   for (const field of NEED_EDITABLE_FIELDS) {
-    if (!(field in patch)) continue;
-    const next = (patch as Record<string, unknown>)[field];
+    const customField = field === "kindOther" || field === "propertyTypeOther" || field === "financingOther";
+    if (!(field in patch) && !customField) continue;
+    const next = (effective as unknown as Record<string, unknown>)[field];
     if (next === undefined) continue;
-    if (!same(next, current[field])) {
+    if (!same(next, customField ? current[field] ?? null : current[field])) {
       set[field] = next;
       changed.push(field);
     }
@@ -264,7 +319,7 @@ function formatTarget(dayKey: string): string {
 export function summarizeNeed(need: NeedView): { headline: string; lines: string[] } {
   const lines: string[] = [];
   if (need.areas.length) lines.push(need.areas.join(" · "));
-  if (need.propertyTypes.length) lines.push(need.propertyTypes.map((t) => NEED_PROPERTY_TYPE_LABELS[t]).join(", "));
+  if (need.propertyTypes.length) lines.push(need.propertyTypes.map((t) => t === "other" && need.propertyTypeOther?.trim() ? `Other: ${need.propertyTypeOther}` : NEED_PROPERTY_TYPE_LABELS[t]).join(", "));
   const price = formatPriceRange(need.priceMinCents, need.priceMaxCents);
   if (price) lines.push(price);
   const size = [
@@ -275,7 +330,7 @@ export function summarizeNeed(need: NeedView): { headline: string; lines: string
   if (size.length) lines.push(size.join(" · "));
   const when = [need.targetDate ? `Target ${formatTarget(need.targetDate)}` : null, need.timelineNote].filter(Boolean);
   if (when.length) lines.push(when.join(" · "));
-  return { headline: NEED_KIND_LABELS[need.kind], lines };
+  return { headline: need.kind === "other" && need.kindOther?.trim() ? `Other: ${need.kindOther}` : NEED_KIND_LABELS[need.kind], lines };
 }
 
 export interface NeedReadDetail {
@@ -286,7 +341,7 @@ export interface NeedReadDetail {
 /** Requirements omitted from the compact line remain readable, even without edit permission. */
 export function needReadDetails(need: NeedView): NeedReadDetail[] {
   const details: NeedReadDetail[] = [];
-  if (need.financing) details.push({ label: "Financing", values: [NEED_FINANCING_LABELS[need.financing]] });
+  if (need.financing) details.push({ label: "Financing", values: [need.financing === "other" && need.financingOther?.trim() ? `Other: ${need.financingOther}` : NEED_FINANCING_LABELS[need.financing]] });
   if (need.mustHaves.length) details.push({ label: "Must-haves", values: [...need.mustHaves] });
   if (need.avoid.length) details.push({ label: "Avoid", values: [...need.avoid] });
   if (need.additionalRequirements?.trim()) details.push({ label: "Additional requirements", values: [need.additionalRequirements] });

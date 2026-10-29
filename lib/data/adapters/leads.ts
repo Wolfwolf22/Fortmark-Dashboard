@@ -155,18 +155,24 @@ export async function getLead(id: string): Promise<Lead | undefined> {
 export async function updateLeadStage(
   id: string,
   stage: LeadStage,
-  options: { engagementAcknowledged?: boolean } = {}
+  options: { engagementAcknowledged?: boolean; expectedStage?: LeadStage } = {}
 ): Promise<Lead | undefined> {
   if ((await getLeadSource()) === "sample") {
     await delay(150);
+    if (options.expectedStage && getSampleLead(id)?.stage !== options.expectedStage) throw new LeadsError("conflict", 409);
     return updateSampleLeadStage(id, stage);
   }
-  const { contact } = await request<{ contact: Lead }>(
-    `/api/contacts/${encodeURIComponent(id)}/stage`,
-    { method: "POST", body: JSON.stringify({ stage, ...(options.engagementAcknowledged ? { engagementAcknowledged: true } : {}) }) }
-  );
-  bumpDataVersion();
-  return contact;
+  try {
+    const { contact } = await request<{ contact: Lead }>(
+      `/api/contacts/${encodeURIComponent(id)}/stage`,
+      { method: "POST", body: JSON.stringify({ stage, ...(options.expectedStage ? { expectedStage: options.expectedStage } : {}), ...(options.engagementAcknowledged ? { engagementAcknowledged: true } : {}) }) }
+    );
+    return contact;
+  } finally {
+    // A lost response may follow a durable commit. Revalidate the table, Home
+    // counts and drawer together, while never retrying the write itself.
+    bumpDataVersion();
+  }
 }
 
 export interface QuickCreateLeadInput {
@@ -362,6 +368,8 @@ export interface ContactEdit {
   email?: string;
   phone?: string;
   company?: string;
+  about?: string;
+  personalDetails?: { label: string; value: string }[];
   source?: Lead["source"];
   notes?: string;
   /** A real month and day, or null to clear. Never a year. */

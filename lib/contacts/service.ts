@@ -130,7 +130,7 @@ export async function agentNames(db: Db, userIds: string[]): Promise<Map<string,
 }
 
 /** Rows → screen, with opportunities and agent names fetched per page. */
-async function bundle(ctx: Pick<Ctx, "db" | "actor" | "viewerName">, rows: ContactRow[]): Promise<Lead[]> {
+async function bundle(ctx: Pick<Ctx, "db" | "actor" | "viewerName">, rows: ContactRow[], includePrivateDetails = false): Promise<Lead[]> {
   if (rows.length === 0) return [];
   const { db } = ctx;
   const ids = rows.map((r) => r.id);
@@ -153,6 +153,7 @@ async function bundle(ctx: Pick<Ctx, "db" | "actor" | "viewerName">, rows: Conta
       needs: needs.filter((n) => n.contactId === row.id),
       agentName: names.get(row.assignedAgentUserId),
       viewerId: ctx.actor.userId,
+      includePrivateDetails,
     })
   );
 }
@@ -242,7 +243,7 @@ export async function getContact(ctx: Ctx, id: string): Promise<Lead | null> {
     .limit(1);
   const row = rows[0];
   if (!row || !canSee(ctx.actor, row)) return null;
-  return (await bundle(ctx, [row]))[0] ?? null;
+  return (await bundle(ctx, [row], true))[0] ?? null;
 }
 
 /** The activity history of one contact, newest first. Scoped like a read. */
@@ -345,6 +346,24 @@ export interface StageChangePlan {
   writes: BatchWrite[];
 }
 
+/** A planned source stage or ownership changed before its batch committed. */
+export class StageChangeConflict extends Error {
+  constructor() { super("Contact stage changed"); this.name = "StageChangeConflict"; }
+}
+
+function isStageGuardViolation(error: unknown): boolean {
+  // Drizzle wraps the driver error in `cause`; neither message nor submitted
+  // values are inspected or exposed. Only this deliberate NOT NULL guard maps
+  // to a conflict. All other write/constraint failures remain unavailable.
+  let current: unknown = error;
+  for (let depth = 0; current && typeof current === "object" && depth < 6; depth++) {
+    const cause = current as { code?: unknown; table?: unknown; column?: unknown; cause?: unknown };
+    if (cause.code === "23502" && cause.table === "contacts" && cause.column === "stage") return true;
+    current = cause.cause;
+  }
+  return false;
+}
+
 /** One statement in a batch. Drizzle's builders are thenable, not promises. */
 type BatchWrite = Parameters<Db["batch"]>[0][number];
 
@@ -362,7 +381,7 @@ export async function planStageChange(
   ctx: Ctx,
   id: string,
   to: LeadStage,
-  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date; engagementAcknowledged?: boolean } = {}
+  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date; engagementAcknowledged?: boolean; expectedStage?: LeadStage } = {}
 ): Promise<ServiceResult<StageChangePlan>> {
   if (!isRecordId(id)) return { ok: false, reason: "not_found" };
   const now = options.now ?? new Date();
@@ -377,6 +396,7 @@ export async function planStageChange(
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
   const from = row.stage as LeadStage;
+  if (options.expectedStage && from !== options.expectedStage) return { ok: false, reason: "conflict" };
   // `canTransition` refuses same-stage, so a no-op arrives here as an invalid
   // transition rather than as a silent success that writes history.
   if (!canTransition(from, to)) return { ok: false, reason: "invalid_transition" };
@@ -397,7 +417,15 @@ export async function planStageChange(
       writes: [
         ctx.db
           .update(contacts)
-          .set({ stage: to, updatedByUserId: ctx.actor.userId, updatedAt: nextContactUpdatedAt(now) })
+          .set({
+            // Recheck the source and scope while PostgreSQL holds the row lock.
+            // A stale plan deliberately violates stage's NOT NULL constraint,
+            // aborting the entire batch, including appended AI action writes.
+            // A zero-row conditional UPDATE alone would let its history commit.
+            stage: sql`case when ${contacts.stage} = ${from}::contact_stage and ${visibleTo(ctx.actor)}
+              then ${to}::contact_stage else null end`,
+            updatedByUserId: ctx.actor.userId, updatedAt: nextContactUpdatedAt(now),
+          })
           .where(eq(contacts.id, row.id)),
         // The business event, in the domain's own words. An AI-assisted change
         // is the same CRM event as any other — only the metadata differs.
@@ -434,14 +462,15 @@ export async function changeStage(
   id: string,
   to: LeadStage,
   now = new Date(),
-  options: { engagementAcknowledged?: boolean } = {}
+  options: { engagementAcknowledged?: boolean; expectedStage?: LeadStage } = {}
 ): Promise<ServiceResult<Lead>> {
-  const planned = await planStageChange(ctx, id, to, { mechanism: "manual", now, engagementAcknowledged: options.engagementAcknowledged });
+  const planned = await planStageChange(ctx, id, to, { mechanism: "manual", now, engagementAcknowledged: options.engagementAcknowledged, expectedStage: options.expectedStage });
   if (!planned.ok) return planned;
 
   try {
     await commitStageChange(ctx.db, planned.value.writes);
-  } catch {
+  } catch (error) {
+    if (error instanceof StageChangeConflict) return { ok: false, reason: "conflict" };
     return { ok: false, reason: "unavailable" };
   }
 
@@ -459,7 +488,11 @@ export async function changeStage(
 export async function commitStageChange(db: Db, writes: BatchWrite[]): Promise<void> {
   // drizzle types `batch` as a non-empty tuple; a plan always has three or
   // more writes, and the cast says so rather than widening the signature.
-  await db.batch(writes as unknown as Parameters<Db["batch"]>[0]);
+  try { await db.batch(writes as unknown as Parameters<Db["batch"]>[0]); }
+  catch (error) {
+    if (isStageGuardViolation(error)) throw new StageChangeConflict();
+    throw error;
+  }
 }
 
 /** Follow-up decisions evaluated from the locked, current row, not a stale read. */

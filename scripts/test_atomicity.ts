@@ -3,9 +3,9 @@
  *
  * The structural suites read the source and check that a stage change goes
  * through `db.batch`. That proves the intent, not the outcome. This runs the
- * real `changeStage` for transactions and for contacts against an in-memory
- * database that models a transaction — statements handed to `batch` apply
- * together or not at all — and forces each required write to fail in turn.
+ * real `changeStage` for transactions against a transaction model, and for
+ * contacts against embedded PostgreSQL with actual transactions. Each required
+ * write is forced to fail in turn.
  *
  * Every refusal is paired with the same request succeeding for an authorized
  * caller, and every "nothing changed" with a run where the same field changes.
@@ -13,11 +13,12 @@
  * Pinned as CURRENT behaviour, not endorsed: a transaction can be closed
  * without a contract price (known debt, recorded in the master checklist).
  *
- * No database is contacted.
+ * No external database is contacted.
  *
  * Run: npm run test:atomicity
  */
 import type { Actor } from "../lib/auth/actor.ts";
+import { createContactScenarios } from "./helpers/contact-scenario.ts";
 import { changeStage as changeContactStage } from "../lib/contacts/service.ts";
 import { ALL_CONTACT_STAGES, canTransition as canContactTransition } from "../lib/contacts/stages.ts";
 import { auditEvents, contactActivities, contacts, transactionEvents, transactions } from "../lib/db/schema.ts";
@@ -185,9 +186,9 @@ function contactRow(stage: string, over: Record<string, unknown> = {}) {
     createdAt: new Date("2026-08-20T12:00:00Z"), updatedAt: new Date("2026-09-01T12:00:00Z"), ...over,
   };
 }
+const contactScenarios = await createContactScenarios([AGENT.userId, OTHER_AGENT.userId, BROKER.userId, ADMIN.userId, COORDINATOR.userId]);
 const contact = (actor: Actor, from: string, to: string, opts: { failOn?: unknown; row?: Record<string, unknown> } = {}) => {
-  const m = memoryDb({ table: contacts, row: contactRow(from, opts.row) }, opts.failOn);
-  return changeContactStage({ actor, db: m.db as never }, ID, to as never, NOW).then((result) => ({ m, result }));
+  return contactScenarios.run(contactRow(from, opts.row), () => changeContactStage({ actor, db: contactScenarios.db }, ID, to as never, NOW), opts.failOn);
 };
 
 {
@@ -234,6 +235,7 @@ const contact = (actor: Actor, from: string, to: string, opts: { failOn?: unknow
 
 const total = passed + failures.length;
 console.log(`\n${passed}/${total} atomicity checks passed`);
+await contactScenarios.pg.close();
 if (failures.length > 0) {
   console.log("Failures:");
   for (const f of failures) console.log(`  - ${f}`);

@@ -191,7 +191,7 @@ export const QUICK_VIEWS = [
   { id: "mine", label: "My leads", filters: { mine: true, stage: ["lead", "contacted", "qualified", "appointment"] } },
   { id: "representation", label: "Representation", filters: { stage: ["representation"] } },
   // Exactly the `active_client` stage — Representation is its own view, and the two are never merged.
-  { id: "active_clients", label: "Active clients", filters: { stage: ["active_client"] } },
+  { id: "active_clients", label: "Active client stage", filters: { stage: ["active_client"] } },
   { id: "due_today", label: "Due today", filters: { active: true, followUp: "due_today" } },
   { id: "overdue", label: "Overdue", filters: { active: true, followUp: "overdue" } },
   { id: "no_touch_14", label: "No touch 14+ days", filters: { active: true, lastTouch: "14d" } },

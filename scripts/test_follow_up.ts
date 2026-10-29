@@ -46,6 +46,7 @@ import {
   businessDayKey,
   businessDayStart,
   dayDiff,
+  formatCalendarDayShort,
   isCalendarDay,
   startOfNextBusinessDay,
 } from "../lib/metrics/business-day.ts";
@@ -157,6 +158,30 @@ const FLORIDA_EVENING = at("2026-09-25T03:30:00.000Z");
       followUpLabel(yesterday) === "Overdue · Sep 23, 2026" &&
       followUpLabel(later) === "Oct 8, 2026");
   check("the day prints without timezone drift", formatFollowUpDay("2026-01-01") === "Jan 1, 2026" && formatFollowUpDay("2026-12-31") === "Dec 31, 2026");
+}
+
+// Home attention receives calendar day keys, not instants. Parsing its due
+// date at UTC midnight and formatting in the viewer timezone previously made
+// Oct 29 read Oct 28 in New York while the contact drawer correctly said 29.
+{
+  const originalZone = process.env.TZ;
+  try {
+    process.env.TZ = "America/New_York";
+    check("attention date regression premise: UTC midnight is the prior day in New York", new Date("2026-10-29").getDate() === 28);
+    for (const zone of ["America/New_York", "America/Los_Angeles", "UTC", "Pacific/Kiritimati"]) {
+      process.env.TZ = zone;
+      check(`attention day labels retain the saved day in ${zone}`, [
+        ["2026-10-29", "Oct 29"], ["2026-10-26", "Oct 26"],
+        ["2026-01-01", "Jan 1"], ["2026-12-31", "Dec 31"],
+        ["2026-03-08", "Mar 8"], ["2026-11-01", "Nov 1"], ["2028-02-29", "Feb 29"],
+      ].every(([day, label]) => formatCalendarDayShort(day) === label));
+    }
+    const attentionWidget = readFileSync("components/home/widgets/compliance.tsx", "utf8");
+    check("Home formats attention's day-key contract without timestamp conversion", attentionWidget.includes("formatCalendarDayShort(item.dueDate)") && !attentionWidget.includes("formatDateShort(item.dueDate)"));
+  } finally {
+    if (originalZone === undefined) delete process.env.TZ;
+    else process.env.TZ = originalZone;
+  }
 }
 
 // --- Which days may be scheduled ------------------------------------------------------

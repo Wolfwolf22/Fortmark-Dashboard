@@ -9,7 +9,7 @@ import { WidgetCard, useWidgetExpanded } from "@/components/widgets/widget-card"
 import { MetricState } from "@/components/home/metric-state";
 import { useHomeMetrics } from "@/components/home/metrics-provider";
 import type { AttentionItem, AttentionMetrics } from "@/lib/metrics/types";
-import { formatDateShort } from "@/lib/utils";
+import { formatCalendarDayShort } from "@/lib/metrics/business-day";
 
 const COLLAPSED_ROWS = 6;
 
@@ -107,7 +107,7 @@ function AttentionBody({ data }: { data: AttentionMetrics }) {
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">{item.label}</p>
               </div>
               <div className="shrink-0 text-right">
-                <p className="tabular text-[13px]">{formatDateShort(item.dueDate)}</p>
+                <p className="tabular text-[13px]">{formatCalendarDayShort(item.dueDate)}</p>
                 <p className="text-micro mt-0.5">{hintFor(item.daysAway)}</p>
               </div>
               <ChevronRight

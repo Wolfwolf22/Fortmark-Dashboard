@@ -58,8 +58,10 @@ const toInt = (text: string): number | null | typeof NaN => {
 
 interface FormState {
   kind: NeedKind;
+  kindOther: string;
   areas: string[];
   propertyTypes: NeedPropertyType[];
+  propertyTypeOther: string;
   priceMin: string;
   priceMax: string;
   minBeds: string;
@@ -68,20 +70,23 @@ interface FormState {
   timelineNote: string;
   minSqft: string;
   financing: NeedFinancing | "";
+  financingOther: string;
   mustHaves: string[];
   avoid: string[];
   additional: string;
 }
 
 function blank(): FormState {
-  return { kind: "buy", areas: [], propertyTypes: [], priceMin: "", priceMax: "", minBeds: "", minBaths: "", targetDate: "", timelineNote: "", minSqft: "", financing: "", mustHaves: [], avoid: [], additional: "" };
+  return { kind: "buy", kindOther: "", areas: [], propertyTypes: [], propertyTypeOther: "", priceMin: "", priceMax: "", minBeds: "", minBaths: "", targetDate: "", timelineNote: "", minSqft: "", financing: "", financingOther: "", mustHaves: [], avoid: [], additional: "" };
 }
 
 function fromNeed(n: NeedView): FormState {
   return {
     kind: n.kind,
+    kindOther: n.kindOther ?? "",
     areas: n.areas,
     propertyTypes: n.propertyTypes,
+    propertyTypeOther: n.propertyTypeOther ?? "",
     priceMin: dollars(n.priceMinCents),
     priceMax: dollars(n.priceMaxCents),
     minBeds: n.minBeds == null ? "" : String(n.minBeds),
@@ -90,6 +95,7 @@ function fromNeed(n: NeedView): FormState {
     timelineNote: n.timelineNote ?? "",
     minSqft: n.minSqft == null ? "" : String(n.minSqft),
     financing: n.financing ?? "",
+    financingOther: n.financingOther ?? "",
     mustHaves: n.mustHaves,
     avoid: n.avoid,
     additional: n.additionalRequirements ?? "",
@@ -98,6 +104,9 @@ function fromNeed(n: NeedView): FormState {
 
 /** The request for a form, or the field that cannot be sent. */
 function toRequest(s: FormState): { ok: true; body: CreateNeedInput } | { ok: false; field: string; message: string } {
+  if (s.kind === "other" && !s.kindOther.trim()) return { ok: false, field: "need-kind-other", message: "Describe the other need." };
+  if (s.propertyTypes.includes("other") && !s.propertyTypeOther.trim()) return { ok: false, field: "need-property-type-other", message: "Describe the other property type." };
+  if (s.financing === "other" && !s.financingOther.trim()) return { ok: false, field: "need-financing-other", message: "Describe the other financing." };
   const min = toCents(s.priceMin);
   const max = toCents(s.priceMax);
   if (Number.isNaN(min)) return { ok: false, field: "need-price-min", message: "Enter the minimum budget as a number." };
@@ -113,8 +122,10 @@ function toRequest(s: FormState): { ok: true; body: CreateNeedInput } | { ok: fa
     ok: true,
     body: {
       kind: s.kind,
+      kindOther: s.kind === "other" ? s.kindOther.trim() : null,
       areas: s.areas,
       propertyTypes: s.propertyTypes,
+      propertyTypeOther: s.propertyTypes.includes("other") ? s.propertyTypeOther.trim() : null,
       priceMinCents: min,
       priceMaxCents: max,
       minBeds: beds as number | null,
@@ -123,6 +134,7 @@ function toRequest(s: FormState): { ok: true; body: CreateNeedInput } | { ok: fa
       targetDate: s.targetDate || null,
       timelineNote: s.timelineNote.trim() || null,
       financing: s.financing || null,
+      financingOther: s.financing === "other" ? s.financingOther.trim() : null,
       mustHaves: s.mustHaves,
       avoid: s.avoid,
       additionalRequirements: s.additional.trim() || null,
@@ -130,7 +142,7 @@ function toRequest(s: FormState): { ok: true; body: CreateNeedInput } | { ok: fa
   };
 }
 
-function NeedForm({
+export function NeedForm({
   initial,
   saving,
   onSubmit,
@@ -144,7 +156,7 @@ function NeedForm({
   submitLabel: string;
 }) {
   const [s, setS] = useState(initial);
-  const [more, setMore] = useState(false);
+  const [more, setMore] = useState(initial.financing === "other");
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setS((v) => ({ ...v, [key]: value }));
 
@@ -156,6 +168,7 @@ function NeedForm({
     e.preventDefault();
     const req = toRequest(s);
     if (!req.ok) {
+      if (req.field === "need-financing-other" || req.field === "need-sqft") setMore(true);
       setError({ field: req.field, message: req.message });
       return;
     }
@@ -183,6 +196,13 @@ function NeedForm({
         </Select>
       </div>
 
+      {s.kind === "other" && (
+        <div className="grid gap-1.5">
+          <Label htmlFor="need-kind-other">Describe other need</Label>
+          <Input id="need-kind-other" value={s.kindOther} onChange={(e) => set("kindOther", e.target.value)} maxLength={NEED_LIMITS.otherDescription} disabled={saving} aria-required="true" aria-invalid={invalid("need-kind-other")} aria-describedby={invalid("need-kind-other") ? "need-form-error" : undefined} placeholder="What is the client trying to accomplish?" />
+        </div>
+      )}
+
       <TagInput id="need-areas" label="Areas" values={s.areas} onChange={(v) => set("areas", v)} max={NEED_LIMITS.areas} itemMax={NEED_LIMITS.itemLength} placeholder="City or neighborhood" disabled={saving} />
 
       <fieldset className="grid gap-1.5">
@@ -202,6 +222,12 @@ function NeedForm({
             </div>
           ))}
         </div>
+        {s.propertyTypes.includes("other") && (
+          <div className="mt-2 grid gap-1.5">
+            <Label htmlFor="need-property-type-other">Describe other property type</Label>
+            <Input id="need-property-type-other" value={s.propertyTypeOther} onChange={(e) => set("propertyTypeOther", e.target.value)} maxLength={NEED_LIMITS.otherDescription} disabled={saving} aria-required="true" aria-invalid={invalid("need-property-type-other")} aria-describedby={invalid("need-property-type-other") ? "need-form-error" : undefined} placeholder="For example, co-op or mixed-use" />
+          </div>
+        )}
       </fieldset>
 
       <div className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-4">
@@ -259,6 +285,12 @@ function NeedForm({
                 </Select>
               </div>
             </div>
+            {s.financing === "other" && (
+              <div className="grid gap-1.5">
+                <Label htmlFor="need-financing-other">Describe other financing</Label>
+                <Input id="need-financing-other" value={s.financingOther} onChange={(e) => set("financingOther", e.target.value)} maxLength={NEED_LIMITS.otherDescription} disabled={saving} aria-required="true" aria-invalid={invalid("need-financing-other")} aria-describedby={invalid("need-financing-other") ? "need-form-error" : undefined} placeholder="For example, seller financing" />
+              </div>
+            )}
             <TagInput id="need-must-haves" label="Must-haves" values={s.mustHaves} onChange={(v) => set("mustHaves", v)} max={NEED_LIMITS.mustHaves} itemMax={NEED_LIMITS.itemLength} placeholder="Pool, garage…" disabled={saving} />
             <TagInput id="need-avoid" label="Avoid" values={s.avoid} onChange={(v) => set("avoid", v)} max={NEED_LIMITS.avoid} itemMax={NEED_LIMITS.itemLength} placeholder="Busy street, HOA…" disabled={saving} />
             <div className="grid gap-1.5">
@@ -270,7 +302,7 @@ function NeedForm({
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-destructive">
+        <p id="need-form-error" role="alert" className="text-sm text-destructive">
           {error.message}
         </p>
       )}

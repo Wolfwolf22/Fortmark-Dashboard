@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { StatusPill } from "@/components/ui/status-pill";
-import { PreviewNavigation, usePathname } from "./next-stubs";
+import { PreviewNavigation, usePathname, Link as PreviewLink } from "./next-stubs";
 import { installPreviewTransport } from "./fixtures.mjs";
 import { connectLayoutStorage } from "@/lib/stores/layout";
 import { pageTitleFor } from "@/components/layout/nav-items";
@@ -55,6 +55,7 @@ function Content() {
 function PreviewControls() {
   const route = usePathname();
   const scenario = new URLSearchParams(window.location.search).get("scenario") || "records";
+  const interactive = scenario === "interactive";
   const [writeBlocked, setWriteBlocked] = React.useState(false);
   React.useEffect(() => {
     const blocked = () => setWriteBlocked(true);
@@ -63,10 +64,11 @@ function PreviewControls() {
   }, []);
   return <>
     <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-2 border-b border-border bg-card px-4 py-2 text-center text-xs text-muted-foreground">
-      <span className="font-semibold text-foreground">Design preview</span><span aria-hidden>·</span>
-      <span>Read-only sample data. No live accounts or services.</span>
-      <a href="/?view=%2Fsettings" className="ml-1 font-semibold text-foreground underline underline-offset-4">View foundations</a>
-      {route === "/contacts" && <a href="/?view=%2Fcontacts%3Fopen%3Dsample-long-history" className="font-semibold text-foreground underline underline-offset-4">Long history case</a>}
+      <span className="font-semibold text-foreground">{interactive ? "Interactive samples" : "Design preview"}</span><span aria-hidden>·</span>
+      <span>{interactive ? "Changes stay in memory. Reload resets. No live services." : "Read-only sample data. No live accounts or services."}</span>
+      <PreviewLink href="/settings" className="ml-1 font-semibold text-foreground underline underline-offset-4">View foundations</PreviewLink>
+      {route === "/contacts" && <PreviewLink href="/contacts?open=sample-long-history" className="font-semibold text-foreground underline underline-offset-4">Long history case</PreviewLink>}
+      {interactive && <button type="button" className="font-semibold text-foreground underline underline-offset-4" onClick={() => window.location.reload()}>Reset samples</button>}
       {["/transactions", "/contacts"].includes(route) && <label className="ml-2 flex items-center gap-2">Preview data
         <select aria-label={route === "/contacts" ? "Preview contact data" : "Preview transaction data"} value={scenario} className="rounded border border-input bg-card px-2 py-1 text-foreground" onChange={event => {
           const url = new URL(window.location.href);
@@ -77,14 +79,18 @@ function PreviewControls() {
           {route === "/contacts" && <option value="empty">Empty contact book</option>}
           <option value="unavailable">First request unavailable</option>
           {route === "/contacts" && <option value="conflict">Remote change on save (409)</option>}
+          {(route === "/contacts" || interactive) && <option value="interactive">Interactive samples</option>}
         </select>
       </label>}
     </div>
+    {interactive && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
+      Only contact stages, client needs and client information can be saved in these synthetic samples. Notes and other actions remain disabled. Reload or Reset samples discards all sample changes.
+    </p>}
     {route === "/contacts" && scenario === "conflict" && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
       Conflict rehearsal: change a sample contact's Company, then save. The refused save reveals a predefined newer sample version. Review latest details to compare it with your kept draft. No draft is written.
     </p>}
     {writeBlocked && <div role="alert" className="flex items-center justify-center gap-3 border-b border-border bg-card px-4 py-2 text-xs">
-      <span>Design preview is read-only. No records were changed.</span>
+      <span>{interactive ? "This action is disabled in interactive samples. Only contact stages, needs and client information can be saved." : "Design preview is read-only. No records were changed."}</span>
       <button type="button" className="font-semibold underline underline-offset-4" onClick={() => setWriteBlocked(false)}>Dismiss</button>
     </div>}
   </>;

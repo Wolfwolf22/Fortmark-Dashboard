@@ -3,7 +3,9 @@
 This isolated local harness renders the production `AppShell`, `TopBar`, Home
 components, widgets and shared controls against synthetic, clearly labelled data.
 It does not add a production route or bypass authentication. All fetch calls are
-intercepted locally, all writes are rejected, and layout changes are memory-only.
+intercepted locally and network writes are rejected. Records and reliability
+scenarios are read-only. The explicitly selected Interactive samples scenario
+allows a narrow set of changes to synthetic copies in memory only.
 The profile and creation dialogs are explicit preview-only placeholders.
 
 Run from the repository using Node 22 or later:
@@ -31,8 +33,8 @@ synthetic too, and exists solely to verify the neutral no-photo fallback.
 
 The Home totals derive from the same synthetic transaction work list. No live
 feed is connected, so the real featured-listing component keeps its honest
-unavailable state. All mutations in the preview adapters reject without changing
-the fixtures. This is a visual review, not a workflow certification.
+unavailable state. Base fixtures never change. This local review does not certify
+a deployment, live authorization or a production database connection.
 
 Direct examples:
 
@@ -58,8 +60,8 @@ within the same section.
 Most fixtures intentionally have the stored-record DTO shape (`recordSource:
 "db"`) so the real birthday, needs, notes, activity and linked-transaction UI
 can be inspected. This does not connect a database or alter production gates:
-every name is prefixed Sample, the persistent preview banner says read-only
-sample data, and every mutation rejects. `sample-labeled-fallback` retains the
+every name is prefixed Sample and the persistent preview banner states the
+current sample mode. `sample-labeled-fallback` retains the
 actual sample-source unavailable sections for comparison.
 
 Useful contact routes:
@@ -105,3 +107,49 @@ The newer sample version changes Company, Email and the revision, so an
 untouched field merge is visible too. Neither the original fixture nor the
 user's draft is ever written; subsequent saves remain blocked. Reload resets
 the rehearsal, and no live records or services are involved.
+
+## Interactive samples
+
+Select **Interactive samples** in the contact preview controls, or open:
+
+- `/preview?view=%2Fcontacts%3Fopen%3Dsample-overdue&scenario=interactive`
+- `/responsive?width=390&height=844&view=/contacts?open=sample-overdue&scenario=interactive`
+- `/responsive?width=320&height=568&view=/contacts?open=sample-quiet&scenario=interactive`
+
+This mode permits only contact stage changes, client need creation/content/status
+changes, and the optional About/named personal-details section. The fixture actor
+is explicitly a synthetic Admin. Stage changes use the production transition
+graph and optional expected-stage check. About/details use the production schema
+and saved revision; need changes use the production schemas and update planner.
+Stage or information edits never manufacture a contact touch. Need saves do not
+advance the contact revision, matching the production service's contract.
+
+The overdue sample has populated About/details, including wrapping and literal
+markup, a populated Other need, and a legacy Other need without descriptions.
+The quiet relationship has empty optional information and no structured needs.
+Legacy Other status-only edits remain possible; a content edit must describe the
+selected Other choices. Hidden Other descriptions clear when their choice changes.
+
+Only local adapter functions can make these allowed changes. Notes, outreach,
+follow-ups, contact identity fields, transactions and every other write remain
+blocked. All contacts and needs are copied at module load; no account, browser
+storage or remote service receives a sample change. The actual list, filters,
+snapshot, drawer and Home counts read the same session state. Need summaries use
+the production source-precedence projection, including the case where all needs
+are inactive. Data-version updates refresh actual UI hooks.
+
+Navigation retains this mode within the open preview. **Reset samples**, reload,
+or changing scenario discards the in-memory changes. Another tab has its own
+fresh sample state. Records, conflict, unavailable and long-history cases retain
+their original read-only behavior.
+
+Run the isolated sample contract checks with:
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-sample-session.mjs
+```
+
+These checks cover revision/stage conflicts, optional information save/clear,
+Other validation and clearing, legacy status changes, source-precedence summaries,
+Home/list/filter agreement, complete long-history paging, blocked writes,
+network rejection, unchanged base fixtures and read-only scenario recovery.
