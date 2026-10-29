@@ -68,12 +68,19 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const fields = Array.from(new Set(parsed.error.issues.map((i) => i.path.join(".") || "body")));
     return NextResponse.json({ error: "invalid", fields }, { status: 400, headers: NO_STORE });
   }
+  if (!parsed.data.expectedUpdatedAt) {
+    return NextResponse.json({ error: "invalid", fields: ["expectedUpdatedAt"] }, { status: 400, headers: NO_STORE });
+  }
 
   const actor = await actorOrResponse(caller.clerkUserId);
   if (!actor.ok) return actor.response;
   try {
     const result = await editContact(actor.ctx, id, parsed.data);
-    if (!result.ok) return failure(result.reason);
+    if (!result.ok) {
+      if (result.reason === "conflict") return NextResponse.json({ error: "conflict" }, { status: 409, headers: NO_STORE });
+      if (result.reason === "invalid_revision") return NextResponse.json({ error: "invalid", fields: ["expectedUpdatedAt"] }, { status: 400, headers: NO_STORE });
+      return failure(result.reason);
+    }
     return NextResponse.json({ contact: result.value.lead, changed: result.value.changed }, { headers: NO_STORE });
   } catch (error) {
     return unexpected(error);

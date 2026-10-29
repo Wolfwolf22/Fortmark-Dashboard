@@ -12,7 +12,7 @@
  * predicate is added to the visibility predicate, never in place of it.
  */
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, not, or, sql, type SQL } from "drizzle-orm";
-import { contactOpportunities, contacts } from "../db/schema.ts";
+import { contactNeeds, contactOpportunities, contacts } from "../db/schema.ts";
 import type { Actor } from "../auth/actor.ts";
 import { isBrokerageAdmin } from "../auth/actor.ts";
 import { containsPattern } from "../search/query.ts";
@@ -22,25 +22,31 @@ import { queryWindows } from "./windows.ts";
 import type { ContactQuery, SortDir, SortKey } from "./filters.ts";
 import { OPEN_PIPELINE_STAGES } from "./stages.ts";
 import { visibleTo } from "./visibility.ts";
+import { LEGACY_INTENT_KINDS, STRUCTURED_INTENT_KINDS } from "./needs-summary.ts";
 
 const DAY_MS = 86_400_000;
 
-/** Does the person have an open need of one of these kinds? */
-function hasOpenNeed(kinds: readonly string[]): SQL {
+/** Legacy fallback is allowed only when no structured need has ever been added. */
+function hasStructuredNeeds(): SQL {
+  return sql`exists (select 1 from ${contactNeeds} where ${eq(contactNeeds.contactId, contacts.id)})`;
+}
+
+function hasActiveNeed(kinds: readonly string[]): SQL {
+  return sql`exists (select 1 from ${contactNeeds} where ${eq(contactNeeds.contactId, contacts.id)} and ${eq(contactNeeds.status, "active")} and ${inArray(contactNeeds.kind, kinds as never)})`;
+}
+
+function hasLegacyOpenNeed(kinds: readonly string[]): SQL {
   return sql`exists (select 1 from ${contactOpportunities} where ${eq(contactOpportunities.contactId, contacts.id)} and ${eq(contactOpportunities.status, "open")} and ${inArray(contactOpportunities.kind, kinds as never)})`;
 }
 
-const BUYING = ["buyer", "commercial_buyer"];
-const SELLING = ["seller", "commercial_seller"];
-const LEASING = ["tenant", "landlord", "commercial_tenant", "commercial_landlord"];
-const INVESTING = ["investor"];
-
-/** The SQL twin of `toIntent`: the same decision, made where the rows are. */
+/** The SQL twin of projectContactNeedSummary, including inactive-source precedence. */
 function intentPredicate(intent: LeadIntent): SQL {
-  const buying = hasOpenNeed(BUYING);
-  const selling = hasOpenNeed(SELLING);
-  const leasing = hasOpenNeed(LEASING);
-  const investing = hasOpenNeed(INVESTING);
+  const legacyAllowed = not(hasStructuredNeeds())!;
+  const eitherSource = (structured: readonly string[], legacy: readonly string[]) => or(hasActiveNeed(structured), and(legacyAllowed, hasLegacyOpenNeed(legacy)))!;
+  const buying = eitherSource(STRUCTURED_INTENT_KINDS.buying, LEGACY_INTENT_KINDS.buying);
+  const selling = eitherSource(STRUCTURED_INTENT_KINDS.selling, LEGACY_INTENT_KINDS.selling);
+  const leasing = eitherSource(STRUCTURED_INTENT_KINDS.leasing, LEGACY_INTENT_KINDS.leasing);
+  const investing = and(legacyAllowed, hasLegacyOpenNeed(LEGACY_INTENT_KINDS.investing))!;
   switch (intent) {
     case "buy":
       return and(buying, not(selling))!;
@@ -70,7 +76,11 @@ export function textPredicate(text: string): SQL {
     sql`lower(coalesce(${contacts.preferredName}, '')) like ${contains}`,
     sql`lower(coalesce(${contacts.company}, '')) like ${contains}`,
     sql`lower(coalesce(${contacts.email}, '')) like ${contains}`,
-    sql`exists (select 1 from ${contactOpportunities} o where o.contact_id = ${contacts.id} and lower(coalesce(o.area, '')) like ${contains})`,
+    sql`exists (select 1 from ${contactNeeds} where ${eq(contactNeeds.contactId, contacts.id)} and ${eq(contactNeeds.status, "active")} and exists (select 1 from unnest(${contactNeeds.areas}) as need_area(area) where lower(need_area.area) like ${contains}))`,
+    and(
+      not(hasStructuredNeeds()),
+      sql`exists (select 1 from ${contactOpportunities} where ${eq(contactOpportunities.contactId, contacts.id)} and ${eq(contactOpportunities.status, "open")} and lower(coalesce(${contactOpportunities.area}, '')) like ${contains})`
+    )!,
   ];
   // Stored numbers are E.164, so typed digits match as a suffix: (954) 555-0100
   // finds +19545550100. Only digits go into this pattern — nothing to escape.

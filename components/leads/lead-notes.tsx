@@ -21,8 +21,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { IconWell } from "@/components/ui/icon-well";
-import { addNote, deleteNote, getNotes, LeadsError, type NoteView } from "@/lib/data/adapters/leads";
-import { useQuery } from "@/lib/data/hooks";
+import { addNote, deleteNote, getNotesPage, LeadsError, type NoteView } from "@/lib/data/adapters/leads";
+import { useContactHistory } from "./use-contact-history";
 import { CONTACT_NOTE_MAX_LENGTH } from "@/lib/contacts/notes";
 import { formatNoteStamp } from "@/lib/contacts/note-format";
 import { initials } from "@/lib/utils";
@@ -32,6 +32,7 @@ export function LeadNotes({
   legacyNote,
   canWrite,
   available,
+  refreshKey = 0,
 }: {
   leadId: string;
   /** The contact's old free-form notes field, if it holds anything. */
@@ -39,8 +40,10 @@ export function LeadNotes({
   canWrite: boolean;
   /** False for the labelled sample set, which has no notes store. */
   available: boolean;
+  refreshKey?: number;
 }) {
-  const { data, loading, error, refetch } = useQuery<NoteView[]>(() => getNotes(leadId), [leadId]);
+  const { data: page, loading, error, refetch, loadOlder, loadingOlder, olderError, olderLoaded } = useContactHistory(leadId, getNotesPage, refreshKey);
+  const data = page?.items;
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -223,6 +226,9 @@ export function LeadNotes({
             <p className="mt-3 rounded-panel border border-dashed border-input px-4 py-5 text-[13px] text-muted-foreground">No notes yet.</p>
           )}
           {error && data && <p role="alert" className="mt-3 text-sm text-muted-foreground">Notes could not be refreshed. <button type="button" className="min-h-10 rounded-md px-1 font-semibold underline underline-offset-4" onClick={refetch}>Try again</button></p>}
+          {data && data.length > 0 && <p role="status" className="mt-3 text-xs text-muted-foreground tabular">{data.length} {page?.hasMore ? "notes loaded · older notes available" : data.length === 1 ? "note" : "notes"}</p>}
+          {olderError && <p role="alert" className="mt-3 text-sm text-muted-foreground">Older notes could not be loaded. Your loaded notes are kept.</p>}
+          {(page?.hasMore || olderLoaded) && <Button type="button" size="sm" variant="outline" className="mt-3 aria-disabled:cursor-default aria-disabled:opacity-60" aria-disabled={loading || loadingOlder || !page?.hasMore} onClick={() => void loadOlder()}>{!page?.hasMore ? "All notes loaded" : loadingOlder ? "Loading older notes…" : olderError ? "Retry older notes" : "Load older notes"}</Button>}
         </>
       )}
 

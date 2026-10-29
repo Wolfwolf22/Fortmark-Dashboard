@@ -8,7 +8,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:auth": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_dashboard_access.ts",
-    "test": "npm run typecheck && npm run test:auth && npm run test:profile && npm run test:ai && npm run test:ai:tools && npm run test:ai:providers && npm run test:ai:actions && npm run test:mls && npm run test:transactions && npm run test:contacts && npm run test:follow-up && npm run test:atomicity && npm run test:leads && npm run test:contacts-v3 && npm run test:metrics && npm run test:mock-leak && npm run test:search && npm run test:team && npm run test:brokerage && npm run test:mls-identity && npm run test:shell && npm run test:workspaces",
+    "test": "npm run typecheck && npm run test:auth && npm run test:profile && npm run test:ai && npm run test:ai:tools && npm run test:ai:providers && npm run test:ai:actions && npm run test:mls && npm run test:transactions && npm run test:contacts && npm run test:follow-up && npm run test:atomicity && npm run test:leads && npm run test:contacts-v3 && npm run test:metrics && npm run test:mock-leak && npm run test:search && npm run test:team && npm run test:brokerage && npm run test:mls-identity && npm run test:shell && npm run test:workspaces && npm run test:contact-reliability && npm run test:needs-consistency && npm run test:need-read-view && npm run test:contact-history && npm run test:contact-workspace",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/migrate.mjs --force",
     "db:check": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/db_check.ts",
@@ -36,7 +36,12 @@
     "test:shell": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_shell.ts",
     "test:workspaces": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_workspaces.ts",
     "prebuild": "node scripts/clerk-loader-patch.mjs",
-    "test:clerk-loader": "node scripts/test-clerk-loader.mjs"
+    "test:clerk-loader": "node scripts/test-clerk-loader.mjs",
+    "test:contact-reliability": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_contact_reliability.ts",
+    "test:needs-consistency": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_needs_consistency.ts",
+    "test:contact-history": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_contact_history.ts",
+    "test:need-read-view": "node scripts/test_need_read_view.mjs",
+    "test:contact-workspace": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_contact_workspace.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
@@ -80,6 +85,7 @@
   },
   "devDependencies": {
     "@clerk/testing": "^2.2.36",
+    "@electric-sql/pglite": "^0.5.13",
     "@playwright/test": "^1.63.0",
     "@types/node": "^22.10.7",
     "@types/react": "^19.0.7",

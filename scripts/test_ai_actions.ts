@@ -46,6 +46,7 @@ import {
 } from "../lib/ai/actions/followup.ts";
 import { ACTION_TTL_MS, TERMINAL_ACTION_STATUSES } from "../lib/ai/actions/contract.ts";
 import type { ContactRow } from "../lib/db/schema.ts";
+import { canWrite } from "../lib/contacts/domain.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -257,6 +258,8 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
     prepareBlock.indexOf("checkFollowUpDay") < prepareBlock.indexOf("insertOrReusePending("));
   check("preparing writes nothing when the contact is not visible",
     prepareBlock.indexOf("visibleTo(actor)") < prepareBlock.indexOf("insertOrReusePending("));
+  check("follow-up preparation checks manual write permission before proposing",
+    prepareBlock.indexOf("if (!canWrite(actor, row))") > 0 && prepareBlock.indexOf("if (!canWrite(actor, row))") < prepareBlock.indexOf("const change = followUpChange"));
 }
 
 // =============================================================================
@@ -393,6 +396,8 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
     /expiresAt\} > \$\{ctx\.now\}/.test(block));
   check("execution re-reads the contact under the visibility predicate",
     /from\(contacts\)[\s\S]{0,200}visibleTo\(actor\)/.test(block));
+  check("execution rechecks write permission before any action mutation",
+    block.indexOf("if (!canWrite(actor, contact))") > 0 && block.indexOf("if (!canWrite(actor, contact))") < block.indexOf("const fingerprint"));
   check("execution recomputes the fingerprint and refuses a stale action",
     /fingerprint !== claimed\.expectedFingerprint/.test(block) &&
       /followUpFingerprint\(contact\)/.test(block) &&
@@ -859,10 +864,8 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
   check("the stage path swallows nothing",
     !/catch \{/.test(stagePath.slice(0, stagePath.indexOf("export async function changeStage"))) &&
       !/must never break the write it describes/.test(stagePath));
-  check("the only remaining swallow is createContact's, which F2-C does not touch",
-    (raw.match(/History must never break the write it describes/g) ?? []).length === 1 &&
-      raw.indexOf("History must never break the write it describes") <
-        raw.indexOf("export async function planStageChange"));
+  check("no contact writer treats required history as best-effort",
+    !/History must never break the write it describes|Auditing must never break the write it describes/.test(raw));
   check("a failed stage change reports failure rather than partial success",
     /catch \{[\s\S]{0,120}reason: "unavailable"/.test(manual));
 
@@ -1021,6 +1024,10 @@ function contact(over: Partial<ContactRow> = {}): ContactRow {
 
 {
   const svc = readFileSync("lib/ai/actions/service.ts", "utf8");
+  const ownContact = { brokerageKey: "fortmark", assignedAgentUserId: "22222222-2222-4222-8222-222222222222" };
+  check("AI's shared write rule refuses a member's own contact and permits its agent owner",
+    !canWrite({ userId: ownContact.assignedAgentUserId, role: "member", brokerageKey: "fortmark" }, ownContact) &&
+      canWrite({ userId: ownContact.assignedAgentUserId, role: "agent", brokerageKey: "fortmark" }, ownContact));
   check("a malformed action id is not found before any query, on read, cancel and execute",
     (svc.match(/if \(!isRecordId\(actionId\)\) return \{ ok: false, reason: "not_found" \}/g) ?? []).length === 3);
 }

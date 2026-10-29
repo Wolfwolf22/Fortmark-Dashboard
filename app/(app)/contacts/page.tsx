@@ -29,6 +29,7 @@ import { getLeadAgents, getLeadSnapshot, getLeadsPage, queryFields } from "@/lib
 import { useQuery } from "@/lib/data/hooks";
 import { matchingView, parseContactQuery, type ContactQuery, type SortDir, type SortKey } from "@/lib/contacts/filters";
 import { useUiStore } from "@/lib/stores/ui";
+import { contactPageWithinRange, contactWorkspaceRequest, nextContactRefreshDelay } from "@/lib/contacts/workspace";
 
 const PAGE_SIZE = 25;
 
@@ -42,11 +43,32 @@ function readQuery(params: URLSearchParams): ContactQuery {
   return second.ok ? second.query : {};
 }
 
-/** How a view is ordered until someone chooses otherwise: the most urgent first. */
-function defaultOrder(query: ContactQuery): { sort: SortKey; dir: SortDir } {
-  if (query.followUp === "overdue" || query.followUp === "due_today") return { sort: "followUp", dir: "asc" };
-  if (query.lastTouch === "14d" || query.lastTouch === "30d" || query.lastTouch === "7d") return { sort: "lastTouch", dir: "asc" };
-  return { sort: "lastTouch", dir: "desc" };
+/** Contacts-only refresh on return and business midnight; no polling loop. */
+function useContactRefreshKey(): number {
+  const [key, setKey] = useState(0);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    let lastRefresh = 0;
+    const refresh = () => {
+      if (document.visibilityState !== "visible" || Date.now() - lastRefresh < 1000) return;
+      lastRefresh = Date.now();
+      setKey((current) => current + 1);
+    };
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { refresh(); schedule(); }, nextContactRefreshDelay(new Date()));
+    };
+    const resume = () => { refresh(); schedule(); };
+    schedule();
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", resume);
+    };
+  }, []);
+  return key;
 }
 
 function PageSkeleton() {
@@ -85,6 +107,7 @@ function LeadsPageInner() {
   const urlKey = searchParams.toString();
   const filters = useMemo(() => readQuery(new URLSearchParams(urlKey)), [urlKey]);
   const openParam = searchParams.get("open");
+  const refreshKey = useContactRefreshKey();
 
   // The filters as of the last thing the person did. The URL is the source of truth, but it
   // lands a moment after a click; a second click in that moment must build on the first, not
@@ -96,45 +119,60 @@ function LeadsPageInner() {
 
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
+  const [resetSearchPage, setResetSearchPage] = useState(false);
   useEffect(() => {
     const id = window.setTimeout(() => setDebounced(search.trim()), 250);
     return () => window.clearTimeout(id);
   }, [search]);
+  useEffect(() => {
+    if (resetSearchPage && (filters.page ?? 1) <= 1) setResetSearchPage(false);
+  }, [filters.page, resetSearchPage]);
 
-  const order = filters.sort ? { sort: filters.sort, dir: filters.dir ?? "asc" } : defaultOrder(filters);
-  const request: ContactQuery = {
-    ...filters,
-    q: debounced || undefined,
-    sort: order.sort,
-    dir: order.dir,
-    page: filters.page ?? 1,
-    pageSize: PAGE_SIZE,
-  };
+  const searchPending = search.trim() !== debounced;
+  const request = contactWorkspaceRequest(filters, debounced, PAGE_SIZE, resetSearchPage || searchPending);
+  const order = { sort: request.sort, dir: request.dir };
   const requestKey = JSON.stringify(request);
 
-  const list = useQuery(() => getLeadsPage(request), [requestKey]);
-  const snapshot = useQuery(() => getLeadSnapshot(), []);
-  const agents = useQuery(() => getLeadAgents(), []);
+  const list = useQuery(async () => ({ result: await getLeadsPage(request), requestKey }), [requestKey, refreshKey]);
+  const snapshot = useQuery(() => getLeadSnapshot(), [refreshKey]);
+  const agents = useQuery(() => getLeadAgents(), [refreshKey]);
 
-  const [drawerId, setDrawerId] = useState<string | null>(openParam);
-  const [drawerOpen, setDrawerOpen] = useState(openParam !== null);
+  const [lastDrawerId, setLastDrawerId] = useState<string | null>(openParam);
   useEffect(() => {
-    if (openParam) {
-      setDrawerId(openParam);
-      setDrawerOpen(true);
-    }
+    if (openParam) setLastDrawerId(openParam);
   }, [openParam]);
+  const drawerId = openParam ?? lastDrawerId;
+  const drawerOpen = openParam !== null;
 
   /** Write the filters to the URL. `open` (the drawer) is preserved. */
-  function navigate(next: ContactQuery) {
+  function navigate(next: ContactQuery, mode: "push" | "replace" = "push", drawer: string | null = openParam) {
     latest.current = next;
-    const fields = queryFields({ ...next, pageSize: undefined, page: next.page && next.page > 1 ? next.page : undefined });
+    const fields = queryFields({ ...next, q: undefined, pageSize: undefined, page: next.page && next.page > 1 ? next.page : undefined });
     const sp = new URLSearchParams(fields);
-    const open = searchParams.get("open");
+    const open = drawer;
     if (open) sp.set("open", open);
     const qs = sp.toString();
     // A push, so back and forward step through the views a person has visited.
-    router.push(qs ? `/contacts?${qs}` : "/contacts", { scroll: false });
+    const href = qs ? `/contacts?${qs}` : "/contacts";
+    if (mode === "replace") router.replace(href, { scroll: false });
+    else router.push(href, { scroll: false });
+  }
+
+  useEffect(() => {
+    // An old query's response must never move a newer view to its page.
+    if (list.loading || list.error || !list.data || list.data.requestKey !== requestKey || resetSearchPage || searchPending) return;
+    const result = list.data.result;
+    const page = contactPageWithinRange(result.page, result.total, result.pageSize);
+    if ((filters.page ?? 1) !== page) navigate({ ...latest.current, page: page > 1 ? page : undefined }, "replace");
+    // navigate uses the latest URL and filter ref; requestKey identifies the answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list.data, list.loading, list.error, requestKey, filters.page, resetSearchPage, searchPending]);
+
+  function changeSearch(text: string) {
+    setSearch(text);
+    setResetSearchPage(true);
+    // Reset immediately, before either debounce or router navigation settles.
+    navigate({ ...latest.current, page: undefined }, "replace");
   }
 
   const change = (patch: Partial<ContactQuery>) => {
@@ -153,15 +191,12 @@ function LeadsPageInner() {
     navigate({ ...latest.current, sort: key, dir, page: undefined });
   };
   const goToPage = (n: number) => navigate({ ...latest.current, page: n });
+  const changeOrder = (sort: SortKey, dir: SortDir) => navigate({ ...latest.current, sort, dir, page: undefined });
 
   function handleDrawerOpenChange(nextOpen: boolean) {
-    setDrawerOpen(nextOpen);
     // Drop the deep-link param on close so a refresh does not reopen it, and keep the filters.
     if (!nextOpen && searchParams.get("open")) {
-      const sp = new URLSearchParams(searchParams.toString());
-      sp.delete("open");
-      const qs = sp.toString();
-      router.replace(qs ? `/contacts?${qs}` : "/contacts", { scroll: false });
+      navigate({ ...latest.current }, "replace", null);
     }
   }
 
@@ -187,7 +222,7 @@ function LeadsPageInner() {
       <LeadsFilters
         query={filters}
         search={search}
-        onSearch={setSearch}
+        onSearch={changeSearch}
         onChange={change}
         onApplyView={applyView}
         onClear={clear}
@@ -197,26 +232,24 @@ function LeadsPageInner() {
       />
 
       <LeadsTable
-        page={list.data}
-        loading={list.loading}
+        page={list.data?.result}
+        loading={list.loading || searchPending || resetSearchPage || list.data?.requestKey !== requestKey}
         failed={Boolean(list.error)}
         onRetry={list.refetch}
         sort={order.sort}
         dir={order.dir}
         onSort={sortBy}
+        onOrderChange={changeOrder}
         onPage={goToPage}
         hasFilters={narrowing}
         onClearFilters={clear}
         empty={emptyCopy(filters, narrowing)}
-        onOpen={(id) => {
-          setDrawerId(id);
-          setDrawerOpen(true);
-        }}
+        onOpen={(id) => navigate({ ...latest.current }, "push", id)}
         agents={agents.data ?? []}
         showAgent={abilities.sees === "brokerage"}
       />
 
-      <LeadDrawer leadId={drawerId} open={drawerOpen} onOpenChange={handleDrawerOpenChange} />
+      <LeadDrawer leadId={drawerId} open={drawerOpen} onOpenChange={handleDrawerOpenChange} refreshKey={refreshKey} />
     </div>
   );
 }

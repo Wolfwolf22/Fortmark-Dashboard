@@ -1054,3 +1054,16 @@ export const personalWorkspaces = pgTable("personal_workspaces", {
   revision:integer("revision").notNull().default(1),
   updatedAt:timestamp("updated_at",{withTimezone:true}).notNull().defaultNow(),
 },t=>[primaryKey({columns:[t.ownerUserId,t.namespace]})]);
+
+/** Scoped idempotency receipts. Submitted contact values never enter audit. */
+export const contactCreateRequests = pgTable("contact_create_requests", {
+  brokerageKey: text("brokerage_key").notNull(),
+  actorUserId: uuid("actor_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  requestId: uuid("request_id").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  primaryKey({ name: "contact_create_requests_pkey", columns: [t.brokerageKey, t.actorUserId, t.requestId] }),
+  check("contact_create_requests_payload_hash_check", sql`length(${t.payloadHash}) = 64`),
+]);

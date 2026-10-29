@@ -29,6 +29,7 @@ import type { NoteView } from "../../contacts/notes.ts";
 import type { CreateNeedInput, NeedView, UpdateNeedInput } from "../../contacts/needs.ts";
 import type { LinkedTransaction } from "../../contacts/linked.ts";
 import type { Birthday } from "../../contacts/birthday.ts";
+import { HISTORY_PAGE_SIZE, type HistoryPage } from "../../contacts/history.ts";
 
 export type { LeadFilters };
 
@@ -169,6 +170,8 @@ export async function updateLeadStage(
 }
 
 export interface QuickCreateLeadInput {
+  /** Stable for retries of one submitted contact; never shared between contacts. */
+  requestId?: string;
   name: string;
   email: string;
   phone: string;
@@ -199,6 +202,7 @@ export async function createLead(input: QuickCreateLeadInput): Promise<Lead> {
   const { contact } = await request<{ contact: Lead }>("/api/contacts", {
     method: "POST",
     body: JSON.stringify({
+      requestId: input.requestId ?? crypto.randomUUID(),
       firstName,
       lastName: rest.join(" ") || undefined,
       email: input.email.trim() || undefined,
@@ -228,7 +232,7 @@ export async function markContacted(id: string): Promise<Lead | undefined> {
   }
   const { contact } = await request<{ contact: Lead }>(
     `/api/contacts/${encodeURIComponent(id)}/activities`,
-    { method: "POST", body: JSON.stringify({ kind: "note", summary: "Marked contacted" }) }
+    { method: "POST", body: JSON.stringify({ kind: "note", summary: "Marked contacted", markContacted: true }) }
   );
   bumpDataVersion();
   return contact;
@@ -350,6 +354,8 @@ export async function getLeadSnapshot(): Promise<LeadSnapshot> {
 }
 
 export interface ContactEdit {
+  /** Revision observed before editing, required for stored contact writes. */
+  expectedUpdatedAt?: string;
   firstName?: string;
   lastName?: string;
   preferredName?: string;
@@ -384,6 +390,12 @@ export async function getTimeline(id: string): Promise<TimelineItem[]> {
   return items;
 }
 
+export async function getTimelinePage(id: string, cursor?: string): Promise<HistoryPage<TimelineItem>> {
+  if ((await getLeadSource()) === "sample") return { items: [], nextCursor: null, hasMore: false };
+  const query = new URLSearchParams({ pageSize: String(HISTORY_PAGE_SIZE), ...(cursor ? { cursor } : {}) });
+  return request<HistoryPage<TimelineItem>>(`/api/contacts/${encodeURIComponent(id)}/timeline?${query}`);
+}
+
 // --- Contacts V3: notes, client needs, eligible contacts, linked deals ---------------------
 
 export type { NoteView, NeedView, LinkedTransaction };
@@ -393,6 +405,12 @@ export async function getNotes(id: string): Promise<NoteView[]> {
   if ((await getLeadSource()) === "sample") return [];
   const { items } = await request<{ items: NoteView[] }>(`/api/contacts/${encodeURIComponent(id)}/notes`);
   return items;
+}
+
+export async function getNotesPage(id: string, cursor?: string): Promise<HistoryPage<NoteView>> {
+  if ((await getLeadSource()) === "sample") return { items: [], nextCursor: null, hasMore: false };
+  const query = new URLSearchParams({ pageSize: String(HISTORY_PAGE_SIZE), ...(cursor ? { cursor } : {}) });
+  return request<HistoryPage<NoteView>>(`/api/contacts/${encodeURIComponent(id)}/notes?${query}`);
 }
 
 export async function addNote(id: string, body: string): Promise<NoteView> {
@@ -415,6 +433,12 @@ export async function getNeeds(id: string): Promise<NeedView[]> {
   if ((await getLeadSource()) === "sample") return [];
   const { items } = await request<{ items: NeedView[] }>(`/api/contacts/${encodeURIComponent(id)}/needs`);
   return items;
+}
+
+export async function getNeedsPage(id: string, cursor?: string): Promise<HistoryPage<NeedView>> {
+  if ((await getLeadSource()) === "sample") return { items: [], nextCursor: null, hasMore: false };
+  const query = new URLSearchParams({ pageSize: String(HISTORY_PAGE_SIZE), ...(cursor ? { cursor } : {}) });
+  return request<HistoryPage<NeedView>>(`/api/contacts/${encodeURIComponent(id)}/needs?${query}`);
 }
 
 export async function createNeed(id: string, input: CreateNeedInput): Promise<NeedView> {

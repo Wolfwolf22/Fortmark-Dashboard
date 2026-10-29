@@ -90,7 +90,7 @@ createServer(async (request, response) => {
       const requestedView = url.searchParams.get("view") || "/";
       const view = /^\/(?:listings(?:\/[a-z0-9-]+)?|transactions|contacts|settings)?(?:\?[a-z0-9_%=,&-]*)?$/i.test(requestedView) ? requestedView : "/";
       const requestedScenario = url.searchParams.get("scenario");
-      const scenario = ["unavailable", "empty"].includes(requestedScenario) ? requestedScenario : "records";
+      const scenario = ["unavailable", "empty", "conflict"].includes(requestedScenario) ? requestedScenario : "records";
       response.end(responsiveHtml(width, height, view, scenario)); return;
     }
     if (pathname === "/" || pathname === "/preview") {

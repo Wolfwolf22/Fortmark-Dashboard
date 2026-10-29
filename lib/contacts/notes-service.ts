@@ -18,17 +18,46 @@ import "server-only";
  * merely hidden by a query.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { isRecordId } from "../db/ids.ts";
 import { auditEvents, contactNotes } from "../db/schema.ts";
 import { loadContact } from "./access.ts";
 import { agentNames, type Ctx, type ServiceResult } from "./service.ts";
 import { noteInputSchema, type NoteView } from "./notes.ts";
+import { HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE, historyPage, type HistoryCursor, type HistoryPage } from "./history.ts";
 
 const MAX_LIST = 100;
 
 type BatchWrite = Parameters<Db["batch"]>[0][number];
+
+/** Read older notes by a stable time/id cursor, including identical timestamps. */
+export async function listNotesPage(ctx: Ctx, contactId: string, options: { pageSize?: number; cursor?: HistoryCursor } = {}): Promise<ServiceResult<HistoryPage<NoteView>>> {
+  const access = await loadContact(ctx, contactId);
+  if (!access.ok) return access;
+  const pageSize = Math.min(Math.max(options.pageSize ?? HISTORY_PAGE_SIZE, 1), MAX_HISTORY_PAGE_SIZE);
+  // Match the millisecond precision exposed by the DTO, even for rows created
+  // by PostgreSQL's microsecond-precision default clock.
+  const stamp = sql`date_trunc('milliseconds', ${contactNotes.createdAt})`;
+  const identifier = sql`${contactNotes.id}::text`;
+  const cursor = options.cursor;
+  const boundary = cursor ? sql`(${stamp} < ${cursor.at}::timestamptz or (${stamp} = ${cursor.at}::timestamptz and ${identifier} < ${cursor.id}))` : undefined;
+  const rows = await ctx.db.select({ id: contactNotes.id, body: contactNotes.body, createdAt: contactNotes.createdAt, authorUserId: contactNotes.authorUserId })
+    .from(contactNotes)
+    .where(and(eq(contactNotes.contactId, contactId), isNull(contactNotes.deletedAt), isNotNull(contactNotes.body), boundary))
+    .orderBy(desc(stamp), desc(identifier)).limit(pageSize + 1);
+  const authorIds = Array.from(new Set(rows.map(row => row.authorUserId).filter((value): value is string => Boolean(value))));
+  const names = await agentNames(ctx.db, authorIds);
+  if (ctx.viewerName && authorIds.includes(ctx.actor.userId) && !names.has(ctx.actor.userId)) {
+    const own = (await ctx.viewerName().catch(() => null))?.trim();
+    if (own) names.set(ctx.actor.userId, own);
+  }
+  const notes: NoteView[] = rows.filter((row): row is typeof row & { body: string } => row.body !== null).map(row => ({
+    id: row.id, body: row.body, createdAt: row.createdAt.toISOString(),
+    author: row.authorUserId ? names.get(row.authorUserId) : undefined, canDelete: access.writable,
+  }));
+  return { ok: true, value: historyPage(notes, pageSize, note => ({ at: note.createdAt, id: note.id })) };
+}
 
 function audit(ctx: Ctx, eventType: "contact_note_created" | "contact_note_deleted", contactId: string, noteId: string, action: "create" | "delete"): BatchWrite {
   return ctx.db.insert(auditEvents).values({

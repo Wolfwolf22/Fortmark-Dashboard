@@ -23,6 +23,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { IconWell } from "@/components/ui/icon-well";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/ui/status-pill";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { LeadPage } from "@/lib/data/adapters/leads";
 import { Lead, LEAD_SOURCE_LABELS, LEAD_STAGE_LABELS } from "@/lib/data/types";
@@ -53,6 +54,19 @@ const COLUMNS: Column[] = [
   { id: "followUp", label: "Next follow-up", sortKey: "followUp" },
   { id: "created", label: "Created", sortKey: "created" },
   { id: "actions", label: "Actions" },
+];
+
+const MOBILE_ORDERS: { value: `${SortKey}:${SortDir}`; label: string }[] = [
+  { value: "followUp:asc", label: "Follow-up · earliest first" },
+  { value: "followUp:desc", label: "Follow-up · latest first" },
+  { value: "lastTouch:desc", label: "Last touch · newest first" },
+  { value: "lastTouch:asc", label: "Last touch · oldest first" },
+  { value: "name:asc", label: "Name · A–Z" },
+  { value: "name:desc", label: "Name · Z–A" },
+  { value: "stage:asc", label: "Stage · first to last" },
+  { value: "stage:desc", label: "Stage · last to first" },
+  { value: "created:desc", label: "Added · newest first" },
+  { value: "created:asc", label: "Added · oldest first" },
 ];
 
 /** The agent as the screen names them. Never an id, never an email. */
@@ -122,6 +136,7 @@ export function LeadsTable({
   sort,
   dir,
   onSort,
+  onOrderChange,
   onPage,
   hasFilters,
   onClearFilters,
@@ -137,6 +152,7 @@ export function LeadsTable({
   sort: SortKey;
   dir: SortDir;
   onSort: (key: SortKey) => void;
+  onOrderChange: (key: SortKey, dir: SortDir) => void;
   onPage: (page: number) => void;
   hasFilters: boolean;
   onClearFilters: () => void;
@@ -169,6 +185,9 @@ export function LeadsTable({
   const { items, total, pageSize } = page;
   const current = page.page;
   const maxPage = Math.max(1, Math.ceil(total / pageSize));
+  // The page replaces an out-of-range URL and requests the valid page. Do not
+  // briefly claim a backwards range such as "51–1 of 1" during that recovery.
+  if (current > maxPage) return <TableSkeleton />;
   const first = total === 0 ? 0 : (current - 1) * pageSize + 1;
   const last = Math.min(current * pageSize, total);
 
@@ -185,6 +204,19 @@ export function LeadsTable({
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">Open a contact to review details and follow-ups.</p>
           </div>
         </div>
+        {!wide && (
+          <Select value={`${sort}:${dir}`} onValueChange={(value) => {
+            const [key, direction] = value.split(":") as [SortKey, SortDir];
+            onOrderChange(key, direction);
+          }}>
+            <SelectTrigger className="h-11 w-full min-w-0 text-[13px] sm:w-64" aria-label="Sort contacts">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-w-[calc(100vw-2rem)]">
+              {MOBILE_ORDERS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
       </div>
       {failed && (
         <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-panel border border-border bg-tint px-3 py-2">
@@ -369,13 +401,13 @@ export function LeadsTable({
             Showing {first}–{last} of {total}
           </p>
           <nav aria-label="Pagination" className="flex w-full flex-wrap items-center justify-between gap-2 sm:w-auto sm:justify-end">
-            <Button variant="outline" size="sm" onClick={() => onPage(current - 1)} disabled={current <= 1}>
+            <Button variant="outline" size="sm" onClick={() => onPage(current - 1)} disabled={loading || current <= 1}>
               Previous
             </Button>
             <span className="tabular text-[13px] text-muted-foreground">
               Page {current} of {maxPage}
             </span>
-            <Button variant="outline" size="sm" onClick={() => onPage(current + 1)} disabled={current >= maxPage}>
+            <Button variant="outline" size="sm" onClick={() => onPage(current + 1)} disabled={loading || current >= maxPage}>
               Next
             </Button>
           </nav>

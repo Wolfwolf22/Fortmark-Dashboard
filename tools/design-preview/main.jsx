@@ -61,7 +61,33 @@ function PreviewControls() {
     window.addEventListener(PREVIEW_WRITE_EVENT, blocked);
     return () => window.removeEventListener(PREVIEW_WRITE_EVENT, blocked);
   }, []);
-  return <><div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-2 border-b border-border bg-card px-4 py-2 text-center text-xs text-muted-foreground"><span className="font-semibold text-foreground">Design preview</span><span aria-hidden>·</span><span>Read-only sample data. No live accounts or services.</span><a href="/?view=%2Fsettings" className="ml-1 font-semibold text-foreground underline underline-offset-4">View foundations</a>{["/transactions", "/contacts"].includes(route) && <label className="ml-2 flex items-center gap-2">Preview data<select aria-label={route === "/contacts" ? "Preview contact data" : "Preview transaction data"} value={scenario} className="rounded border border-input bg-card px-2 py-1 text-foreground" onChange={event => { const url = new URL(window.location.href); url.searchParams.set("scenario", event.target.value); window.location.assign(url); }}><option value="records">Records</option>{route === "/contacts" && <option value="empty">Empty contact book</option>}<option value="unavailable">First request unavailable</option></select></label>}</div>{writeBlocked && <div role="alert" className="flex items-center justify-center gap-3 border-b border-border bg-card px-4 py-2 text-xs"><span>Design preview is read-only. No records were changed.</span><button type="button" className="font-semibold underline underline-offset-4" onClick={() => setWriteBlocked(false)}>Dismiss</button></div>}</>;
+  return <>
+    <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-2 border-b border-border bg-card px-4 py-2 text-center text-xs text-muted-foreground">
+      <span className="font-semibold text-foreground">Design preview</span><span aria-hidden>·</span>
+      <span>Read-only sample data. No live accounts or services.</span>
+      <a href="/?view=%2Fsettings" className="ml-1 font-semibold text-foreground underline underline-offset-4">View foundations</a>
+      {route === "/contacts" && <a href="/?view=%2Fcontacts%3Fopen%3Dsample-long-history" className="font-semibold text-foreground underline underline-offset-4">Long history case</a>}
+      {["/transactions", "/contacts"].includes(route) && <label className="ml-2 flex items-center gap-2">Preview data
+        <select aria-label={route === "/contacts" ? "Preview contact data" : "Preview transaction data"} value={scenario} className="rounded border border-input bg-card px-2 py-1 text-foreground" onChange={event => {
+          const url = new URL(window.location.href);
+          url.searchParams.set("scenario", event.target.value);
+          window.location.assign(url);
+        }}>
+          <option value="records">Records</option>
+          {route === "/contacts" && <option value="empty">Empty contact book</option>}
+          <option value="unavailable">First request unavailable</option>
+          {route === "/contacts" && <option value="conflict">Remote change on save (409)</option>}
+        </select>
+      </label>}
+    </div>
+    {route === "/contacts" && scenario === "conflict" && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
+      Conflict rehearsal: change a sample contact's Company, then save. The refused save reveals a predefined newer sample version. Review latest details to compare it with your kept draft. No draft is written.
+    </p>}
+    {writeBlocked && <div role="alert" className="flex items-center justify-center gap-3 border-b border-border bg-card px-4 py-2 text-xs">
+      <span>Design preview is read-only. No records were changed.</span>
+      <button type="button" className="font-semibold underline underline-offset-4" onClick={() => setWriteBlocked(false)}>Dismiss</button>
+    </div>}
+  </>;
 }
 function Preview() {
   return <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} storageKey="fortmark.design-preview.theme"><TooltipProvider delayDuration={250}><PreviewNavigation><PreviewControls /><AppShell user={user} profile={profile}><Content /></AppShell></PreviewNavigation></TooltipProvider></ThemeProvider>;

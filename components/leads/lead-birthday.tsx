@@ -11,22 +11,28 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { daysInMonth, formatBirthday, MONTH_NAMES, type Birthday } from "@/lib/contacts/birthday";
+import { birthdayEditorChanged, birthdayEditorSnapshot, reviewBirthdayEditor } from "@/lib/contacts/birthday-editor";
 
 export function LeadBirthday({
   value,
+  revision,
   canWrite,
   saving,
   onSave,
 }: {
   value: Birthday | null | undefined;
+  revision?: string;
   canWrite: boolean;
   saving: boolean;
   /** Resolves true on success; a refusal is the caller's to explain. */
-  onSave: (next: Birthday | null) => Promise<boolean>;
+  onSave: (next: Birthday | null, expectedUpdatedAt?: string) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState(false);
   const [month, setMonth] = useState<string>("");
   const [day, setDay] = useState<string>("");
+  const [baseline, setBaseline] = useState(() => birthdayEditorSnapshot(value, revision));
+  const [failure, setFailure] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const editButton = useRef<HTMLButtonElement>(null);
   const monthControl = useRef<HTMLButtonElement>(null);
   const wasEditing = useRef(false);
@@ -36,27 +42,73 @@ export function LeadBirthday({
     else if (wasEditing.current) editButton.current?.focus();
     wasEditing.current = editing;
   }, [editing]);
+  useEffect(() => { if (editing && notice) monthControl.current?.focus(); }, [editing, notice, baseline]);
 
   const shown = formatBirthday(value);
 
   function open() {
+    setBaseline(birthdayEditorSnapshot(value, revision));
     setMonth(value ? String(value.month) : "");
     setDay(value ? String(value.day) : "");
+    setFailure(null);
+    setNotice(null);
     setEditing(true);
   }
 
   const m = Number(month);
   const days = m >= 1 ? daysInMonth(m) : 31;
   const ready = Boolean(month) && Boolean(day) && Number(day) <= days;
+  const latest = birthdayEditorSnapshot(value, revision);
+  const changedRemotely = editing && birthdayEditorChanged(baseline, latest);
+
+  function review(choice: "saved" | "draft") {
+    const result = reviewBirthdayEditor(ready ? { month: m, day: Number(day) } : null, latest, choice);
+    setBaseline(result.baseline);
+    if (choice === "saved") {
+      setMonth(result.value ? String(result.value.month) : "");
+      setDay(result.value ? String(result.value.day) : "");
+    }
+    setFailure(null);
+    setNotice(choice === "saved" ? "Saved birthday loaded. Review the date before saving." : "Your birthday change is kept. Review the date before saving.");
+  }
 
   async function save() {
-    if (!ready) return;
-    if (await onSave({ month: m, day: Number(day) })) setEditing(false);
+    if (!ready || changedRemotely || saving) return;
+    setFailure(null);
+    try {
+      if (await onSave({ month: m, day: Number(day) }, baseline.revision)) setEditing(false);
+      else setFailure("Birthday could not be saved. Your draft is kept. Review any updated saved details before trying again.");
+    } catch {
+      setFailure("Birthday could not be saved. Your draft is kept. Try again.");
+    }
+  }
+
+  async function clear() {
+    setFailure(null);
+    try {
+      if (!(await onSave(null, revision))) setFailure("Birthday could not be cleared. Review the saved details and try again.");
+    } catch {
+      setFailure("Birthday could not be cleared. Try again.");
+    }
   }
 
   return (
     <div data-testid="lead-birthday">
       <p className="text-[11px] leading-4 text-muted-foreground">Birthday</p>
+      {changedRemotely && (
+        <div role="alert" className="mt-3 space-y-2 rounded-panel border border-border bg-tint p-3">
+          <p className="text-sm font-semibold">The saved contact changed while you were editing</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Your draft is kept. Choose which birthday to use before saving.</p>
+          <p className="text-xs">Saved birthday: {formatBirthday(value) ?? "Not set"}</p>
+          <p className="text-xs">Your draft: {ready ? formatBirthday({ month: m, day: Number(day) }) : "Choose a month and day"}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => review("saved")}>Use saved birthday</Button>
+            <Button type="button" size="sm" variant="outline" disabled={saving || !ready} onClick={() => review("draft")}>Keep my birthday change</Button>
+          </div>
+        </div>
+      )}
+      {failure && <p role="alert" className="mt-2 text-xs leading-relaxed text-destructive">{failure}</p>}
+      {editing && notice && <p role="status" className="mt-2 text-xs leading-relaxed text-muted-foreground">{notice}</p>}
       {editing ? (
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="grid gap-1.5">
@@ -97,7 +149,7 @@ export function LeadBirthday({
               </SelectContent>
             </Select>
           </div>
-          <Button type="button" size="sm" disabled={saving || !ready} onClick={() => void save()}>
+          <Button type="button" size="sm" disabled={saving || !ready || changedRemotely} onClick={() => void save()}>
             Save birthday
           </Button>
           <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => setEditing(false)}>
@@ -115,7 +167,7 @@ export function LeadBirthday({
                 {shown ? "Change" : "Set"}
               </Button>
               {shown && (
-                <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => void onSave(null)}>
+                <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => void clear()}>
                   Clear
                 </Button>
               )}

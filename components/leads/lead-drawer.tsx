@@ -76,7 +76,6 @@ const TOUCH_KINDS: { value: TouchKind; label: string }[] = [
   { value: "sms", label: "Text" },
   { value: "meeting", label: "Meeting" },
   { value: "showing", label: "Showing" },
-  { value: "note", label: "Note" },
 ];
 
 /**
@@ -92,6 +91,7 @@ export interface LeadDrawerProps {
   leadId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  refreshKey?: number;
 }
 
 type Panel = "touch" | "followUp" | "stage" | "edit" | null;
@@ -155,12 +155,13 @@ function describe(error: unknown): string {
     if (error.status === 403) return "You do not have permission to change this contact.";
     if (error.status === 404) return "This contact is no longer available.";
     if (error.code === "invalid_date") return "Pick today or a later date.";
+    if (error.status === 409) return "This contact changed. Review the refreshed details before trying again.";
   }
   return "The change could not be saved. Try again.";
 }
 
-export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
-  const { data, loading, error: loadError, refetch } = useQuery<Lead | undefined>(() => (leadId ? getLead(leadId) : Promise.resolve(undefined)), [leadId]);
+export function LeadDrawer({ leadId, open, onOpenChange, refreshKey = 0 }: LeadDrawerProps) {
+  const { data, loading, error: loadError, refetch } = useQuery<Lead | undefined>(() => (leadId ? getLead(leadId) : Promise.resolve(undefined)), [leadId, refreshKey]);
   // Guard against stale data from a previously opened lead.
   const lead = data && data.id === leadId ? data : undefined;
   const sample = lead?.recordSource === "sample";
@@ -173,7 +174,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
   const abilities = leadAbilities(useSessionUser().role);
   const setQuickCreate = useUiStore((s) => s.setQuickCreate);
 
-  const linked = useQuery(() => (leadId && lead && !sample ? getLinkedTransactions(leadId) : Promise.resolve([])), [leadId, lead?.id, sample]);
+  const linked = useQuery(() => (leadId && lead && !sample ? getLinkedTransactions(leadId) : Promise.resolve([])), [leadId, lead?.id, sample, refreshKey]);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -217,6 +218,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
       return true;
     } catch (e) {
       setError(describe(e));
+      refetch();
       return false;
     } finally {
       setSaving(false);
@@ -260,7 +262,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
       setNotice(changed.length > 0 ? "Contact details saved." : "No changes to save.");
       return true;
     } catch (e) {
-      if (e instanceof LeadsError && e.status === 400 && e.fields.length > 0) throw e;
+      if (e instanceof LeadsError && (e.status === 409 || (e.status === 400 && e.fields.length > 0))) throw e;
       setError(describe(e));
       return false;
     } finally {
@@ -268,9 +270,9 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     }
   }
 
-  async function saveBirthday(next: Birthday | null): Promise<boolean> {
+  async function saveBirthday(next: Birthday | null, expectedUpdatedAt?: string): Promise<boolean> {
     if (!lead) return false;
-    const ok = await run(() => updateContact(lead.id, { birthday: next }));
+    const ok = await run(() => updateContact(lead.id, { birthday: next, expectedUpdatedAt }));
     if (ok) setNotice(next ? "Birthday saved." : "Birthday cleared.");
     return ok;
   }
@@ -544,7 +546,11 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
 
                   {panel === "edit" && (
                     <div id="lead-panel-edit" className="mt-3">
-                      <LeadEditForm lead={lead} saving={saving} onSave={saveEdit} onCancel={() => setPanel(null)} />
+                      <LeadEditForm lead={lead} saving={saving} onSave={saveEdit} onCancel={() => setPanel(null)} onReload={async () => {
+                        const fresh = await getLead(lead.id);
+                        refetch();
+                        return fresh;
+                      }} />
                     </div>
                   )}
                 </div>
@@ -570,20 +576,20 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                     {sample ? (
                       <Fact label="Birthday" value={<span className="font-normal text-muted-foreground">Not available with sample data</span>} />
                     ) : (
-                      <LeadBirthday key={lead.id} value={lead.birthday} canWrite={abilities.canWrite} saving={saving} onSave={saveBirthday} />
+                      <LeadBirthday key={lead.id} value={lead.birthday} revision={lead.updatedAt} canWrite={abilities.canWrite} saving={saving} onSave={saveBirthday} />
                     )}
                   </div>
                 </div>
               </section>
 
               {/* --- Client needs --------------------------------------------- */}
-              <LeadNeeds key={`needs-${lead.id}`} leadId={lead.id} canWrite={abilities.canWrite} available={!sample} />
+              <LeadNeeds key={`needs-${lead.id}`} leadId={lead.id} canWrite={abilities.canWrite} available={!sample} refreshKey={refreshKey} />
 
               {/* --- Notes ----------------------------------------------------- */}
-              <LeadNotes key={`notes-${lead.id}`} leadId={lead.id} legacyNote={lead.notes} canWrite={abilities.canWrite} available={!sample} />
+              <LeadNotes key={`notes-${lead.id}`} leadId={lead.id} legacyNote={lead.notes} canWrite={abilities.canWrite} available={!sample} refreshKey={refreshKey} />
 
               {/* --- Activity --------------------------------------------------- */}
-              <LeadTimeline key={`timeline-${lead.id}`} leadId={lead.id} />
+              <LeadTimeline key={`timeline-${lead.id}`} leadId={lead.id} refreshKey={refreshKey} />
 
               {/* --- Representation -------------------------------------------- */}
               {engaged && (

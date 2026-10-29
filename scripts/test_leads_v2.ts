@@ -17,6 +17,7 @@
  *
  * Run: npm run test:leads
  */
+import { createContactScenarios } from "./helpers/contact-scenario.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { Actor } from "../lib/auth/actor.ts";
@@ -259,7 +260,7 @@ const noon = (day: string) => `${day}T12:00:00.000Z`;
   check("follow-up descending: none is still last", desc.slice(desc.findIndex((l) => !l.nextFollowUpDate)).every((l) => !l.nextFollowUpDate));
   const byName = applyQuery(set, { sort: "name", dir: "asc" }, NOW).items.map((l) => l.name.toLowerCase());
   check("name sorts alphabetically", byName.join() === [...byName].sort().join());
-  check("a page past the end is empty with the true total", (() => { const p = applyQuery(set, { page: 99, pageSize: 25 }, NOW); return p.items.length === 0 && p.total === 30; })());
+  check("a page past the end recovers to the last valid page", (() => { const p = applyQuery(set, { page: 99, pageSize: 25 }, NOW); return p.page === 2 && p.items.length === 5 && p.total === 30; })());
   check("an unpaged query returns every match", applyQuery(set, {}, NOW).items.length === 30);
   check("the default order is most recently touched first", (() => {
     const items = applyQuery(set, {}, NOW).items;
@@ -404,10 +405,13 @@ function world(row: Record<string, unknown> = contactRow(), extra: [unknown, Rec
   return tables;
 }
 const owners = (role: string, status = "active"): [unknown, Record<string, unknown>[]] => [dashboardUsers, [{ role, status }]];
-const edit = (actor: Actor, patch: Record<string, unknown>, opts: { failOn?: unknown; row?: Record<string, unknown> } = {}) => {
-  const tables = world(contactRow(opts.row));
-  const m = memory(tables, opts.failOn);
-  return editContact({ actor, db: m.db as never }, ID, patch as never, NOW).then((result) => ({ m, result, row: tables.get(contacts)![0] }));
+const editScenarios = await createContactScenarios([AGENT.userId, OTHER_AGENT.userId, BROKER.userId, ADMIN.userId, COORDINATOR.userId, OUTSIDER.userId]);
+const edit = async (actor: Actor, patch: Record<string, unknown>, opts: { failOn?: unknown; row?: Record<string, unknown> } = {}) => {
+  const row = contactRow(opts.row);
+  const r = await editScenarios.run(row, () => editContact({ actor, db: editScenarios.db }, ID, {
+    ...patch, expectedUpdatedAt: (row.updatedAt as Date).toISOString(),
+  } as never, NOW), opts.failOn);
+  return { ...r, row: r.m.row };
 };
 
 // --- The request shape ----------------------------------------------------------------
@@ -523,7 +527,7 @@ const edit = (actor: Actor, patch: Record<string, unknown>, opts: { failOn?: unk
     ],
   });
   const title = (id: string) => items.find((i) => i.id === id)?.title;
-  check("timeline: a call, an email, a text, a meeting, a showing and a note read as such", title("a2") === "Called client" && title("a6") === "Emailed client" && title("a8") === "Texted client" && title("a9") === "Met with client" && title("a7") === "Showing" && title("a5") === "Added note");
+  check("timeline: interactions and a quick contact mark read accurately", title("a2") === "Called client" && title("a6") === "Emailed client" && title("a8") === "Texted client" && title("a9") === "Met with client" && title("a7") === "Showing" && title("a5") === "Marked contacted" && items.find(i => i.id === "a5")?.type === "contacted");
   check("timeline: a stage change names the stage in words", title("a3") === "Stage changed to Qualified");
   check("timeline: a reassignment names the person", title("a4") === "Assigned to Nia New");
   check("timeline: creation is 'Contact added'", title("a1") === "Contact added");
@@ -587,7 +591,7 @@ const edit = (actor: Actor, patch: Record<string, unknown>, opts: { failOn?: unk
   check("routes: every mutation is no-store", [patch].every((t) => t.includes("NO_STORE")) && timeline.includes("NO_STORE") && summary.includes("NO_STORE"));
   check("routes: the timeline never returns raw audit rows", !timeline.includes("auditEvents") && !timeline.includes("safeMetadata"));
   check("service: list, edit and timeline go through visibleTo", ["listContactsPage", "editContact", "getTimeline"].every((fn) => { const body = src("lib/contacts/service.ts"); const i = body.indexOf(`export async function ${fn}`); return i >= 0 && /visibleTo|contactWhere/.test(body.slice(i, i + 900)); }));
-  check("service: edit commits through db.batch", (() => { const body = src("lib/contacts/service.ts"); const e = body.slice(body.indexOf("export async function editContact"), body.indexOf("export async function getTimeline")); return e.includes("ctx.db.batch("); })());
+  check("service: edit and audit share one conditional SQL statement", (() => { const body = src("lib/contacts/service.ts"); const e = body.slice(body.indexOf("export async function editContact"), body.indexOf("export async function getTimeline")); return e.includes("ctx.db.execute") && e.includes("with changed as (") && e.includes("audited as ("); })());
   check("sql: nothing user-typed is concatenated into SQL text", !/\$\{[^}]*\bq\b[^}]*\}\s*['"`]/.test(src("lib/contacts/list-sql.ts")) && !src("lib/contacts/list-sql.ts").includes("sql.raw"));
   // The screen.
   const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
@@ -616,9 +620,9 @@ const edit = (actor: Actor, patch: Record<string, unknown>, opts: { failOn?: unk
   check("ui: a member is offered no write control", ["Edit contact", "Log touch", "Archive"].every((w) => drawer.split(w)[0].length > 0) && drawer.includes("abilities.canWrite") && !drawer.includes("canReassign") && drawer.includes("read-only access"));
   check("ui: the drawer is sectioned and each section is named", ["lead-details-heading", "follow-up-heading", "log-touch-heading", "lead-representation-heading", "lead-transactions-heading"].every((id) => drawer.includes(id)) && timelineUi.includes("lead-activity-heading") && strip(src("components/leads/lead-notes.tsx")).includes("lead-notes-heading") && strip(src("components/leads/lead-needs.tsx")).includes("lead-needs-heading"));
   check("ui: the edit form labels every field and names refused fields", ["First name", "Last name", "Preferred name", "Company", "Email", "Phone", "Source"].every((l) => edit.includes(l)) && !edit.includes("lead-edit-notes") && edit.includes("aria-invalid") && edit.includes('role="alert"'));
-  check("ui: the edit form sends only what changed and cannot name an owner, stage or date", edit.includes("patch[key]") && !/stage|assignedAgent|nextFollowUp|lastContact|brokerage/i.test(edit));
+  check("ui: the edit form sends only dirty opening-snapshot fields and cannot name an owner, stage or date", edit.includes("contactEditorPatch(baseline, values)") && src("lib/contacts/editor.ts").includes("baseline.values[key].trim()") && !/stage|assignedAgent|nextFollowUp|lastContact|brokerage/i.test(edit));
   check("ui: archive asks first, and restore is available", drawer.includes("Archive this contact?") && drawer.includes("Restore to Lead"));
-  check("ui: the timeline loads with the drawer, not with the list", timelineUi.includes("getTimeline(leadId)") && !table.includes("getTimeline"));
+  check("ui: the timeline loads with the drawer, not with the list", /useContactHistory\(leadId,\s*getTimelinePage(?:,\s*refreshKey)?\)/.test(timelineUi) && !table.includes("getTimeline"));
   check("ui: the mobile list is one button per person with the actions in the drawer", table.includes("useMinWidth(768)") && table.includes('aria-label="Contacts"'));
   check("ui: the follow-up and touch controls kept their names", drawer.includes("Mark complete") && drawer.includes("Save follow-up") && drawer.includes("Log touch") && drawer.includes('aria-label="Contact stage"') && drawer.includes("A reminder only. It does not count as a touch."));
   check("ui: the shell's heading is the page's only h1", !/<h1/.test(ui));
@@ -626,10 +630,11 @@ const edit = (actor: Actor, patch: Record<string, unknown>, opts: { failOn?: unk
   const adapter = strip(src("lib/data/adapters/leads.ts"));
   check("adapter: a read that got no answer is retried once; a write never is", adapter.includes("async function fetchOnce") && adapter.includes("if (!read) return send();") && adapter.includes("first.status !== 502 && first.status !== 504") && adapter.includes("init?.method === undefined || init.method === \"GET\""));
   check("adapter: only the two name-search POSTs (contacts list, eligible contacts) are declared reads", (adapter.match(/read: true/g) ?? []).length === 2);
-  check("later migrations are the approved additive contact and personal workspace tables", (() => { const j = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] }; return j.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces"; })());
+  check("later migrations are the approved additive contact and personal workspace tables", (() => { const j = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] }; return j.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces,0015_contact_create_requests"; })());
 }
 
 console.log(`\n${passed}/${passed + failures.length} Leads V2 checks passed`);
+await editScenarios.pg.close();
 if (failures.length) {
   console.log(`${failures.length} failed:\n  ${failures.join("\n  ")}`);
   process.exit(1);

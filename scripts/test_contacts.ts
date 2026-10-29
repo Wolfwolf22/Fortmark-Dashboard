@@ -211,7 +211,7 @@ check("the primary need is the newest open one",
   check("every query is scoped by visibility", (service.match(/visibleTo\(ctx\.actor\)/g) ?? []).length >= 4);
   check("the brokerage is always the server's", service.includes("brokerageKey: ctx.actor.brokerageKey") && !/brokerageKey: input/.test(service));
   check("a stage change checks the lifecycle before writing", service.indexOf("canTransition(from, to)") < service.indexOf(".update(contacts)"));
-  check("logging a touch stamps last contact without moving it backwards", /row\.lastContactAt > occurredAt \? row\.lastContactAt : occurredAt/.test(service));
+  check("logging a touch uses the database's current last-contact value", service.includes("greatest(last_contact_at,") && service.includes("case when ${countsAsTouch}"));
   check("the agents list never returns emails or Clerk ids", /name: names\.get\(u\.id\)/.test(service) && !/primaryEmail|clerkUserId/.test(service.slice(service.indexOf("export async function listAgents"))));
   check("the agents route is empty for a non-privileged caller", readFileSync(files.agents, "utf8").includes("if (!isBrokerageAdmin(actor.ctx.actor))"));
   check("the transactions service now uses the shared actor too",

@@ -16,7 +16,7 @@ import "server-only";
  * A need write is not a touch and moves nothing on the contact.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { isRecordId } from "../db/ids.ts";
 import { auditEvents, contactNeeds, type ContactNeedRow } from "../db/schema.ts";
@@ -32,10 +32,10 @@ import {
   type NeedStatus,
   type NeedView,
 } from "./needs.ts";
+import { HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE, type HistoryPage } from "./history.ts";
+import { needHistoryPage, NEED_STATUS_RANK, type NeedCursor } from "./needs-pagination.ts";
 
 type BatchWrite = Parameters<Db["batch"]>[0][number];
-
-const STATUS_RANK: Record<NeedStatus, number> = { active: 0, paused: 1, fulfilled: 2, archived: 3 };
 
 export function toNeedView(row: ContactNeedRow): NeedView {
   return {
@@ -71,20 +71,28 @@ function toColumns(set: Record<string, unknown>) {
  * A contact's needs: active first, then paused, fulfilled and archived, newest
  * change first within each. Scoped like a read of the contact itself.
  */
-export async function getContactNeeds(ctx: Ctx, contactId: string): Promise<ServiceResult<NeedView[]>> {
+export async function getContactNeedsPage(ctx: Ctx, contactId: string, options: { pageSize?: number; cursor?: NeedCursor } = {}): Promise<ServiceResult<HistoryPage<NeedView>>> {
   const access = await loadContact(ctx, contactId);
   if (!access.ok) return access;
+  const pageSize = Math.min(Math.max(options.pageSize ?? HISTORY_PAGE_SIZE, 1), MAX_HISTORY_PAGE_SIZE);
+  const rank = sql`case ${contactNeeds.status} when 'active' then 0 when 'paused' then 1 when 'fulfilled' then 2 else 3 end`;
+  const stamp = sql`date_trunc('milliseconds', ${contactNeeds.updatedAt})`;
+  const identifier = sql`${contactNeeds.id}::text`;
+  const cursor = options.cursor;
+  const boundary = cursor ? sql`(${rank} > ${cursor.rank} or (${rank} = ${cursor.rank} and (${stamp} < ${cursor.at}::timestamptz or (${stamp} = ${cursor.at}::timestamptz and ${identifier} < ${cursor.id}))))` : undefined;
   const rows = await ctx.db
     .select()
     .from(contactNeeds)
-    .where(eq(contactNeeds.contactId, contactId))
-    .orderBy(asc(contactNeeds.createdAt))
-    .limit(100);
-  const views = rows.map(toNeedView);
-  views.sort(
-    (a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0)
-  );
-  return { ok: true, value: views };
+    .where(and(eq(contactNeeds.contactId, contactId), boundary))
+    .orderBy(asc(rank), desc(stamp), desc(identifier))
+    .limit(pageSize + 1);
+  return { ok: true, value: needHistoryPage(rows.map(toNeedView), pageSize, (need) => ({ rank: NEED_STATUS_RANK[need.status], at: need.updatedAt, id: need.id }), cursor) };
+}
+
+/** Compatibility read for bounded internal callers; the drawer uses cursor pages. */
+export async function getContactNeeds(ctx: Ctx, contactId: string): Promise<ServiceResult<NeedView[]>> {
+  const page = await getContactNeedsPage(ctx, contactId, { pageSize: MAX_HISTORY_PAGE_SIZE });
+  return page.ok ? { ok: true, value: page.value.items } : page;
 }
 
 function auditWrite(

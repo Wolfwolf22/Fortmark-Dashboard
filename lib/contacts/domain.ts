@@ -8,7 +8,7 @@
  */
 import { z } from "zod";
 import type { Lead, LeadIntent, LeadSource, LeadStage } from "../data/types.ts";
-import type { ContactActivityRow, ContactOpportunityRow, ContactRow } from "../db/schema.ts";
+import type { ContactActivityRow, ContactNeedRow, ContactOpportunityRow, ContactRow } from "../db/schema.ts";
 import { canCreatePersonalFor, canSeePersonal, canWritePersonal, type Actor } from "../auth/actor.ts";
 import { centsToDollars } from "../transactions/money.ts";
 import { toE164 } from "../profile/normalize.ts";
@@ -16,6 +16,7 @@ import { businessDayKey } from "../metrics/business-day.ts";
 import { decideFollowUp, type FollowUpOutcome } from "./follow-up.ts";
 import { ALL_CONTACT_STAGES } from "./stages.ts";
 import { birthdayChangeState, birthdaySchema, type Birthday } from "./birthday.ts";
+import { projectContactNeedSummary } from "./needs-summary.ts";
 
 // --- Who ---------------------------------------------------------------------
 
@@ -58,6 +59,8 @@ export const opportunityInputSchema = z.object({
  * belongs to whoever creates it, and no field of the request can say otherwise.
  */
 export const createContactBaseSchema = z.object({
+    /** Stable across a client's retries; the HTTP create route requires it. */
+    requestId: z.string().uuid().optional(),
     firstName: z.string().trim().max(100).optional(),
     lastName: z.string().trim().max(100).optional(),
     preferredName: z.string().trim().max(100).optional(),
@@ -98,7 +101,10 @@ export const activityInputSchema = z.object({
    * clears it — an attempted call may not complete anything.
    */
   completeFollowUp: z.boolean().optional(),
-});
+  /** Explicit quick mark; internal notes/tasks are not outreach. */
+  markContacted: z.boolean().optional(),
+}).refine((value) => !value.markContacted || (value.kind === "note" && value.summary === "Marked contacted"),
+  { message: "quick mark requires its canonical activity", path: ["markContacted"] });
 
 export type ActivityInput = z.infer<typeof activityInputSchema>;
 
@@ -150,6 +156,8 @@ const EDITABLE_TEXT = { max: 200 } as const;
  */
 export const editContactSchema = z
   .object({
+    /** Required at the write boundary; not an editable contact field. */
+    expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
     firstName: z.string().trim().max(100).optional(),
     lastName: z.string().trim().max(100).optional(),
     preferredName: z.string().trim().max(100).optional(),
@@ -163,7 +171,7 @@ export const editContactSchema = z
     birthday: birthdaySchema.nullable().optional(),
   })
   .strict()
-  .refine((body) => Object.keys(body).length > 0, { message: "nothing to change" });
+  .refine((body) => Object.keys(body).some((key) => key !== "expectedUpdatedAt"), { message: "nothing to change" });
 
 export type EditContactInput = z.infer<typeof editContactSchema>;
 
@@ -250,27 +258,16 @@ export function displayName(row: Pick<ContactRow, "firstName" | "lastName" | "pr
 }
 
 /**
- * The open needs, summarised. A buyer and a seller need at once is "both";
- * any lease-side need is "lease"; an investor is "invest"; anything else the
- * screen cannot summarise honestly is "other". No open need at all — a past
- * client, say — is "other" too, and the drawer shows the opportunities
- * themselves for the detail.
+ * Active structured needs take precedence over legacy opportunities. The
+ * optional second argument preserves old pure callers while stored contacts
+ * pass every structured row, including inactive ones, to prevent fallback
+ * from bringing an old intent back after a need is paused or fulfilled.
  */
-export function toIntent(opportunities: readonly ContactOpportunityRow[]): LeadIntent {
-  const open = opportunities.filter((o) => o.status === "open");
-  if (open.length === 0) return "other";
-  const kinds = new Set(open.map((o) => o.kind));
-  const buying = kinds.has("buyer") || kinds.has("commercial_buyer");
-  const selling = kinds.has("seller") || kinds.has("commercial_seller");
-  if (buying && selling) return "both";
-  if (buying) return "buy";
-  if (selling) return "sell";
-  if (kinds.has("tenant") || kinds.has("landlord") || kinds.has("commercial_tenant") || kinds.has("commercial_landlord")) return "lease";
-  if (kinds.has("investor")) return "invest";
-  return "other";
+export function toIntent(opportunities: readonly ContactOpportunityRow[], needs: readonly ContactNeedRow[] = []): LeadIntent {
+  return projectContactNeedSummary(needs, opportunities).intent;
 }
 
-/** The need the screen leads with: the most recent open one. */
+/** Compatibility helper for legacy callers: the most recent open opportunity. */
 export function primaryOpportunity(
   opportunities: readonly ContactOpportunityRow[]
 ): ContactOpportunityRow | undefined {
@@ -284,6 +281,8 @@ export interface ContactBundle {
   /** Who is looking, so a contact can say whether it is theirs. */
   viewerId?: string;
   opportunities: readonly ContactOpportunityRow[];
+  /** All structured rows, including inactive ones, so legacy fallback is safe. */
+  needs?: readonly ContactNeedRow[];
   /** The latest activity, when any; lists carry only this one. */
   latestActivity?: ContactActivityRow;
   agentName?: string;
@@ -291,7 +290,7 @@ export interface ContactBundle {
 
 export function toLead(bundle: ContactBundle): Lead {
   const { row, opportunities } = bundle;
-  const primary = primaryOpportunity(opportunities);
+  const needSummary = projectContactNeedSummary(bundle.needs ?? [], opportunities);
   const lastContact = row.lastContactAt ?? bundle.latestActivity?.occurredAt ?? row.createdAt;
   return {
     id: row.id,
@@ -300,13 +299,14 @@ export function toLead(bundle: ContactBundle): Lead {
     phone: row.phoneE164 ?? "",
     stage: row.stage as LeadStage,
     source: row.source as LeadSource,
-    intent: toIntent(opportunities),
-    budget: primary?.budgetMaxCents != null ? centsToDollars(primary.budgetMaxCents) : undefined,
-    neighborhood: primary?.area ?? undefined,
+    intent: needSummary.intent,
+    budget: needSummary.budgetMaxCents != null ? centsToDollars(needSummary.budgetMaxCents) : undefined,
+    neighborhood: needSummary.areas.join(" · ") || undefined,
     assignedAgentId: row.assignedAgentUserId,
     assignedAgentName: bundle.agentName,
     ...(bundle.viewerId ? { ownedByViewer: row.assignedAgentUserId === bundle.viewerId } : {}),
     createdDate: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : undefined,
     lastContactDate: lastContact.toISOString(),
     lastTouchDate: row.lastContactAt?.toISOString(),
     nextFollowUpDate: row.nextFollowUpAt?.toISOString(),

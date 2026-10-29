@@ -126,3 +126,58 @@ and Contacts expectations are the role table above).
 ## Tests
 `npm test` (20 suites, includes `test:contacts-v3` 324 checks), `npm run test:migrate` (66),
 `npx tsc --noEmit`, `npx next build` — all green on the committed code.
+
+## Reliability follow-up — 2026-10-29
+
+The certification and deployment statements above describe the earlier release.
+This follow-up was implemented and verified locally; it has not been deployed or
+applied to a live database.
+
+- **Creation:** `POST /api/contacts` now requires a UUID `requestId`, kept across
+  retries of one creation dialog. Contact, legacy opportunities, history, audit
+  and the scoped request receipt commit together. Reusing the key with a different
+  payload returns `409 request_conflict`; a lost response can recover the same
+  contact. Apply additive migration `0015_contact_create_requests.sql` before
+  serving the updated database-backed creation route. Existing identity and
+  ownership rules remain unchanged.
+- **Editing:** stored-contact PATCH requires `expectedUpdatedAt`, from the contact's
+  public `updatedAt`. Conditional writes refuse stale revisions with `409 conflict`.
+  Tokens handle existing PostgreSQL microseconds and advance monotonically. Contact
+  details and birthday drafts retain their opening baseline and require explicit
+  review of newer saved values. Only intentionally changed fields are submitted.
+- **Touches and reminders:** touch history, last contact, reminder changes and audit
+  commit atomically. A reminder kept by a touch is evaluated from the locked current
+  row rather than copied from an earlier read. Internal note/task events do not
+  claim outreach. Quick contact marking is labelled `Marked contacted`, including
+  legacy events. AI preparation and execution use the same contact write permission
+  rule, and AI reminder writes also advance the revision token.
+- **Client Needs:** structured needs become authoritative once any exist; only active
+  rows contribute intent, budget and searchable areas. Contacts without structured
+  needs retain their legacy opportunity summary. Pausing or fulfilling the last
+  structured need does not resurrect an old legacy intent. Financing, must-haves,
+  exclusions and additional requirements have an authorized read view for every
+  status. Private detailed requirements and note bodies remain outside list search.
+- **History:** notes, needs and timeline GET routes support `pageSize` (1–100) and an
+  opaque `cursor`, returning `{items, hasMore, nextCursor}`. The UI requests 25 at a
+  time and loads older pages explicitly. Tied timestamps and derived follow-up
+  entries have deterministic boundaries; each page repeats contact authorization.
+  Calls without paging parameters retain the older array response shape. Loaded
+  counts are distinguished from complete totals. Final-page controls retain focus.
+- **Workspace:** private search resets pagination; out-of-range pages recover after
+  results shrink. Upcoming sorts by earliest reminder; mobile has sorting. Drawer
+  state follows the URL and browser history. Focus/visibility changes and business-day
+  rollover refresh the contact workspace without clearing an editor's draft.
+
+Regression coverage now includes isolated PostgreSQL rollback, retry, concurrent
+edits and reminder writes, structured-needs lifecycle/filter consistency, and
+more-than-100-entry notes/needs/activity paging. The database test helper applies
+committed migrations only inside an in-memory PostgreSQL instance and does not read
+live connection settings. Browser checks use the read-only synthetic preview.
+
+Local verification: the complete project suite passed, with 3,993 counted checks
+after the final AI permission regressions, plus the workspace ownership/conflict
+suite. TypeScript and whitespace checks passed. The native migration-runner
+integration test was skipped because PostgreSQL server binaries are unavailable
+on this host; the committed migrations and new receipt schema were exercised by
+the isolated PostgreSQL test harness. Live deployment and authenticated live-data
+certification remain separate from this local implementation.

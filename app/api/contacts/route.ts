@@ -82,12 +82,18 @@ export async function POST(request: NextRequest) {
     const fields = Array.from(new Set(parsed.error.issues.map((i) => i.path.join("."))));
     return NextResponse.json({ error: "invalid", fields }, { status: 400, headers: NO_STORE });
   }
+  if (!parsed.data.requestId) {
+    return NextResponse.json({ error: "invalid", fields: ["requestId"] }, { status: 400, headers: NO_STORE });
+  }
 
   const actor = await actorOrResponse(caller.clerkUserId);
   if (!actor.ok) return actor.response;
   try {
     const result = await createContact(actor.ctx, parsed.data);
-    if (!result.ok) return failure(result.reason);
+    if (!result.ok) {
+      if (result.reason === "request_conflict") return NextResponse.json({ error: "request_conflict" }, { status: 409, headers: NO_STORE });
+      return failure(result.reason);
+    }
     return NextResponse.json({ contact: result.value }, { status: 201, headers: NO_STORE });
   } catch (error) {
     return unexpected(error);

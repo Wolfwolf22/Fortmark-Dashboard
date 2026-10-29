@@ -49,7 +49,7 @@ the real page's Retry action then recovers the sample records.
 ## Contacts and follow-ups
 
 Contacts now renders the actual list, filters, paging and contact drawer.
-Thirty synthetic contacts exercise two pages and include due-today, overdue,
+Thirty-one synthetic contacts exercise two pages and include due-today, overdue,
 upcoming, never-touched, past-client, colleague-owned and labeled sample-fallback
 cases. The preview reuses the production pure query evaluator for filters, sorts,
 snapshot counts and pagination. Changing filters preserves preview scenarios
@@ -77,3 +77,31 @@ Contacts has Records, Empty contact book and First request unavailable preview
 scenarios. The unavailable scenario fails the first list request; the actual
 Retry control recovers the fixture list. Home contact totals and its attention
 queue derive from these same sample contacts and transaction milestones.
+
+## Reliability cases
+
+Stored-shaped contacts have a fixed synthetic `updatedAt` revision. The labeled
+sample-source fallback deliberately has no revision, matching its source mode.
+
+`sample-long-history` contains 137 notes, 143 activity entries and 127 client
+needs. All three load in pages of 25. Notes/activity use the application's
+`historyPage` helper; needs use its `needHistoryPage` helper with status rank,
+updated time and UUID ordering. Tied timestamps and all four need statuses are
+included. The activity contains the `contacted` event, and need summaries include
+fields that must be readable without editing.
+
+- `/preview?view=%2Fcontacts%3Fopen%3Dsample-long-history`
+- `/responsive?width=320&height=568&view=/contacts?open=sample-long-history`
+
+For the explicit conflict rehearsal, select **Remote change on save (409)** in
+the preview controls, or open:
+
+`/preview?view=%2Fcontacts%3Fopen%3Dsample-overdue&scenario=conflict`
+
+Open Edit contact, change Company and save. The refused request selects a
+predefined newer synthetic read projection and returns 409. Review latest
+details then exercises the real editor's draft merge and per-field choices.
+The newer sample version changes Company, Email and the revision, so an
+untouched field merge is visible too. Neither the original fixture nor the
+user's draft is ever written; subsequent saves remain blocked. Reload resets
+the rehearsal, and no live records or services are involved.

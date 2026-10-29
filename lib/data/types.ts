@@ -401,7 +401,7 @@ export const LEAD_SOURCE_LABELS: Record<LeadSource, string> = {
 /** Every source, in the order a picker lists them. */
 export const LEAD_SOURCES_ORDER = Object.keys(LEAD_SOURCE_LABELS) as LeadSource[];
 
-/** What the person needs, summarised from their open opportunities. */
+/** Active structured needs, or legacy open opportunities before needs exist. */
 export type LeadIntent = "buy" | "sell" | "both" | "lease" | "invest" | "other";
 
 export type LeadSourceOfRecord = "db" | "sample";
@@ -414,9 +414,9 @@ export interface Lead {
   stage: LeadStage;
   source: LeadSource;
   intent: LeadIntent;
-  /** Dollars — the primary open opportunity's upper budget, when stated. */
+  /** Dollars — the latest active need's upper budget, or safe legacy fallback. */
   budget?: number;
-  /** The primary open opportunity's area, when stated. */
+  /** Distinct active areas, or open legacy areas before needs exist. */
   neighborhood?: string;
   /** A sample roster id, or a dashboard user id. */
   assignedAgentId: string;
@@ -429,6 +429,8 @@ export interface Lead {
    */
   ownedByViewer?: boolean;
   createdDate: string; // ISO
+  /** ISO row revision for conflict-safe edits. Present on stored contacts. */
+  updatedAt?: string;
   /** ISO — the latest activity, or creation when there is none. */
   lastContactDate: string;
   /**

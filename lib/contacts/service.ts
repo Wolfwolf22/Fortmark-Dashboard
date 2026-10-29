@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { isRecordId } from "../db/ids.ts";
 
 /**
@@ -14,11 +15,12 @@ import { isRecordId } from "../db/ids.ts";
  * `last_contact_at` on the contact so lists need no join, and the activity
  * row remains the record of what the touch was.
  */
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
   auditEvents,
   contactActivities,
+  contactNeeds,
   contactOpportunities,
   contacts,
   dashboardUsers,
@@ -34,7 +36,6 @@ import {
   canSee,
   canWrite,
   planContactEdit,
-  resolveFollowUp,
   toLead,
   type ActivityInput,
   type CreateContactInput,
@@ -49,9 +50,10 @@ import type { LeadPage, LeadSnapshot } from "./windows.ts";
 import { toTimeline, type TimelineItem } from "./timeline.ts";
 import { TIMELINE_DOMAIN_EVENTS } from "./events.ts";
 import { toInt } from "../metrics/window.ts";
-import { checkFollowUpDay, decideFollowUp, type FollowUpOutcome } from "./follow-up.ts";
-import { businessDayKey } from "../metrics/business-day.ts";
+import { checkFollowUpDay, type FollowUpOutcome } from "./follow-up.ts";
+import { BUSINESS_TIME_ZONE, businessDayKey } from "../metrics/business-day.ts";
 import { toE164 } from "../profile/normalize.ts";
+import { contactCreateRequests, contactRevision, createPayloadHash, nextContactUpdatedAt, revisionMatches } from "./reliability.ts";
 
 const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
 
@@ -78,7 +80,11 @@ export type ServiceFailure =
   | "invalid_name"
   | "invalid_phone"
   | "invalid_note"
-  | "invalid_need";
+  | "invalid_need"
+  | "invalid_request"
+  | "invalid_revision"
+  | "request_conflict"
+  | "conflict";
 
 export type ServiceResult<T> = { ok: true; value: T } | { ok: false; reason: ServiceFailure };
 
@@ -128,8 +134,9 @@ async function bundle(ctx: Pick<Ctx, "db" | "actor" | "viewerName">, rows: Conta
   if (rows.length === 0) return [];
   const { db } = ctx;
   const ids = rows.map((r) => r.id);
-  const [opps, names] = await Promise.all([
+  const [opps, needs, names] = await Promise.all([
     db.select().from(contactOpportunities).where(inArray(contactOpportunities.contactId, ids)),
+    db.select().from(contactNeeds).where(inArray(contactNeeds.contactId, ids)),
     agentNames(db, Array.from(new Set(rows.map((r) => r.assignedAgentUserId)))),
   ]);
   // Profile name first (above). A contact the caller owns whose profile has
@@ -143,6 +150,7 @@ async function bundle(ctx: Pick<Ctx, "db" | "actor" | "viewerName">, rows: Conta
     toLead({
       row,
       opportunities: opps.filter((o) => o.contactId === row.id),
+      needs: needs.filter((n) => n.contactId === row.id),
       agentName: names.get(row.assignedAgentUserId),
       viewerId: ctx.actor.userId,
     })
@@ -250,83 +258,63 @@ export async function listActivities(ctx: Ctx, id: string, limit = 50): Promise<
     .limit(Math.min(Math.max(limit, 1), 200));
 }
 
-async function recordAudit(
-  db: Db,
-  actorUserId: string,
-  eventType: "contact_created" | "contact_updated" | "contact_stage_changed",
-  contactId: string,
-  metadata?: Record<string, unknown>
-): Promise<void> {
-  const safe = scrub(metadata);
-  try {
-    await db.insert(auditEvents).values({
-      eventType,
-      actorUserId,
-      targetUserId: null,
-      safeMetadata: safe ? { contactId, ...safe } : { contactId },
-    });
-  } catch {
-    // Auditing must never break the write it describes.
-  }
-}
-
 export async function createContact(ctx: Ctx, input: CreateContactInput): Promise<ServiceResult<Lead>> {
-  // A contact belongs to the person who creates it. There is no request shape
-  // that names another owner, so nothing here can hand a contact to someone else.
   const agentUserId = ctx.actor.userId;
   if (!canCreateFor(ctx.actor, agentUserId)) return { ok: false, reason: "forbidden" };
-
-  const inserted = await ctx.db
-    .insert(contacts)
-    .values({
-      brokerageKey: ctx.actor.brokerageKey,
-      assignedAgentUserId: agentUserId,
-      createdByUserId: ctx.actor.userId,
-      updatedByUserId: ctx.actor.userId,
-      firstName: input.firstName ?? null,
-      lastName: input.lastName ?? null,
-      preferredName: input.preferredName ?? null,
-      email: input.email?.toLowerCase() ?? null,
-      // Stored E.164 so a typed number matches by its digits; one that cannot be
-      // read confidently is kept as typed rather than dropped.
-      phoneE164: input.phone ? (toE164(input.phone) ?? input.phone) : null,
-      company: input.company ?? null,
-      birthdayMonth: input.birthday?.month ?? null,
-      birthdayDay: input.birthday?.day ?? null,
-      source: input.source ?? "other",
-      tags: input.tags ?? [],
-      notes: input.notes ?? null,
-    })
-    .returning();
-  const row = inserted[0];
-  if (!row) return { ok: false, reason: "unavailable" };
-
-  if (input.opportunities?.length) {
-    await ctx.db.insert(contactOpportunities).values(
-      input.opportunities.map((o) => ({
-        contactId: row.id,
-        kind: o.kind,
-        area: o.area ?? null,
-        budgetMinCents: o.budgetMinCents ?? null,
-        budgetMaxCents: o.budgetMaxCents ?? null,
-        timeframe: o.timeframe ?? null,
-        notes: o.notes ?? null,
-      }))
-    );
+  // The HTTP boundary requires this key. Internal callers may also opt into retries.
+  const requestId = input.requestId ?? randomUUID();
+  if (!isRecordId(requestId)) return { ok: false, reason: "invalid_request" };
+  const payloadHash = createPayloadHash(input);
+  const receiptWhere = and(eq(contactCreateRequests.brokerageKey, ctx.actor.brokerageKey),
+    eq(contactCreateRequests.actorUserId, ctx.actor.userId), eq(contactCreateRequests.requestId, requestId));
+  async function replay(): Promise<ServiceResult<Lead> | null> {
+    const [receipt] = await ctx.db.select().from(contactCreateRequests).where(receiptWhere).limit(1);
+    if (!receipt) return null;
+    if (receipt.payloadHash !== payloadHash) return { ok: false, reason: "request_conflict" };
+    const contact = await getContact(ctx, receipt.contactId);
+    return contact ? { ok: true, value: contact } : { ok: false, reason: "not_found" };
   }
+  const prior = await replay();
+  if (prior) return prior;
+
+  const id = randomUUID();
+  const now = new Date();
+  const writes: BatchWrite[] = [ctx.db.insert(contacts).values({
+    id, brokerageKey: ctx.actor.brokerageKey, assignedAgentUserId: agentUserId,
+    createdByUserId: ctx.actor.userId, updatedByUserId: ctx.actor.userId,
+    firstName: input.firstName ?? null, lastName: input.lastName ?? null,
+    preferredName: input.preferredName ?? null, email: input.email?.toLowerCase() ?? null,
+    phoneE164: input.phone ? (toE164(input.phone) ?? input.phone) : null,
+    company: input.company ?? null, birthdayMonth: input.birthday?.month ?? null,
+    birthdayDay: input.birthday?.day ?? null, source: input.source ?? "other",
+    tags: input.tags ?? [], notes: input.notes ?? null, createdAt: now, updatedAt: now,
+  })];
+  if (input.opportunities?.length) writes.push(ctx.db.insert(contactOpportunities).values(
+    input.opportunities.map((o) => ({
+      contactId: id, kind: o.kind, area: o.area ?? null,
+      budgetMinCents: o.budgetMinCents ?? null, budgetMaxCents: o.budgetMaxCents ?? null,
+      timeframe: o.timeframe ?? null, notes: o.notes ?? null,
+    }))
+  ));
+  writes.push(
+    ctx.db.insert(contactActivities).values({ contactId: id, actorUserId: ctx.actor.userId,
+      kind: "system", summary: "Contact created", occurredAt: now, safeMetadata: { source: input.source ?? "other" } }),
+    ctx.db.insert(auditEvents).values({ eventType: "contact_created", actorUserId: ctx.actor.userId,
+      targetUserId: null, safeMetadata: { contactId: id, source: input.source ?? "other" } }),
+    // The scoped unique key serializes concurrent retries. A losing insert rolls
+    // back its entire batch before it reads the winner's committed receipt.
+    ctx.db.insert(contactCreateRequests).values({ brokerageKey: ctx.actor.brokerageKey,
+      actorUserId: ctx.actor.userId, requestId, payloadHash, contactId: id }),
+  );
   try {
-    await ctx.db.insert(contactActivities).values({
-      contactId: row.id,
-      actorUserId: ctx.actor.userId,
-      kind: "system",
-      summary: "Contact created",
-      safeMetadata: { source: row.source },
-    });
+    await ctx.db.batch(writes as unknown as Parameters<Db["batch"]>[0]);
   } catch {
-    // History must never break the write it describes.
+    try { return await replay() ?? { ok: false, reason: "unavailable" }; }
+    catch { return { ok: false, reason: "unavailable" }; }
   }
-  await recordAudit(ctx.db, ctx.actor.userId, "contact_created", row.id, { source: row.source });
-  const created = await getContact(ctx, row.id);
+  // A failed response/read can be retried with the same receipt without creating
+  // another person. Never turn a durable success into a second insert.
+  const created = await getContact(ctx, id);
   return created ? { ok: true, value: created } : { ok: false, reason: "unavailable" };
 }
 
@@ -409,7 +397,7 @@ export async function planStageChange(
       writes: [
         ctx.db
           .update(contacts)
-          .set({ stage: to, updatedByUserId: ctx.actor.userId, updatedAt: now })
+          .set({ stage: to, updatedByUserId: ctx.actor.userId, updatedAt: nextContactUpdatedAt(now) })
           .where(eq(contacts.id, row.id)),
         // The business event, in the domain's own words. An AI-assisted change
         // is the same CRM event as any other — only the metadata differs.
@@ -474,58 +462,66 @@ export async function commitStageChange(db: Db, writes: BatchWrite[]): Promise<v
   await db.batch(writes as unknown as Parameters<Db["batch"]>[0]);
 }
 
-/** Log a touch. Stamps last-contacted and, when given, the next follow-up. */
+/** Follow-up decisions evaluated from the locked, current row, not a stale read. */
+function followUpSql(day: string | null, complete: boolean): { outcome: SQL; value: SQL } {
+  const sameDay = sql`(locked.next_follow_up_at at time zone ${BUSINESS_TIME_ZONE})::date = ${day}::date`;
+  const outcome = day
+    ? sql`case when ${sameDay} then 'kept' when locked.next_follow_up_at is null then 'scheduled' else 'rescheduled' end`
+    : complete ? sql`case when locked.next_follow_up_at is null then 'kept' else 'completed' end` : sql`'kept'`;
+  const value = day
+    ? sql`case when ${sameDay} then locked.next_follow_up_at else ${day + "T12:00:00.000Z"}::timestamptz end`
+    : complete ? sql`null::timestamptz` : sql`locked.next_follow_up_at`;
+  return { outcome, value };
+}
+
+/** A touch and its derived contact state/history are one indivisible SQL statement. */
 export async function logActivity(ctx: Ctx, id: string, input: ActivityInput, now = new Date()): Promise<ServiceResult<Lead>> {
   if (!isRecordId(id)) return { ok: false, reason: "not_found" };
-  const rows = await ctx.db
-    .select()
-    .from(contacts)
-    .where(and(eq(contacts.id, id), visibleTo(ctx.actor)))
-    .limit(1);
+  const rows = await ctx.db.select().from(contacts).where(and(eq(contacts.id, id), visibleTo(ctx.actor))).limit(1);
   const row = rows[0];
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
-
-  // A new date is judged the same way as on the direct control: a real day,
-  // not in the past. Checked after authorization, before anything is written.
-  if (input.nextFollowUpAt) {
-    const checked = checkFollowUpDay(businessDayKey(new Date(input.nextFollowUpAt)), now);
-    if (!checked.ok) return { ok: false, reason: "invalid_date" };
-  }
+  const day = input.nextFollowUpAt ? businessDayKey(new Date(input.nextFollowUpAt)) : null;
+  if (day && !checkFollowUpDay(day, now).ok) return { ok: false, reason: "invalid_date" };
   const occurredAt = input.occurredAt ? new Date(input.occurredAt) : now;
-  // Kept unless the caller sets a new date or explicitly completes it.
-  const followUp = resolveFollowUp(row.nextFollowUpAt ?? null, input);
-  await ctx.db.insert(contactActivities).values({
-    contactId: row.id,
-    opportunityId: input.opportunityId ?? null,
-    actorUserId: ctx.actor.userId,
-    kind: input.kind,
-    summary: input.summary,
-    occurredAt,
-    // A touch that also moved the reminder says so on its own line of the timeline.
-    safeMetadata:
-      followUp.change === "kept"
-        ? null
-        : {
-            followUp: followUp.change,
-            ...(followUp.value ? { followUpDay: businessDayKey(followUp.value) } : {}),
-          },
-  });
-  await ctx.db
-    .update(contacts)
-    .set({
-      // The most recent touch wins; a backdated note does not move it backwards.
-      lastContactAt: row.lastContactAt && row.lastContactAt > occurredAt ? row.lastContactAt : occurredAt,
-      nextFollowUpAt: followUp.value,
-      updatedByUserId: ctx.actor.userId,
-      updatedAt: now,
-    })
-    .where(eq(contacts.id, row.id));
-  await recordAudit(ctx.db, ctx.actor.userId, "contact_updated", row.id, {
-    activity: input.kind,
-    followUp: followUp.change,
-  });
-  const updated = await getContact(ctx, row.id);
+  if (!Number.isFinite(occurredAt.getTime()) || occurredAt > now) return { ok: false, reason: "invalid_date" };
+  if (input.opportunityId) {
+    const [opportunity] = await ctx.db.select({ id: contactOpportunities.id }).from(contactOpportunities)
+      .where(and(eq(contactOpportunities.id, input.opportunityId), eq(contactOpportunities.contactId, id))).limit(1);
+    if (!opportunity) return { ok: false, reason: "not_found" };
+  }
+  const marked = input.kind === "note" && input.summary === "Marked contacted";
+  const countsAsTouch = marked || ["call", "email", "sms", "meeting", "showing"].includes(input.kind);
+  const follow = followUpSql(day, input.completeFollowUp === true);
+  const metadata = sql`(case when ${follow.outcome} = 'kept' then '{}'::jsonb
+    else jsonb_strip_nulls(jsonb_build_object('followUp', ${follow.outcome}, 'followUpDay', ${day}::text)) end)
+    || ${JSON.stringify(marked ? { event: "contact_marked" } : {})}::jsonb`;
+  try {
+    const result = await ctx.db.execute<{ id: string }>(sql`
+      with locked as materialized (
+        select id, next_follow_up_at from ${contacts}
+        where ${and(eq(contacts.id, id), visibleTo(ctx.actor))} for update
+      ), changed as (
+        update ${contacts} set
+          last_contact_at = case when ${countsAsTouch} then greatest(last_contact_at, ${occurredAt.toISOString()}::timestamptz) else last_contact_at end,
+          next_follow_up_at = ${follow.value},
+          updated_by_user_id = ${ctx.actor.userId}::uuid,
+          updated_at = ${nextContactUpdatedAt(now)}
+        from locked where ${contacts.id} = locked.id returning ${contacts.id}
+      ), activity as (
+        insert into ${contactActivities} (contact_id, opportunity_id, actor_user_id, kind, summary, occurred_at, safe_metadata)
+        select changed.id, ${input.opportunityId ?? null}::uuid, ${ctx.actor.userId}::uuid,
+          ${input.kind}::contact_activity_kind, ${input.summary}, ${occurredAt.toISOString()}::timestamptz, ${metadata}
+        from changed cross join locked returning id
+      ), audited as (
+        insert into ${auditEvents} (event_type, actor_user_id, target_user_id, safe_metadata)
+        select 'contact_updated', ${ctx.actor.userId}::uuid, null,
+          jsonb_build_object('contactId', ${id}::text, 'activity', ${input.kind}::text, 'followUp', ${follow.outcome})
+        from activity cross join locked returning id
+      ) select id from changed`);
+    if (!result.rows.length) return { ok: false, reason: "not_found" };
+  } catch { return { ok: false, reason: "unavailable" }; }
+  const updated = await getContact(ctx, id);
   return updated ? { ok: true, value: updated } : { ok: false, reason: "unavailable" };
 }
 
@@ -568,38 +564,34 @@ export async function changeFollowUp(
   if (change.action === "schedule" && !checkFollowUpDay(change.day, now).ok) {
     return { ok: false, reason: "invalid_date" };
   }
-  const current = row.nextFollowUpAt ?? null;
-  const decided = decideFollowUp(current, change.action === "schedule" ? { day: change.day } : { complete: true });
-
-  if (decided.outcome !== "kept") {
-    try {
-      await ctx.db.batch([
-        ctx.db
-          .update(contacts)
-          .set({ nextFollowUpAt: decided.value, updatedByUserId: ctx.actor.userId, updatedAt: now })
-          .where(eq(contacts.id, row.id)),
-        ctx.db.insert(auditEvents).values({
-          eventType: "contact_updated",
-          actorUserId: ctx.actor.userId,
-          targetUserId: null,
-          safeMetadata: scrub({
-            contactId: row.id,
-            field: "nextFollowUpAt",
-            followUp: decided.outcome,
-            mechanism: "direct",
-            // The reminder's day is workflow data, not contact data; it is what
-            // lets the timeline say "scheduled for Oct 3".
-            ...(change.action === "schedule" ? { day: change.day } : {}),
-          }) ?? { contactId: row.id },
-        }),
-      ] as unknown as Parameters<Db["batch"]>[0]);
-    } catch {
-      return { ok: false, reason: "unavailable" };
-    }
-  }
-
+  const follow = followUpSql(change.action === "schedule" ? change.day : null, change.action === "complete");
+  let outcome: FollowUpOutcome;
+  try {
+    const result = await ctx.db.execute<{ outcome: FollowUpOutcome }>(sql`
+      with locked as materialized (
+        select id, next_follow_up_at from ${contacts}
+        where ${and(eq(contacts.id, id), visibleTo(ctx.actor))} for update
+      ), decision as materialized (
+        select id, ${follow.outcome} as outcome, ${follow.value} as value from locked
+      ), changed as (
+        update ${contacts} set next_follow_up_at = decision.value,
+          updated_by_user_id = ${ctx.actor.userId}::uuid, updated_at = ${nextContactUpdatedAt(now)}
+        from decision where ${contacts.id} = decision.id and decision.outcome <> 'kept'
+        returning ${contacts.id}
+      ), audited as (
+        insert into ${auditEvents} (event_type, actor_user_id, target_user_id, safe_metadata)
+        select 'contact_updated', ${ctx.actor.userId}::uuid, null,
+          ${JSON.stringify({ contactId: id, field: "nextFollowUpAt", mechanism: "direct",
+            ...(change.action === "schedule" ? { day: change.day } : {}) })}::jsonb
+          || jsonb_build_object('followUp', decision.outcome)
+        from changed join decision on changed.id = decision.id returning id
+      ) select outcome from decision`);
+    if (!result.rows.length) return { ok: false, reason: "not_found" };
+    outcome = result.rows[0].outcome;
+  } catch { return { ok: false, reason: "unavailable" }; }
   const updated = await getContact(ctx, row.id);
-  return updated ? { ok: true, value: { lead: updated, outcome: decided.outcome } } : { ok: false, reason: "unavailable" };
+  return updated ? { ok: true, value: { lead: updated, outcome } } : { ok: false, reason: "unavailable" };
+
 }
 
 /**
@@ -650,29 +642,29 @@ export async function editContact(
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
 
+  if (!patch.expectedUpdatedAt) return { ok: false, reason: "invalid_revision" };
+  if (!revisionMatches(row.updatedAt, patch.expectedUpdatedAt)) return { ok: false, reason: "conflict" };
   const plan = planContactEdit(row, patch);
   if (!plan.ok) return { ok: false, reason: plan.field === "phone" ? "invalid_phone" : "invalid_name" };
 
   if (plan.changed.length > 0) {
+    const update = ctx.db.update(contacts)
+      .set({ ...plan.set, updatedByUserId: ctx.actor.userId, updatedAt: nextContactUpdatedAt(now) })
+      .where(and(eq(contacts.id, row.id), visibleTo(ctx.actor), contactRevision(patch.expectedUpdatedAt)))
+      .returning({ id: contacts.id });
+    const metadata = scrub({ contactId: row.id, mechanism: "edit", fields: plan.changed,
+      ...(plan.birthday ? { birthday: plan.birthday } : {}) }) ?? { contactId: row.id };
     try {
-      await ctx.db.batch([
-        ctx.db
-          .update(contacts)
-          .set({ ...plan.set, updatedByUserId: ctx.actor.userId, updatedAt: now })
-          .where(eq(contacts.id, row.id)),
-        ctx.db.insert(auditEvents).values({
-          eventType: "contact_updated",
-          actorUserId: ctx.actor.userId,
-          targetUserId: null,
-          // Field names, and for a birthday only whether it was set, changed or cleared.
-          safeMetadata:
-            scrub({ contactId: row.id, mechanism: "edit", fields: plan.changed, ...(plan.birthday ? { birthday: plan.birthday } : {}) }) ??
-            { contactId: row.id },
-        }),
-      ] as unknown as Parameters<Db["batch"]>[0]);
-    } catch {
-      return { ok: false, reason: "unavailable" };
-    }
+      // Audit only a successful conditional update. A losing revision race
+      // writes neither data nor a history line claiming that it changed.
+      const result = await ctx.db.execute<{ id: string }>(sql`
+        with changed as (${update.getSQL()}), audited as (
+          insert into ${auditEvents} (event_type, actor_user_id, target_user_id, safe_metadata)
+          select 'contact_updated', ${ctx.actor.userId}::uuid, null, ${JSON.stringify(metadata)}::jsonb
+          from changed returning id
+        ) select id from changed`);
+      if (!result.rows.length) return { ok: false, reason: "conflict" };
+    } catch { return { ok: false, reason: "unavailable" }; }
   }
 
   const updated = await getContact(ctx, row.id);

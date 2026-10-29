@@ -31,6 +31,7 @@ import {
   type SortKey,
 } from "./filters.ts";
 import { ALL_CONTACT_STAGES, OPEN_PIPELINE_STAGES } from "./stages.ts";
+import { contactPageWithinRange } from "./workspace.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -162,7 +163,7 @@ export function applyQuery(leads: readonly Lead[], query: ContactQuery, now: Dat
   const paged = query.page !== undefined || query.pageSize !== undefined;
   if (!paged) return { items: matched, total: matched.length, page: 1, pageSize: matched.length };
   const pageSize = Math.min(query.pageSize ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
-  const page = query.page ?? 1;
+  const page = contactPageWithinRange(query.page ?? 1, matched.length, pageSize);
   return { items: matched.slice((page - 1) * pageSize, page * pageSize), total: matched.length, page, pageSize };
 }
 

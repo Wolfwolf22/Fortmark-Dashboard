@@ -12,9 +12,8 @@
  * This is not an opportunity or a deal forecast. It is what the client asked for,
  * stored so that a later search can use it without reading a paragraph.
  */
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Target } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -23,7 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { createNeed, getNeeds, LeadsError, updateNeed, type NeedView } from "@/lib/data/adapters/leads";
+import { createNeed, getNeedsPage, LeadsError, updateNeed, type NeedView } from "@/lib/data/adapters/leads";
 import { useQuery } from "@/lib/data/hooks";
 import {
   NEED_FINANCING,
@@ -33,8 +32,6 @@ import {
   NEED_LIMITS,
   NEED_PROPERTY_TYPES,
   NEED_PROPERTY_TYPE_LABELS,
-  NEED_STATUS_LABELS,
-  summarizeNeed,
   type CreateNeedInput,
   type NeedFinancing,
   type NeedKind,
@@ -42,6 +39,8 @@ import {
   type NeedStatus,
 } from "@/lib/contacts/needs";
 import { TagInput } from "./tag-input";
+import { NeedSummary } from "./need-summary";
+import type { HistoryPage } from "@/lib/contacts/history";
 
 const dollars = (cents: number | null) => (cents == null ? "" : String(cents / 100));
 const toCents = (text: string): number | null => {
@@ -287,36 +286,27 @@ function NeedForm({
   );
 }
 
-function NeedSummary({ need }: { need: NeedView }) {
-  const { headline, lines } = summarizeNeed(need);
-  return (
-    <div data-testid="need-summary">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <p className="break-words text-sm font-semibold">{headline}</p>
-        {need.status !== "active" && <Badge variant="muted">{NEED_STATUS_LABELS[need.status]}</Badge>}
-      </div>
-      {lines.length > 0 ? (
-        <ul className="mt-2 space-y-1 text-[13px] leading-relaxed text-muted-foreground">
-          {lines.map((l) => (
-            <li key={l} className="break-words [overflow-wrap:anywhere]">
-              {l}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-1 text-sm text-muted-foreground">No details added yet.</p>
-      )}
-    </div>
-  );
-}
-
-export function LeadNeeds({ leadId, canWrite, available }: { leadId: string; canWrite: boolean; available: boolean }) {
-  const { data, loading, error, refetch } = useQuery<NeedView[]>(() => getNeeds(leadId), [leadId]);
+export function LeadNeeds({ leadId, canWrite, available, refreshKey = 0 }: { leadId: string; canWrite: boolean; available: boolean; refreshKey?: number }) {
+  const { data, loading, error, refetch } = useQuery<HistoryPage<NeedView>>(() => getNeedsPage(leadId), [leadId, refreshKey]);
+  const [older, setOlder] = useState<{ head: HistoryPage<NeedView>; items: NeedView[]; hasMore: boolean; nextCursor: string | null } | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [pageProblem, setPageProblem] = useState<string | null>(null);
+  const pageRequest = useRef(0);
   const [mode, setMode] = useState<{ kind: "add" } | { kind: "edit"; need: NeedView } | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [showOthers, setShowOthers] = useState(false);
+
+  // A successful write/refetch restarts the ordered stream. A moved status can
+  // change page position, so stale older pages must not stay attached to it.
+  useEffect(() => {
+    pageRequest.current++;
+    setOlder(null);
+    setLoadingOlder(false);
+    setPageProblem(null);
+    return () => { pageRequest.current++; };
+  }, [data, leadId, refreshKey]);
 
   const [forLead, setForLead] = useState(leadId);
   if (forLead !== leadId) {
@@ -349,7 +339,30 @@ export function LeadNeeds({ leadId, canWrite, available }: { leadId: string; can
     }
   }
 
-  const needs = data ?? [];
+  const currentOlder = older?.head === data ? older : null;
+  const needs = [...(data?.items ?? []), ...(currentOlder?.items ?? [])];
+  const hasMore = currentOlder ? currentOlder.hasMore : data?.hasMore ?? false;
+  const nextCursor = currentOlder ? currentOlder.nextCursor : data?.nextCursor;
+  async function loadOlder() {
+    if (!data || !nextCursor || loading || loadingOlder || saving) return;
+    const head = data;
+    const request = ++pageRequest.current;
+    setLoadingOlder(true);
+    setPageProblem(null);
+    try {
+      const page = await getNeedsPage(leadId, nextCursor);
+      if (request !== pageRequest.current) return;
+      setOlder((previous) => {
+        const existing = previous?.head === head ? previous.items : [];
+        const seen = new Set([...head.items, ...existing].map((need) => need.id));
+        return { head, items: [...existing, ...page.items.filter((need) => !seen.has(need.id))], hasMore: page.hasMore, nextCursor: page.nextCursor };
+      });
+    } catch {
+      if (request === pageRequest.current) setPageProblem("More needs could not be loaded. Try again.");
+    } finally {
+      if (request === pageRequest.current) setLoadingOlder(false);
+    }
+  }
   const active = needs.filter((n) => n.status === "active");
   const others = needs.filter((n) => n.status !== "active");
   const setStatus = (n: NeedView, status: NeedStatus, done: string) => void run(() => updateNeed(leadId, n.id, { status }), done);
@@ -440,6 +453,15 @@ export function LeadNeeds({ leadId, canWrite, available }: { leadId: string; can
               )}
             </div>
           )}
+          {!mode && (hasMore || currentOlder) && (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <Button type="button" size="sm" variant="outline" className="aria-disabled:cursor-default aria-disabled:opacity-60" aria-disabled={loadingOlder || loading || saving || !hasMore} onClick={() => void loadOlder()}>
+                {!hasMore ? "All needs loaded" : loadingOlder ? "Loading needs…" : "Load older needs"}
+              </Button>
+              <p className="text-xs text-muted-foreground">{needs.length} needs loaded</p>
+            </div>
+          )}
+          {pageProblem && <p role="alert" className="mt-3 text-sm text-destructive">{pageProblem}</p>}
         </>
       )}
       {available && error && data && <p role="alert" className="mt-3 text-sm text-muted-foreground">Client needs could not be refreshed. <button type="button" className="min-h-10 rounded-md px-1 font-semibold underline underline-offset-4" onClick={refetch}>Try again</button></p>}

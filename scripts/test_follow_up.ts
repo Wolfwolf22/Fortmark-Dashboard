@@ -17,13 +17,14 @@
  * that simply never writes.
  *
  * Layers: the pure clock and rule; the real `changeFollowUp` / `logActivity`
- * against an in-memory database that models transactions; how Home, the list
+ * against embedded PostgreSQL with real transactions; how Home, the list
  * and the drawer read the result; the quick-create closing date; structure.
  *
- * No database is contacted.
+ * No external database is contacted.
  *
  * Run: npm run test:follow-up
  */
+import { createContactScenarios } from "./helpers/contact-scenario.ts";
 import { readFileSync } from "node:fs";
 import type { Actor } from "../lib/auth/actor.ts";
 import { activityInputSchema, followUpChangeSchema, resolveFollowUp } from "../lib/contacts/domain.ts";
@@ -202,7 +203,7 @@ const FLORIDA_EVENING = at("2026-09-25T03:30:00.000Z");
   check("a touch still accepts a follow-up datetime", activityInputSchema.safeParse({ kind: "call", summary: "x", nextFollowUpAt: "2026-10-01T12:00:00.000Z" }).success);
 }
 
-// --- The services, against an in-memory database that models transactions ---------------
+// --- The services, against embedded PostgreSQL with real transactions ---------------
 const ID = "5b8f6a1e-3c2d-4e5f-8a9b-0c1d2e3f4a5b";
 const AGENT: Actor = { userId: "11111111-1111-4111-8111-111111111111", role: "agent", brokerageKey: "fortmark" };
 const OTHER_AGENT: Actor = { userId: "22222222-2222-4222-8222-222222222222", role: "agent", brokerageKey: "fortmark" };
@@ -282,18 +283,15 @@ function memoryDb(row: ReturnType<typeof storedRow>, failOn?: unknown) {
   return { db, row, applied, batchCount: () => batches };
 }
 
-const writesTo = (m: ReturnType<typeof memoryDb>, table: unknown) => m.applied.filter((w) => w.table === table);
-const auditOf = (m: ReturnType<typeof memoryDb>) => writesTo(m, auditEvents)[0]?.values.safeMetadata as Record<string, unknown> | undefined;
+const writesTo = (m: { applied: { table: unknown; values: Record<string, unknown> }[] }, table: unknown) => m.applied.filter((w) => w.table === table);
+const auditOf = (m: { applied: { table: unknown; values: Record<string, unknown> }[] }) => writesTo(m, auditEvents)[0]?.values.safeMetadata as Record<string, unknown> | undefined;
 
+const localScenarios = await createContactScenarios([AGENT.userId, OTHER_AGENT.userId, BROKER.userId, OUTSIDER.userId]);
 async function direct(actor: Actor, follow: Date | null, change: unknown, opts: { failOn?: unknown; viewerName?: () => Promise<string | null> } = {}) {
-  const m = memoryDb(storedRow(follow), opts.failOn);
-  const result = await changeFollowUp({ actor, db: m.db, viewerName: opts.viewerName } as unknown as Ctx, ID, followUpChangeSchema.parse(change), NOW);
-  return { m, result };
+  return localScenarios.run(storedRow(follow), () => changeFollowUp({ actor, db: localScenarios.db, viewerName: opts.viewerName }, ID, followUpChangeSchema.parse(change), NOW), opts.failOn);
 }
 async function touch(actor: Actor, follow: Date | null, input: Record<string, unknown>) {
-  const m = memoryDb(storedRow(follow));
-  const result = await logActivity({ actor, db: m.db } as unknown as Ctx, ID, activityInputSchema.parse({ kind: "call", summary: "Called", ...input }), NOW);
-  return { m, result };
+  return localScenarios.run(storedRow(follow), () => logActivity({ actor, db: localScenarios.db }, ID, activityInputSchema.parse({ kind: "call", summary: "Called", ...input }), NOW));
 }
 
 // Scenario A — schedule only.
@@ -373,13 +371,13 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
 
   const member = await direct(MEMBER_OWNER, due, change);
   check("member: forbidden, even on their own contact", !member.result.ok && member.result.reason === "forbidden");
-  check("member: nothing written, follow-up intact", member.m.applied.length === 0 && member.m.row.nextFollowUpAt === due);
+  check("member: nothing written, follow-up intact", member.m.applied.length === 0 && member.m.row.nextFollowUpAt?.getTime() === due.getTime());
   const memberSchedule = await direct(MEMBER_OWNER, due, { action: "schedule", day: "2026-10-09" });
   check("member: scheduling is forbidden too", !memberSchedule.result.ok && memberSchedule.result.reason === "forbidden" && memberSchedule.m.applied.length === 0);
 
   const colleague = await direct(OTHER_AGENT, due, change);
   check("another agent: not found (no existence leak)", !colleague.result.ok && colleague.result.reason === "not_found");
-  check("another agent: nothing written", colleague.m.applied.length === 0 && colleague.m.row.nextFollowUpAt === due);
+  check("another agent: nothing written", colleague.m.applied.length === 0 && colleague.m.row.nextFollowUpAt?.getTime() === due.getTime());
 
   const outsider = await direct(OUTSIDER, due, change);
   check("foreign brokerage: not found", !outsider.result.ok && outsider.result.reason === "not_found" && outsider.m.applied.length === 0);
@@ -408,9 +406,9 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
   const due = noon("2026-09-24");
   const auditFails = await direct(AGENT, due, { action: "complete" }, { failOn: auditEvents });
   check("atomic: if the audit cannot be written, the request fails", !auditFails.result.ok && auditFails.result.reason === "unavailable");
-  check("atomic: …and the contact is NOT changed", auditFails.m.row.nextFollowUpAt === due && auditFails.m.applied.length === 0);
+  check("atomic: …and the contact is NOT changed", auditFails.m.row.nextFollowUpAt?.getTime() === due.getTime() && auditFails.m.applied.length === 0);
   const contactFails = await direct(AGENT, due, { action: "complete" }, { failOn: contacts });
-  check("atomic: if the contact update fails, no audit row exists", !contactFails.result.ok && writesTo(contactFails.m, auditEvents).length === 0 && contactFails.m.row.nextFollowUpAt === due);
+  check("atomic: if the contact update fails, no audit row exists", !contactFails.result.ok && writesTo(contactFails.m, auditEvents).length === 0 && contactFails.m.row.nextFollowUpAt?.getTime() === due.getTime());
   const ok = await direct(AGENT, due, { action: "complete" });
   check("atomic control: with no failure both writes land in one batch", ok.result.ok && writesTo(ok.m, contacts).length === 1 && writesTo(ok.m, auditEvents).length === 1 && ok.m.batchCount() === 1);
 }
@@ -505,13 +503,13 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
   check("route: refusals map through the shared failure table", route.includes("failure(result.reason)") && http.includes('case "invalid_date"'));
   check("service: authorization precedes the date check and the write", (() => {
     const fn = service.slice(service.indexOf("export async function changeFollowUp"));
-    return fn.indexOf("canSee(ctx.actor, row)") < fn.indexOf("canWrite(ctx.actor, row)") && fn.indexOf("canWrite(ctx.actor, row)") < fn.indexOf("checkFollowUpDay(") && fn.indexOf("checkFollowUpDay(") < fn.indexOf("ctx.db.batch");
+    return fn.indexOf("canSee(ctx.actor, row)") < fn.indexOf("canWrite(ctx.actor, row)") && fn.indexOf("canWrite(ctx.actor, row)") < fn.indexOf("checkFollowUpDay(") && fn.indexOf("checkFollowUpDay(") < fn.indexOf("ctx.db.execute");
   })());
   check("service: the direct change never writes last contact or an activity", (() => {
     const fn = service.slice(service.indexOf("export async function changeFollowUp"), service.indexOf("export async function listAgents"));
     return !/lastContactAt|contactActivities/.test(fn.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, ""));
   })());
-  check("service: the update and its audit are one batch", /ctx\.db\.batch\(\[[\s\S]*update\(contacts\)[\s\S]*insert\(auditEvents\)/.test(service));
+  check("service: update and audit share one SQL statement", service.includes("changed as (") && service.includes("audited as (") && service.includes("select outcome from decision"));
   check("adapter: the direct control posts to the follow-up route, not the activity route", /\/follow-up`/.test(adapter) && /export async function changeFollowUp/.test(adapter));
   check("adapter: a touch still posts to the activity route", /\/activities`/.test(adapter));
   check("drawer: the direct control calls changeFollowUp, never logTouch", /changeFollowUp\(lead\.id, \{ action: "schedule", day \}\)/.test(drawer) && /changeFollowUp\(lead\.id, \{ action: "complete" \}\)/.test(drawer));
@@ -523,10 +521,8 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
   check("drawer: no lone separator when there is no email or phone", drawer.includes("[lead.email, lead.phone].filter(Boolean)") && !/\{lead\.email\} · \{lead\.phone\}/.test(drawer));
   check("drawer: an unnamed stored agent reads 'Unnamed agent', never an id", drawer.includes("Unnamed agent") && !/assignedAgentId\}/.test(drawer));
   check("table: the heuristic is labelled truthfully and separate", table.includes("{NO_TOUCH_LABEL}") && !table.includes("needsFollowUp"));
-  check("touch path: last contact is only ever set from an actual touch", (() => {
-    const fn = service.slice(service.indexOf("export async function logActivity"), service.indexOf("export async function changeFollowUp"));
-    return /lastContactAt: row\.lastContactAt/.test(fn);
-  })());
+  const internalNote = await touch(AGENT, null, { kind: "note", summary: "Internal note" });
+  check("internal notes are recorded without advancing last contact", internalNote.result.ok && internalNote.m.row.lastContactAt?.getTime() === LAST_CONTACT.getTime());
   check("service: the caller's name is fetched lazily, and only from the identity provider", /ctx\.viewerName\(\)/.test(service) && /currentUser\(\)/.test(http) && !/primaryEmailAddress|emailAddresses/.test(http));
 
   // Quick-create closing date.
@@ -536,6 +532,7 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
 
 const total = passed + failures.length;
 console.log(`\n${passed}/${total} follow-up checks passed`);
+await localScenarios.pg.close();
 if (failures.length > 0) {
   console.log("Failures:");
   for (const f of failures) console.log(`  - ${f}`);

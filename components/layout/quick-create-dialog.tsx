@@ -81,12 +81,14 @@ export function QuickCreateDialog() {
   const router = useRouter();
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const contactRequest = React.useRef<string | null>(null);
 
   const meta = kind ? TITLES[kind] : null;
 
   const close = () => {
     setKind(null);
     setError(null);
+    contactRequest.current = null;
   };
 
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -128,6 +130,7 @@ export function QuickCreateDialog() {
           throw new BirthdayInputError();
         }
         const created = await createLead({
+          requestId: contactRequest.current ?? (contactRequest.current = crypto.randomUUID()),
           name: get("name"),
           email: get("email"),
           phone: get("phone"),
@@ -170,7 +173,9 @@ export function QuickCreateDialog() {
           ? "Pick a real birthday date (month and day), or leave both empty."
           : missing
             ? SUBSYSTEM_COPY[missing].title
-            : e instanceof LeadsError && e.status === 400 && e.fields.includes("contactId")
+            : e instanceof LeadsError && e.code === "request_conflict"
+              ? "This request may already have created a contact. Check Contacts before starting a new entry."
+              : e instanceof LeadsError && e.status === 400 && e.fields.includes("contactId")
               ? "That contact is no longer eligible for a new transaction."
               : "Could not save. Check the fields and try again."
       );

@@ -15,6 +15,7 @@
  */
 import { CONTACT_STAGE_LABELS, isContactStage } from "./stages.ts";
 import { formatFollowUpDay } from "./follow-up.ts";
+import { compareHistory } from "./history.ts";
 
 export type TimelineType =
   | "call"
@@ -30,6 +31,7 @@ export type TimelineType =
   | "assignment"
   | "need"
   | "transaction"
+  | "contacted"
   | "created";
 
 export interface TimelineItem {
@@ -116,7 +118,7 @@ const TOUCH_TITLES: Record<string, { type: TimelineType; title: string }> = {
   sms: { type: "text", title: "Texted client" },
   meeting: { type: "meeting", title: "Met with client" },
   showing: { type: "showing", title: "Showing" },
-  note: { type: "note", title: "Added note" },
+  note: { type: "note", title: "Internal note recorded" },
   task: { type: "task", title: "Task" },
 };
 
@@ -158,7 +160,8 @@ export function toTimeline(input: {
       continue;
     }
 
-    const words = TOUCH_TITLES[a.kind];
+    const marked = meta.event === "contact_marked" || (a.kind === "note" && a.summary === "Marked contacted");
+    const words = marked ? { type: "contacted" as const, title: "Marked contacted" } : TOUCH_TITLES[a.kind];
     if (!words) continue;
     items.push({
       id: a.id,
@@ -189,7 +192,7 @@ export function toTimeline(input: {
     items.push({ id: e.id, ...words, at: e.createdAt.toISOString(), by: nameOf(e.actorUserId), rank: RANK_FOLLOW_UP });
   }
 
-  items.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : y.rank - x.rank));
+  items.sort((x, y) => compareHistory(x, y));
   return items.slice(0, input.limit ?? 100).map((entry) => {
     const { rank, ...rest } = entry;
     void rank;

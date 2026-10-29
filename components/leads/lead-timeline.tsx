@@ -8,7 +8,7 @@
  *
  * Collapsed by default to the latest five, so the drawer stays compact. "Show all
  * activity" is a disclosure button (`aria-expanded`, keyboard operable) and shows
- * the rest of what was already loaded — it does not fetch again.
+ * the rest of the loaded page. Older pages load explicitly on request.
  */
 import { useState } from "react";
 import {
@@ -32,8 +32,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { IconWell } from "@/components/ui/icon-well";
-import { getTimeline, type TimelineItem } from "@/lib/data/adapters/leads";
-import { useQuery } from "@/lib/data/hooks";
+import { getTimelinePage, type TimelineItem } from "@/lib/data/adapters/leads";
+import { useContactHistory } from "./use-contact-history";
 import { formatDate, formatRelative } from "@/lib/utils";
 
 const ICONS: Record<TimelineItem["type"], LucideIcon> = {
@@ -51,13 +51,15 @@ const ICONS: Record<TimelineItem["type"], LucideIcon> = {
   need: Target,
   transaction: Workflow,
   created: UserPlus,
+  contacted: UserCheck,
 };
 
 /** The drawer stays compact: the latest few, and the rest on request. */
 const COLLAPSED = 5;
 
-export function LeadTimeline({ leadId }: { leadId: string }) {
-  const { data, loading, error, refetch } = useQuery<TimelineItem[]>(() => getTimeline(leadId), [leadId]);
+export function LeadTimeline({ leadId, refreshKey = 0 }: { leadId: string; refreshKey?: number }) {
+  const { data: page, loading, error, refetch, loadOlder, loadingOlder, olderError, olderLoaded } = useContactHistory(leadId, getTimelinePage, refreshKey);
+  const data = page?.items;
   const [all, setAll] = useState(false);
   // Every contact opens collapsed.
   const [forLead, setForLead] = useState(leadId);
@@ -71,7 +73,7 @@ export function LeadTimeline({ leadId }: { leadId: string }) {
       <div className="flex items-center gap-2.5">
       <IconWell icon={History} />
       <h3 id="lead-activity-heading" className="text-[15px] font-semibold">
-        Activity{data && data.length > 0 ? ` (${data.length})` : ""}
+        Activity{data && data.length > 0 ? ` (${data.length}${page?.hasMore ? "+" : ""})` : ""}
       </h3>
       </div>
       {!data && loading ? (
@@ -118,9 +120,11 @@ export function LeadTimeline({ leadId }: { leadId: string }) {
               onClick={() => setAll((v) => !v)}
               className="mt-3 min-h-10 rounded-lg border border-input px-3 py-2 text-[13px] font-semibold transition-colors hover:bg-accent"
             >
-              {all ? "Show fewer" : "Show all activity"}
+              {all ? "Show fewer" : page?.hasMore ? "Show loaded activity" : "Show all activity"}
             </button>
           )}
+          {all && (page?.hasMore || olderLoaded) && <Button type="button" size="sm" variant="outline" className="ml-2 mt-3 aria-disabled:cursor-default aria-disabled:opacity-60" aria-disabled={loading || loadingOlder || !page?.hasMore} onClick={() => void loadOlder()}>{!page?.hasMore ? "All activity loaded" : loadingOlder ? "Loading older activity…" : olderError ? "Retry older activity" : "Load older activity"}</Button>}
+          {olderError && <p role="alert" className="mt-3 text-sm text-muted-foreground">Older activity could not be loaded. Your loaded activity is kept.</p>}
         </>
       )}
       {error && data && <p role="alert" className="mt-3 text-sm text-muted-foreground">Activity could not be refreshed. <button type="button" className="min-h-10 rounded-md px-1 font-semibold underline underline-offset-4" onClick={refetch}>Try again</button></p>}

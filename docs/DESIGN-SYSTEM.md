@@ -213,6 +213,19 @@ const { data, loading } = useQuery(
   scroll. Notes, activity, client needs, and linked deals retain their own clear
   sections and honest missing-data states. Follow-up reminders and logged touches
   stay distinct: completing a reminder does not claim the contact was reached.
+- Contact searches start at page one and keep typed names, emails and numbers out
+  of the URL. Refresh on business-day rollover and returning to the tab. Upcoming
+  reminders default to earliest first; sorting is available on phones.
+- Contact details and birthday editors save against their opening revision.
+  A newer saved version keeps the local draft and requires explicit review;
+  no untouched field is written back from an old form.
+- Structured Client Needs are authoritative once present. Only active needs
+  determine list intent, budget and areas. Legacy opportunities are a fallback
+  only when no structured needs exist. Every saved requirement has a readable
+  view, including historical needs and read-only roles.
+- Notes, activity and needs load older records with scoped, stable cursors.
+  Display loaded counts honestly; never label a partial page as a complete
+  history. Completing the final page keeps keyboard focus on its control.
 
 ## Copy checklist (every string you write)
 

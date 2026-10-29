@@ -27,6 +27,8 @@ import type { Db } from "../../db/client.ts";
 import { aiPreparedActions, auditEvents, contactActivities, contacts } from "../../db/schema.ts";
 import { aiActionsEnabled, contactsDatabaseEnabled, type EnvLike } from "../../flags.ts";
 import { commitStageChange, planStageChange } from "../../contacts/service.ts";
+import { nextContactUpdatedAt } from "../../contacts/reliability.ts";
+import { canWrite } from "../../contacts/domain.ts";
 import type { LeadStage } from "../../data/types.ts";
 import {
   isAiProposableStage,
@@ -253,6 +255,7 @@ export async function prepareFollowup(
   // absence of an error must never confirm that a record exists.
   if (!row) return { ok: false, reason: "not_found" };
 
+  if (!canWrite(actor, row)) return { ok: false, reason: "not_permitted" };
   const change = followUpChange(row, day.day);
   const entity = { type: "contact" as const, id: row.id, displayName: contactDisplayName(row) };
   const preview = {
@@ -572,6 +575,10 @@ export async function executePreparedAction(
     await release(db, actionId, "failed", "not_found");
     return { ok: false, reason: "not_found" };
   }
+  if (!canWrite(actor, contact)) {
+    await release(db, actionId, "failed", "not_permitted");
+    return { ok: false, reason: "not_permitted" };
+  }
 
   // Each action type depends on different fields, so each recomputes its own
   // fingerprint. A follow-up is invalidated by the follow-up moving; a stage
@@ -601,7 +608,7 @@ export async function executePreparedAction(
     await db.batch([
       db
         .update(contacts)
-        .set({ nextFollowUpAt: followUpAt, updatedByUserId: actor.userId, updatedAt: ctx.now })
+        .set({ nextFollowUpAt: followUpAt, updatedByUserId: actor.userId, updatedAt: nextContactUpdatedAt(ctx.now) })
         .where(eq(contacts.id, contact.id)),
       db.insert(contactActivities).values({
         contactId: contact.id,

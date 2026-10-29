@@ -277,3 +277,18 @@ export function summarizeNeed(need: NeedView): { headline: string; lines: string
   if (when.length) lines.push(when.join(" · "));
   return { headline: NEED_KIND_LABELS[need.kind], lines };
 }
+
+export interface NeedReadDetail {
+  label: string;
+  values: string[];
+}
+
+/** Requirements omitted from the compact line remain readable, even without edit permission. */
+export function needReadDetails(need: NeedView): NeedReadDetail[] {
+  const details: NeedReadDetail[] = [];
+  if (need.financing) details.push({ label: "Financing", values: [NEED_FINANCING_LABELS[need.financing]] });
+  if (need.mustHaves.length) details.push({ label: "Must-haves", values: [...need.mustHaves] });
+  if (need.avoid.length) details.push({ label: "Avoid", values: [...need.avoid] });
+  if (need.additionalRequirements?.trim()) details.push({ label: "Additional requirements", values: [need.additionalRequirements] });
+  return details;
+}

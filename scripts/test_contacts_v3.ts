@@ -613,7 +613,7 @@ function readMigrations(): string {
   const search = strip(src("lib/contacts/search.ts")) + strip(src("lib/search/service.ts"));
   check("privacy: notes, needs and birthdays are not in global search or ⌘K", !/contactNotes|contactNeeds|birthday/i.test(search));
   const listSql = strip(src("lib/contacts/list-sql.ts"));
-  check("privacy: the list filter and text search never touch notes, needs or birthday", !/contactNotes|contactNeeds|birthday/i.test(listSql));
+  check("privacy: list search may read scoped need intent/areas, never notes, birthdays or detailed requirements", listSql.includes("contactNeeds") && !/contactNotes|birthday|mustHaves|additionalRequirements|financing|\.avoid/i.test(listSql));
   const lead = strip(src("lib/contacts/domain.ts"));
   check("privacy: the list payload carries a birthday only as month/day on the row, never notes or needs", !/contactNotes|contactNeeds/.test(lead));
   const audit = strip(src("lib/contacts/notes-service.ts")) + strip(src("lib/contacts/needs-service.ts"));
@@ -646,7 +646,7 @@ function readMigrations(): string {
   const timelineUi = strip(src("components/leads/lead-timeline.tsx"));
   check("ui activity: collapsed to the latest five by default", timelineUi.includes("const COLLAPSED = 5") && timelineUi.includes("data.slice(0, COLLAPSED)"));
   check("ui activity: an accessible disclosure — aria-expanded, aria-controls, a real button", timelineUi.includes("aria-expanded={all}") && timelineUi.includes('aria-controls="lead-activity-list"') && timelineUi.includes("<button") && timelineUi.includes('type="button"') && timelineUi.includes('id="lead-activity-list"'));
-  check("ui activity: expanding shows what is already loaded — it does not fetch again", (timelineUi.match(/getTimeline\(/g) ?? []).length === 1 && timelineUi.includes("Show all activity") && timelineUi.includes("Show fewer"));
+  check("ui activity: local expansion and explicit older-history loading are separate", timelineUi.includes("onClick={() => setAll((v) => !v)}") && timelineUi.includes("Show all activity") && timelineUi.includes("Show fewer") && timelineUi.includes("Load older activity") && timelineUi.includes("onClick={() => void loadOlder()}"));
   check("ui activity: every contact opens collapsed", timelineUi.includes("setAll(false)") && timelineUi.includes("forLead !== leadId"));
 
   const bday = strip(src("components/leads/lead-birthday.tsx"));
@@ -679,7 +679,7 @@ function readMigrations(): string {
 
   // No M4, no M5.
   const journal = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] };
-  check("migrations: contact migrations remain additive alongside personal workspaces", journal.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces" && !/engagement/i.test(readMigrations()) && !/CREATE UNIQUE INDEX/i.test(readMigrations()));
+  check("migrations: contact migrations remain additive alongside personal workspaces", journal.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces,0015_contact_create_requests" && !/engagement/i.test(readMigrations()) && !/CREATE UNIQUE INDEX/i.test(readMigrations()));
   check("migrations: additive only — nothing dropped or altered destructively", !/DROP\s+(TABLE|COLUMN|TYPE)/i.test(readMigrations()) && !/ALTER TABLE "[a-z_]+" (DROP|ALTER COLUMN)/i.test(readMigrations()) && !/ALTER TYPE/i.test(readMigrations()));
   check("migrations: the contact stage enum is untouched", !/contact_stage/.test(readMigrations()));
   check("migrations: nothing backfills a legacy note or a legacy transaction", !/(^|-->\s*statement-breakpoint\s*)\s*(UPDATE|INSERT)\s/i.test(readMigrations()));
