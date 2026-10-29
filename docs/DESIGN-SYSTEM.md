@@ -293,25 +293,31 @@ const { data, loading } = useQuery(
   keeps its control present for focus. Retry returns to a stable review control;
   closing returns focus to the toolbar action that opened the dialog.
 
-## Manual contact property lists
+## Named property lists
 
-- Place Property list after Client needs in each contact file. Use the existing
-  glass icon well, neutral inset form, card borders and restrained status pills.
-- The primary flow is Add by MLS number → Find property → review → Add to list.
-  No recommendation scores or automatic matching. Keep a changed or failed
-  lookup input; invalidate its old preview. Clear only a confirmed successful
-  add, retain its success notice and focus the saved card after refresh.
-- Each saved card separates photo/status, factual price/specifications, MLS
-  identity, listing-office attribution and Checked time. Respect unavailable
-  media, withheld addresses and sample labels. Missing MLS data keeps a visible
-  reference; an outage never becomes a false empty list.
-- Keep View listing and Remove from list as sibling controls. Removal names the
-  contact's list in an inline confirmation and returns focus to the section
-  heading. Read-only users retain the cards and listing links without mutation
-  controls. Offer Refresh from MLS and honest paginated progress.
-- Wrap addresses, identifiers and attribution at 320px. Recover from clamped
-  last pages using only settled current-request answers; stale data must not
-  undo Next, and failed page requests must expose a retry action.
+- Contact files show a compact Property lists launcher with New list and View
+  lists. No property cards, MLS lookup form or list hydration runs in the contact
+  drawer. Both actions open the separate full-page workspace.
+- The workspace defaults to the user's own named lists. A contact filter may
+  narrow it. Cards show list name, count and optional contact, and remain
+  openable when empty. New list asks for a readable name in a compact dialog;
+  context decides whether it is personal or linked to the current contact.
+- Opening a list shows a wide responsive property grid, clear list identity,
+  back-to-lists navigation, Rename, Add property and Refresh from MLS. Use the
+  established neutral cards, glass icon wells and restrained status pills.
+- Add property is a bounded popup: MLS number → Find property → factual preview
+  → Add to list. Freeze the reviewed list and MLS identity while saving. A
+  confirmed save closes the popup and refreshes that list; uncertain saves keep
+  the draft for a safe retry. No automatic matching or outgoing messages.
+- Property cards preserve attribution, withheld addresses, truthful missing
+  media and source/sample labels. Missing or disconnected MLS records retain
+  their saved references. View listing and Remove from list are sibling
+  controls; removal clearly names only the currently opened list.
+- Gallery/detail pagination uses settled current-request answers and recovers
+  after final-page removals. At 320px, grids become one column, dialog bodies
+  scroll with visible actions, long names/identifiers wrap, and keyboard focus
+  returns to a stable opener or the saved item. Read-only roles have no mutation
+  controls; private-list existence is never disclosed through client scope.
 
 ## Copy checklist (every string you write)
 

@@ -14,8 +14,9 @@
  * `?open=<leadId>` deep-links into the drawer.
  */
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CopyCheck, FileUp, Plus, Users } from "lucide-react";
+import { CopyCheck, FileUp, FolderOpen, Plus, Users } from "lucide-react";
 import { PageIntro } from "@/components/common/page-intro";
 import { useSessionUser } from "@/components/layout/session-user";
 import { LeadDrawer } from "@/components/leads/lead-drawer";
@@ -210,6 +211,7 @@ function LeadsPageInner() {
     <div className="space-y-4">
       <PageIntro icon={Users} title="Contacts" description="Manage relationships, follow-ups, and activity." action={abilities.canWrite ? (
           <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          <Button asChild variant="outline" className="min-h-11 flex-1 sm:flex-none"><Link href="/property-lists"><FolderOpen aria-hidden />Property lists</Link></Button>
           <Button type="button" variant="outline" className="min-h-11 flex-1 sm:flex-none" onClick={() => setImportOpen(true)}><FileUp aria-hidden />Import contacts</Button>
           <Button type="button" variant="outline" className="min-h-11 flex-1 sm:flex-none" onClick={() => setDuplicatesOpen(true)}><CopyCheck aria-hidden />Review duplicates</Button>
           <Button type="button" className="min-h-11 w-full sm:w-auto" onClick={() => setQuickCreate("lead")}>
@@ -217,7 +219,7 @@ function LeadsPageInner() {
             New contact
           </Button>
           </div>
-        ) : undefined} />
+        ) : <Button asChild variant="outline" className="min-h-11"><Link href="/property-lists"><FolderOpen aria-hidden />Property lists</Link></Button>} />
 
       <LeadsSnapshotStrip
         snapshot={snapshot.data}

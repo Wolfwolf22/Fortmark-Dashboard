@@ -15,7 +15,7 @@ import { z } from "zod";
 import { LeadsError } from "./contact-errors.mjs";
 export { LeadsError } from "./contact-errors.mjs";
 export { previewContactImport, commitContactImport, getContactDuplicates, getContactMergeReview, mergeContacts } from "./import-merge-adapters.mjs";
-export { getContactProperties, lookupContactProperty, addContactProperty, removeContactProperty } from "./property-adapters.mjs";
+export { getContactProperties, lookupContactProperty, addContactProperty, removeContactProperty, getPropertyLists, createPropertyList, getPropertyList, renamePropertyList, getPropertyListProperties, lookupPropertyListProperty, addPropertyListProperty, removePropertyListProperty } from "./property-adapters.mjs";
 import { SAMPLE_ACTOR, getPreviewScenario, interactiveSamples, canWriteSample, readSampleContacts, readSampleContact, readSampleRawContacts, readSampleNeeds, readSampleNotes, readSampleTransactionIds, readSampleTimeline, replaceSampleContact, replaceSampleNeeds, appendSampleTimeline, nextSampleRevision } from "./sample-session.mjs";
 
 const copy = value => value === undefined ? undefined : structuredClone(value);
@@ -187,7 +187,7 @@ export async function updateNeed(id, needId, patch) {
   return { need: copy(need), changed: plan.changed };
 }
 export async function getLeadSource() { return "db"; }
-export async function getLead(id) { const contact = readSampleContact(id); return copy(contact ? remoteProjection(contact) : undefined); }
+export async function getLead(id) { const contact = readSampleContact(id); return copy(contact ? { ...remoteProjection(contact), ...(contact.id !== id ? { requestedContactId: id } : {}) } : undefined); }
 export async function getLeads(filters = {}, range) {
   const result = rows().filter(contact => {
     if (filters.stage?.length && !filters.stage.includes(contact.stage)) return false;

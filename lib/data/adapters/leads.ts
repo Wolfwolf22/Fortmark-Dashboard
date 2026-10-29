@@ -34,6 +34,7 @@ import type { ImportCommitInput, ImportPreview, ImportPreviewInput, ImportResult
 import type { DuplicateSuggestionsPage } from "../../contacts/duplicates.ts";
 import type { ContactMergeInput, ContactMergeResult, MergeReview } from "../../contacts/merge.ts";
 import type { AddPropertyInput, PropertyLookup, PropertyPage, PropertyView } from "../../contacts/properties.ts";
+import type { CreatePropertyListInput, PropertyListsPage, PropertyListView, RenamePropertyListInput } from "../../contacts/property-lists.ts";
 import { HISTORY_PAGE_SIZE, type HistoryPage } from "../../contacts/history.ts";
 
 export type { LeadFilters };
@@ -570,4 +571,44 @@ export async function removeContactProperty(id: string, propertyId: string): Pro
   try {
     return await request<{ removed: true }>(`/api/contacts/${encodeURIComponent(id)}/properties/${encodeURIComponent(propertyId)}`, { method: "DELETE" });
   } finally { bumpDataVersion(); }
+}
+
+// --- Named property lists, private to their creator --------------------------
+
+export async function getPropertyLists(query: { contactId?: string; page?: number } = {}): Promise<PropertyListsPage> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  const params = new URLSearchParams({ page: String(query.page ?? 1), ...(query.contactId ? { contactId: query.contactId } : {}) });
+  return request<PropertyListsPage>(`/api/property-lists?${params}`);
+}
+export async function createPropertyList(input: CreatePropertyListInput): Promise<PropertyListView> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try { return (await request<{ list: PropertyListView }>("/api/property-lists", { method: "POST", body: JSON.stringify(input) })).list; }
+  finally { bumpDataVersion(); }
+}
+export async function getPropertyList(id: string): Promise<PropertyListView> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  return (await request<{ list: PropertyListView }>(`/api/property-lists/${encodeURIComponent(id)}`)).list;
+}
+export async function renamePropertyList(id: string, input: RenamePropertyListInput): Promise<PropertyListView> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try { return (await request<{ list: PropertyListView }>(`/api/property-lists/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) })).list; }
+  finally { bumpDataVersion(); }
+}
+export async function getPropertyListProperties(id: string, page = 1): Promise<PropertyPage> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  return request<PropertyPage>(`/api/property-lists/${encodeURIComponent(id)}/properties?${new URLSearchParams({ page: String(page) })}`);
+}
+export async function lookupPropertyListProperty(id: string, mlsNumber: string): Promise<PropertyLookup> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  return request<PropertyLookup>(`/api/property-lists/${encodeURIComponent(id)}/lookup`, { method: "POST", body: JSON.stringify({ mlsNumber }) }, { read: true });
+}
+export async function addPropertyListProperty(id: string, input: AddPropertyInput): Promise<PropertyView> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try { return (await request<{ property: PropertyView }>(`/api/property-lists/${encodeURIComponent(id)}/properties`, { method: "POST", body: JSON.stringify(input) })).property; }
+  finally { bumpDataVersion(); }
+}
+export async function removePropertyListProperty(id: string, propertyId: string): Promise<{ removed: true }> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try { return await request<{ removed: true }>(`/api/property-lists/${encodeURIComponent(id)}/properties/${encodeURIComponent(propertyId)}`, { method: "DELETE" }); }
+  finally { bumpDataVersion(); }
 }

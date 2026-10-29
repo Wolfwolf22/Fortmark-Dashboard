@@ -2,7 +2,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, contacts, transactionParties, transactions, type ContactRow } from "../db/schema.ts";
+import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, propertyLists, contacts, transactionParties, transactions, type ContactRow } from "../db/schema.ts";
 import { visibleTo as visibleTransactions } from "../transactions/service.ts";
 import { canWrite, displayName } from "./domain.ts";
 import { agentNames, getContact, type Ctx, type ServiceFailure, type ServiceResult } from "./service.ts";
@@ -29,6 +29,7 @@ function fingerprintSql(ctx: Ctx, id: string): SQL<string> {
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from contact_needs n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from contact_activities n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from contact_opportunities n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
+    coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from property_lists n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from contact_properties n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from transaction_parties n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from audit_events n where n.safe_metadata->>'contactId' in (${contactFamilyIds(ctx.actor, id)})),'[]'::jsonb)::text
@@ -45,12 +46,16 @@ async function facts(ctx: Ctx, id: string) {
   const linked = await ctx.db.select({ id: transactions.id }).from(transactionParties).innerJoin(transactions, eq(transactionParties.transactionId, transactions.id))
     .where(and(eq(transactionParties.contactId, id), visibleTransactions(ctx.actor)));
   const transactionIds = [...new Set(linked.map(row => row.id))];
-  const saved = await ctx.db.select({ dataset: contactProperties.dataset, listingId: contactProperties.listingId }).from(contactProperties)
-    .where(and(eq(contactProperties.contactId, id), isNull(contactProperties.removedAt)));
-  const propertyKeys = saved.map(row => JSON.stringify([row.dataset, row.listingId]));
+  // List membership remains private even when an admin can see the linked contact.
+  const visibleLists = and(eq(propertyLists.contactId, id), eq(propertyLists.ownerUserId, ctx.actor.userId), eq(propertyLists.brokerageKey, ctx.actor.brokerageKey), isNull(propertyLists.archivedAt));
+  const lists = await ctx.db.select({ id: propertyLists.id }).from(propertyLists).where(visibleLists);
+  const saved = await ctx.db.select({ listId: contactProperties.listId, dataset: contactProperties.dataset, listingId: contactProperties.listingId }).from(contactProperties)
+    .innerJoin(propertyLists, eq(contactProperties.listId, propertyLists.id))
+    .where(and(eq(contactProperties.contactId, id), isNull(contactProperties.removedAt), visibleLists));
+  const propertyKeys = saved.map(row => JSON.stringify([row.listId, row.dataset, row.listingId]));
   const row = result.rows[0];
   return { historyFingerprint: row.fingerprint, transactionIds, propertyKeys,
-    counts: { notes: Number(row.notes), needs: Number(row.needs), activities: Number(row.activities), opportunities: Number(row.opportunities), transactions: transactionIds.length, properties: propertyKeys.length } as MergeCounts };
+    counts: { notes: Number(row.notes), needs: Number(row.needs), activities: Number(row.activities), opportunities: Number(row.opportunities), transactions: transactionIds.length, properties: propertyKeys.length, propertyLists: lists.length } as MergeCounts };
 }
 
 async function rowsForMerge(ctx: Ctx, primaryId: string, duplicateId: string): Promise<ServiceResult<{ primary: ContactRow; duplicate: ContactRow }>> {
@@ -122,6 +127,7 @@ export async function mergeContacts(ctx: Ctx, input: unknown, now = new Date()):
   const receiptId = randomUUID();
   const writes: BatchWrite[] = [
     ctx.db.select({ id: contacts.id }).from(contacts).where(and(inArray(contacts.id, ids), visibleTo(ctx.actor))).orderBy(contacts.id).for("update"),
+    ctx.db.select({ id: propertyLists.id }).from(propertyLists).where(inArray(propertyLists.contactId, ids)).orderBy(propertyLists.id).for("update"),
     ctx.db.select({ id: contactNotes.id }).from(contactNotes).where(inArray(contactNotes.contactId, ids)).orderBy(contactNotes.id).for("update"),
     ctx.db.select({ id: contactNeeds.id }).from(contactNeeds).where(inArray(contactNeeds.contactId, ids)).orderBy(contactNeeds.id).for("update"),
     ctx.db.select({ id: contactActivities.id }).from(contactActivities).where(inArray(contactActivities.contactId, ids)).orderBy(contactActivities.id).for("update"),
@@ -137,9 +143,9 @@ export async function mergeContacts(ctx: Ctx, input: unknown, now = new Date()):
     ctx.db.update(contactActivities).set({ contactId: d.primaryId }).where(eq(contactActivities.contactId, d.duplicateId)),
     ctx.db.update(contactOpportunities).set({ contactId: d.primaryId }).where(eq(contactOpportunities.contactId, d.duplicateId)),
     ctx.db.update(transactionParties).set({ contactId: d.primaryId }).where(eq(transactionParties.contactId, d.duplicateId)),
-    // Keep one visible card for a shared property; retain both original association rows.
-    ctx.db.update(contactProperties).set({ removedAt: now }).where(and(eq(contactProperties.contactId, d.duplicateId), isNull(contactProperties.removedAt),
-      sql`exists(select 1 from contact_properties keeper where keeper.contact_id=${d.primaryId}::uuid and keeper.removed_at is null and keeper.dataset=${contactProperties.dataset} and keeper.listing_id=${contactProperties.listingId})`)),
+    // Preserve independently named lists, including empty and private lists. A property
+    // saved to two different lists must remain a member of both after a contact merge.
+    ctx.db.update(propertyLists).set({ contactId: d.primaryId }).where(eq(propertyLists.contactId, d.duplicateId)),
     ctx.db.update(contactProperties).set({ contactId: d.primaryId }).where(eq(contactProperties.contactId, d.duplicateId)),
   ];
   const keep = (value: string) => value || null;

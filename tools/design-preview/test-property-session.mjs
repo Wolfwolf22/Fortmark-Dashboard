@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import * as api from "./contact-adapters.mjs";
 import { sampleContactProperties, samplePropertyCatalog, SAMPLE_PROPERTY_DATASET } from "./property-fixtures.mjs";
 import { DUPLICATE_PRIMARY_ID as primaryId, DUPLICATE_SOURCE_ID as duplicateId } from "./import-merge-fixtures.mjs";
-import { readSamplePropertyRows, readSampleProperties } from "./sample-session.mjs";
+import { readSamplePropertyRows, readSampleProperties, readSampleContactListRows } from "./sample-session.mjs";
 import { installPreviewTransport, getPreviewMetrics } from "./fixtures.mjs";
 import { useDataVersion } from "../../lib/data/store.ts";
 
@@ -104,7 +104,7 @@ assert.equal((await api.getContactProperties(id)).items.find(item => item.mlsNum
 
 // Both added and soft-removed property children invalidate an old merge review.
 let review = await api.getContactMergeReview(primaryId, duplicateId);
-assert.equal(review.primary.counts.properties, 1); assert.equal(review.duplicate.counts.properties, 2); assert.equal(review.preservedCounts.properties, 2);
+assert.equal(review.primary.counts.properties, 1); assert.equal(review.duplicate.counts.properties, 2); assert.equal(review.preservedCounts.properties, 3);
 let stale = command(review);
 await api.addContactProperty(duplicateId, { mlsNumber: "SAMPLE-003", expectedListingId: "sample-condo", expectedDataset: SAMPLE_PROPERTY_DATASET });
 assert.equal((await api.getLead(duplicateId)).updatedAt, review.duplicate.updatedAt);
@@ -116,24 +116,24 @@ await denied(() => api.mergeContacts(stale), 409);
 await api.addContactProperty(duplicateId, { mlsNumber: "SAMPLE-002", expectedListingId: "sample-courtyard", expectedDataset: SAMPLE_PROPERTY_DATASET }); groups++;
 
 review = await api.getContactMergeReview(primaryId, duplicateId);
-assert.equal(review.preservedCounts.properties, 3);
+assert.equal(review.preservedCounts.properties, 4);
 const allRows = [...readSamplePropertyRows(primaryId), ...readSamplePropertyRows(duplicateId)];
 const sourceDuplicate = readSampleProperties(duplicateId).find(item => item.mlsNumber === "SAMPLE-001");
 const mergeCommand = command(review), merged = await api.mergeContacts(mergeCommand);
-assert.equal(merged.preservedCounts.properties, 3);
-const mergedRows = readSamplePropertyRows(primaryId);
+assert.equal(merged.preservedCounts.properties, 4);
+const mergedRows = readSampleContactListRows(primaryId);
 assert.deepEqual(new Set(mergedRows.map(item => item.id)), new Set(allRows.map(item => item.id)));
 assert(mergedRows.every(item => item.contactId === primaryId));
-assert(mergedRows.find(item => item.id === sourceDuplicate.id).removedAt);
+assert.equal(mergedRows.find(item => item.id === sourceDuplicate.id).removedAt, null);
 assert(mergedRows.find(item => item.id === courtyard.id).removedAt);
 assert.equal(readSamplePropertyRows(duplicateId).length, 0);
-assert.equal((await api.getContactProperties(primaryId)).total, 3);
-assert.equal((await api.getContactProperties(duplicateId)).total, 3);
+assert.equal((await api.getContactProperties(primaryId)).total, 1);
+assert.equal((await api.getContactProperties(duplicateId)).total, 1);
 assert.equal((await api.getLead(duplicateId)).id, primaryId);
 await denied(() => api.addContactProperty(duplicateId, { mlsNumber: "SAMPLE-004", expectedListingId: "sample-empty-photo", expectedDataset: SAMPLE_PROPERTY_DATASET }), 409, "merged_contact");
 const replaySnapshot = JSON.stringify(mergedRows);
 await api.mergeContacts(mergeCommand);
-assert.equal(JSON.stringify(readSamplePropertyRows(primaryId)), replaySnapshot); groups++;
+assert.equal(JSON.stringify(readSampleContactListRows(primaryId)), replaySnapshot); groups++;
 
 installPreviewTransport();
 assert.equal((await window.fetch("/api/contacts/x/properties", { method: "POST" })).status, 403);
@@ -150,4 +150,4 @@ assert.equal(freshSession.readSampleProperties(id).length, 3);
 assert(freshSession.readSamplePropertyRows(id).every(item => item.removedAt === null));
 assert.equal(JSON.stringify({ sampleContactProperties, samplePropertyCatalog }), baseline); groups++;
 
-console.log(`PASS: ${groups} isolated property-list groups (manual exact lookup, retained feed failures, read-only guards, idempotent add/remove, paging, fresh identity, merge fingerprints/dedup/history, no touch/activity and reset).`);
+console.log(`PASS: ${groups} isolated property-list groups (manual exact lookup, retained feed failures, read-only guards, idempotent add/remove, paging, fresh identity, merge fingerprints/list retention/history, no touch/activity and reset).`);

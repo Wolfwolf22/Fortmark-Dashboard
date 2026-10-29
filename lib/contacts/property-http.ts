@@ -7,6 +7,7 @@ import { actorOrResponse, contactsSource, failure, NO_STORE } from "./http.ts";
 import { PROPERTY_BODY_BYTES } from "./properties.ts";
 import type { PropertyFailure } from "./properties-service.ts";
 import type { Ctx } from "./service.ts";
+import { loadPropertyList } from "./property-lists-service.ts";
 
 /** Settle the parent scope before even creating the provider, which may resolve feed identity. */
 export async function propertyCallerContext(contactId: string, write: boolean): Promise<{ ok: true; ctx: Ctx; clerkUserId: string } | { ok: false; response: NextResponse }> {
@@ -18,6 +19,19 @@ export async function propertyCallerContext(contactId: string, write: boolean): 
   const parent = await loadContact(actor.ctx, contactId);
   if (!parent.ok) return { ok: false, response: failure(parent.reason) };
   if (write && !parent.writable) return { ok: false, response: failure("forbidden") };
+  return { ok: true, ctx: actor.ctx, clerkUserId: caller.clerkUserId };
+}
+
+/** Named lists are owner-private, even when the contact would be admin-visible. */
+export async function propertyListCallerContext(listId?: string, write = false): Promise<{ ok: true; ctx: Ctx; clerkUserId: string } | { ok: false; response: NextResponse }> {
+  const caller = await requireCaller(); if (!caller.ok) return caller;
+  if (contactsSource() === "sample") return { ok: false, response: failure("not_found") };
+  const actor = await actorOrResponse(caller.clerkUserId); if (!actor.ok) return actor;
+  if (write && actor.ctx.actor.role === "member") return { ok: false, response: failure("forbidden") };
+  if (listId !== undefined) {
+    const list = await loadPropertyList(actor.ctx, listId); if (!list.ok) return { ok: false, response: propertyFailure(list.reason) };
+    if (write && !list.value.writable) return { ok: false, response: failure("forbidden") };
+  }
   return { ok: true, ctx: actor.ctx, clerkUserId: caller.clerkUserId };
 }
 
@@ -42,6 +56,7 @@ export async function readPropertyBody(request: Request): Promise<{ ok: true; bo
 
 export function propertyFailure(reason: PropertyFailure): NextResponse {
   switch (reason) {
+    case "invalid_property_list": return NextResponse.json({ error: "invalid_property_list", fields: ["name"] }, { status: 400, headers: NO_STORE });
     case "invalid_property": return NextResponse.json({ error: "invalid_property", fields: ["mlsNumber"] }, { status: 400, headers: NO_STORE });
     case "listing_not_found": return NextResponse.json({ error: "listing_not_found" }, { status: 404, headers: NO_STORE });
     case "ambiguous": case "listing_changed": return NextResponse.json({ error: reason }, { status: 409, headers: NO_STORE });

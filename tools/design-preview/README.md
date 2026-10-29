@@ -257,41 +257,55 @@ no-op/edit/reschedule, complete with and without successor, cancellation, exited
 relationships, task history text, Home/list agreement, denied legacy/transport
 writes, unchanged drafts on conflict and immutable base fixtures.
 
-## Manual contact property lists
+## Named private property lists
 
-The actual contact drawer now renders the production Property list component.
-Open `sample-due-today` to see a saved available **SAMPLE-001** plus retained
-**SAMPLE-MISSING-901** and **SAMPLE-OFFLINE-902** references. A missing or
-unavailable read keeps the saved IDs and number; it never silently removes a row.
-The banner suggests **SAMPLE-002** and **SAMPLE-003** for an exact manual lookup,
-review and add. All listing DTOs are explicitly synthetic and use local
-illustrations. No fictional input ever reaches an MLS provider.
+The actual `/property-lists` page renders the production list gallery, workspace,
+create/rename dialogs and small Add property popup. The contact drawer contains
+only New list/View lists launch links. Lists are personal to the fixture owner;
+linking a contact is optional and never grants another person access.
 
-Useful routes:
+`sample-due-today` has **Waterfront options** and **Investment research**. The
+fixture actor also has **Personal market research** and empty **Weekend
+opportunities** lists with no contact association. A colleague-owned personal
+list is deliberately excluded even though the fixture actor is an Admin.
 
-- `/preview?view=%2Fcontacts%3Fopen%3Dsample-due-today&scenario=interactive`
-- `/preview?view=%2Fcontacts%3Fopen%3Dsample-long-history&scenario=interactive`
-- `/responsive?width=320&height=568&view=/contacts?open=sample-due-today&scenario=interactive`
+Useful routes, with `scenario=interactive` for local changes:
 
-`sample-long-history` has thirteen unique references for 12+1 paging. Extra
-fictional listings also resolve through the normal listing-detail component.
-Unknown **SAMPLE-999** gives a no-result response. Lookup of
-**SAMPLE-OFFLINE-902** simulates an unavailable provider, while
-**SAMPLE-NOT-CONFIGURED-903** simulates an unconfigured feed.
+- `/preview?view=%2Fproperty-lists&scenario=interactive`
+- `/preview?view=%2Fproperty-lists%3FcontactId%3Dsample-due-today&scenario=interactive`
+- `/preview?view=%2Fproperty-lists%3FcontactId%3Dsample-due-today%26new%3D1&scenario=interactive`
+- `/responsive?width=320&height=568&view=%2Fproperty-lists&scenario=interactive`
 
-The isolated adapters reuse the production normalization, strict lookup/add
-schemas and paging rules. A save checks the freshly resolved listing identity,
-so an obsolete reviewed ID is refused. Repeated add returns the active reference;
-remove is soft and repeatable; re-adding creates a new ID with the removed row
-retained. Saves change neither the contact revision nor touch/stage/history.
-Records/conflict modes reject writes. Reload/Reset discards all changes.
+Seeded list IDs begin `83000000-0000-4000-8000-` and end `000000000001`
+(Waterfront), `000000000002` (Investment), `000000000003` (personal research),
+`000000000004` (empty personal) and `000000000006` (long history). The long-history
+list has thirteen references for 12+1 property-card paging. The existing contact
+API targets one original-contact default list for compatibility.
 
-The Morgan River duplicate pair shares SAMPLE-001 and has a distinct SAMPLE-002.
-Merge review counts unique active dataset/listing identities. A merge reparents
-every row, including removed rows, and soft-removes the duplicate visible saved
-reference. Complete property row data participates in the child fingerprint,
-so an add or removal after review requires a fresh merge review.
+Waterfront contains available **SAMPLE-001** plus retained
+**SAMPLE-MISSING-901** and **SAMPLE-OFFLINE-902** references. The banner suggests
+**SAMPLE-002** and **SAMPLE-003** for manual lookup/review/add in the popup.
+Unknown **SAMPLE-999** gives a no-result response;
+**SAMPLE-NOT-CONFIGURED-903** simulates an unconfigured feed. All listing DTOs are
+explicitly synthetic, use local illustrations and resolve through the normal
+listing-detail component. No fictional input reaches an MLS provider.
+
+The adapters reuse production name/lookup/add/rename schemas and paging rules.
+Create receipts prevent duplicate lists on retries. Rename compares its reviewed
+revision, and membership changes advance the list revision. Add binds the freshly
+resolved dataset and listing ID. Repeated add within one list returns its active
+reference; the same property can be saved independently in another list. Removal
+is soft and repeatable; re-add creates a new ID while preserving the old row.
+No list action invents a contact touch or contact activity.
+
+Contact merge retains every named list ID/name and membership, including removed
+references. It changes the optional contact association and keeps same-property
+entries in separate lists. List metadata and all membership rows participate in
+the merge fingerprint; creating an empty list or changing a membership after
+review requires a fresh merge review. Owner-private counts exclude others' lists.
+Records/conflict scenarios reject writes; reload/Reset clears all sample changes.
 
 ```sh
 node --experimental-strip-types --no-warnings tools/design-preview/test-property-session.mjs
+node --experimental-strip-types --no-warnings tools/design-preview/test-named-property-list-session.mjs
 ```

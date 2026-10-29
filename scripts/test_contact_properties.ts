@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createLocalContactDb } from "./helpers/contact-test-db.ts";
-import { auditEvents, contactProperties, contacts, dashboardUsers } from "../lib/db/schema.ts";
+import { auditEvents, contactProperties, contacts, dashboardUsers, propertyLists } from "../lib/db/schema.ts";
 import type { Db } from "../lib/db/client.ts";
 import type { Listing } from "../lib/data/types.ts";
 import type { Ctx } from "../lib/contacts/service.ts";
 import { addContactProperty, getContactProperties, lookupContactProperty, removeContactProperty } from "../lib/contacts/properties-service.ts";
+import { getContactDefaultPropertyList } from "../lib/contacts/property-lists-service.ts";
 import { addPropertyInputSchema, propertyLookupInputSchema, normalizePropertyMlsNumber, readPropertyQuery, type PropertyMlsProvider, type PropertyResolution } from "../lib/contacts/properties.ts";
 
 let passed = 0;
@@ -41,7 +42,7 @@ const other = { ...actor, userId: randomUUID() }, admin = { ...actor, userId: ra
 const ctx: Ctx = { actor, db }, reader: Ctx = { actor: { ...actor, role: "member" }, db };
 const contactId = randomUUID(), secondId = randomUUID(), hiddenId = randomUUID(), anotherBookId = randomUUID();
 async function count() { return (await db.select().from(contactProperties)).length; }
-async function auditCount() { return (await db.select().from(auditEvents)).length; }
+async function auditCount() { return (await db.select().from(auditEvents)).filter(row => row.safeMetadata?.propertyId).length; }
 function beforeBatch(work: () => Promise<void>): Db {
   let pending = true;
   return new Proxy(db, { get(target, property) {
@@ -90,14 +91,18 @@ try {
   const added = await addContactProperty(ctx, contactId, { mlsNumber: "a000123", expectedDataset: "synthetic_mls", expectedListingId: "listing-1" }, provider, now);
   check("reviewed add persists a reference and returns fresh listing", added.ok && added.value.syncStatus === "available" && added.value.listing?.listPrice === 795_000 && await count() === 1 && await auditCount() === 1);
   const [stored] = await db.select().from(contactProperties);
-  check("storage contains no MLS display/media snapshot", Object.keys(stored).sort().join() === "contactId,createdAt,createdByUserId,dataset,id,listingId,mlsNumber,removedAt" && !JSON.stringify(stored).includes("Synthetic property"));
+  check("storage contains no MLS display/media snapshot", Object.keys(stored).sort().join() === "contactId,createdAt,createdByUserId,dataset,id,listId,listingId,mlsNumber,removedAt" && !JSON.stringify(stored).includes("Synthetic property"));
   const [parent] = await db.select().from(contacts).where(eq(contacts.id, contactId));
   check("saving property does not invent contact or change parent revision", parent.updatedAt.toISOString() === now.toISOString() && parent.lastContactAt === null);
+  const beforeAdminRead = getCalls;
+  const adminCompat = await getContactProperties({ actor: admin, db }, contactId, provider);
+  check("admin contact visibility does not expose owner's default list", adminCompat.ok && adminCompat.value.total === 0 && getCalls === beforeAdminRead);
+  check("admin cannot remove another owner's default membership through compatibility", !(await removeContactProperty({ actor: admin, db }, contactId, added.value.id, now)).ok);
   const again = await addContactProperty(ctx, contactId, { mlsNumber: "A000123", expectedDataset: "synthetic_mls", expectedListingId: "listing-1" }, provider, now);
   check("duplicate live add is idempotent without duplicate audit", again.ok && again.value.id === added.value.id && await count() === 1 && await auditCount() === 1);
   check("subsequent lookup reports already saved", (await lookupContactProperty(ctx, contactId, { mlsNumber: "A000123" }, provider) as { ok: true; value: { alreadySaved: boolean } }).value.alreadySaved);
-  const audit = (await db.select().from(auditEvents))[0];
-  check("audit contains IDs and action only", Object.keys(audit.safeMetadata!).sort().join() === "action,contactId,propertyId" && audit.safeMetadata?.action === "add" && !JSON.stringify(audit.safeMetadata).includes("A000123"));
+  const audit = (await db.select().from(auditEvents)).find(row => row.safeMetadata?.propertyId)!;
+  check("audit contains IDs and action only", Object.keys(audit.safeMetadata!).sort().join() === "action,contactId,listId,propertyId" && audit.safeMetadata?.action === "add" && !JSON.stringify(audit.safeMetadata).includes("A000123"));
 
   getResult = resolved("listing-1", "A000123", 765_000);
   const beforeListLookup = lookupCalls;
@@ -124,7 +129,9 @@ try {
   check("re-add makes a new live row while preserving removed history", readded.ok && readded.value.id !== added.value.id && await count() === 2);
 
   // Pagination and fixed provider fan-out; equal timestamps sort by stable IDs.
-  await db.insert(contactProperties).values(Array.from({ length: 25 }, (_, i) => ({ id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`, contactId: secondId, dataset: "synthetic_mls", listingId: `page-key-${i}`, mlsNumber: `P${i}`, createdAt: now, createdByUserId: actor.userId })));
+  const secondList = await getContactDefaultPropertyList(ctx, secondId, true, now); check("second compatibility default is explicit", secondList.ok && secondList.value);
+  const secondListId = secondList.value.row.id;
+  await db.insert(contactProperties).values(Array.from({ length: 25 }, (_, i) => ({ id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`, listId: secondListId, contactId: secondId, dataset: "synthetic_mls", listingId: `page-key-${i}`, mlsNumber: `P${i}`, createdAt: now, createdByUserId: actor.userId })));
   let inFlight = 0, maxFlight = 0, pageGets = 0;
   const pageProvider: PropertyMlsProvider = { lookup: async () => { throw new Error("List must not search"); }, get: async (dataset, id, number) => {
     pageGets++; inFlight++; maxFlight = Math.max(maxFlight, inFlight);
@@ -159,21 +166,24 @@ try {
   check("a merge during lookup causes conflict instead of adding to stale parent", !raced.ok && raced.reason === "conflict" && !(await db.select().from(contactProperties)).some(row => row.listingId === "race-key"));
   const raceRemoveId = randomUUID(), racePropertyId = randomUUID();
   await db.insert(contacts).values({ id: raceRemoveId, assignedAgentUserId: actor.userId, firstName: "Race remove original" });
-  await db.insert(contactProperties).values({ id: racePropertyId, contactId: raceRemoveId, dataset: "synthetic_mls", listingId: "race-remove", mlsNumber: "R444" });
+  const raceList = await getContactDefaultPropertyList(ctx, raceRemoveId, true, now); check("race compatibility default is explicit", raceList.ok && raceList.value);
+  const raceListId = raceList.value.row.id;
+  await db.insert(contactProperties).values({ id: racePropertyId, listId: raceListId, contactId: raceRemoveId, dataset: "synthetic_mls", listingId: "race-remove", mlsNumber: "R444" });
   const raceDb = beforeBatch(async () => {
+    await db.update(propertyLists).set({ contactId }).where(eq(propertyLists.id, raceListId));
     await db.update(contactProperties).set({ contactId }).where(eq(contactProperties.id, racePropertyId));
     await db.update(contacts).set({ stage: "archived", mergedIntoContactId: contactId, mergedAt: now }).where(eq(contacts.id, raceRemoveId));
   });
   const racedRemove = await removeContactProperty({ actor, db: raceDb }, raceRemoveId, racePropertyId, now);
   check("a merge before remove cannot falsely report removing the canonical row", !racedRemove.ok && racedRemove.reason === "conflict" && (await db.select().from(contactProperties).where(eq(contactProperties.id, racePropertyId)))[0].removedAt === null);
   const lateId = randomUUID();
-  await db.insert(contactProperties).values({ id: lateId, contactId: raceId, dataset: "synthetic_mls", listingId: "late-key", mlsNumber: "L123" });
+  await db.insert(contactProperties).values({ id: lateId, listId: added.value.listId, contactId: raceId, dataset: "synthetic_mls", listingId: "late-key", mlsNumber: "L123" });
   check("canonical trigger keeps late property reference on retained contact", (await db.select().from(contactProperties).where(eq(contactProperties.id, lateId)))[0].contactId === contactId);
   let uniqueRejected = false;
-  try { await db.insert(contactProperties).values({ contactId, dataset: "synthetic_mls", listingId: "listing-1", mlsNumber: "A000123" }); } catch { uniqueRejected = true; }
+  try { await db.insert(contactProperties).values({ listId: added.value.listId, contactId, dataset: "synthetic_mls", listingId: "listing-1", mlsNumber: "A000123" }); } catch { uniqueRejected = true; }
   check("database prevents a second live contact+dataset+key reference", uniqueRejected);
   for (const bad of [{ dataset: "bad dataset", listingId: "valid", mlsNumber: "A123" }, { dataset: "synthetic", listingId: " ", mlsNumber: "A123" }, { dataset: "synthetic", listingId: "valid", mlsNumber: "abc" }]) {
-    let rejected = false; try { await db.insert(contactProperties).values({ contactId, ...bad }); } catch { rejected = true; }
+    let rejected = false; try { await db.insert(contactProperties).values({ listId: added.value.listId, contactId, ...bad }); } catch { rejected = true; }
     check("database checks preserve the normalized reference shape", rejected);
   }
   check("all active row counts remain visible only through scoped parent", !(await getContactProperties({ actor: other, db }, contactId, pageProvider)).ok);

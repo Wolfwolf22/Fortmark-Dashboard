@@ -289,6 +289,7 @@ export const RELEASE_1_AUDIT_EVENTS = [
   "contact_need_updated",
   "contact_need_status_changed",
   "contact_transaction_linked",
+  "property_list_updated",
   // Core V1 — brokerage identity. Field NAMES only in metadata, never values.
   "brokerage_identity_created",
   "brokerage_identity_updated",
@@ -1116,10 +1117,34 @@ export const contactMergeRequests = pgTable("contact_merge_requests", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => [uniqueIndex("contact_merge_requests_actor_request_idx").on(t.actorUserId, t.requestId), check("contact_merge_requests_hash_check", sql`length(${t.payloadHash}) = 64`)]);
 
+/** Private named collections; their original compatibility anchor survives contact merges. */
+export const propertyLists = pgTable("property_lists", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerUserId: uuid("owner_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  brokerageKey: text("brokerage_key").notNull(),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createRequestId: uuid("create_request_id"),
+  createPayloadHash: text("create_payload_hash"),
+  defaultForContactId: uuid("default_for_contact_id"),
+}, t => [
+  index("property_lists_owner_updated_idx").on(t.ownerUserId, t.updatedAt.desc(), t.id.desc()),
+  index("property_lists_contact_idx").on(t.contactId),
+  uniqueIndex("property_lists_owner_request_idx").on(t.ownerUserId, t.createRequestId).where(sql`${t.createRequestId} is not null`),
+  uniqueIndex("property_lists_owner_default_idx").on(t.ownerUserId, t.defaultForContactId).where(sql`${t.defaultForContactId} is not null`),
+  check("property_lists_name_check", sql`char_length(${t.name}) between 1 and 120 and btrim(${t.name}) = ${t.name} and ${t.name} !~ '[[:cntrl:]]'`),
+  check("property_lists_request_check", sql`(${t.createRequestId} is null and ${t.createPayloadHash} is null) or (${t.createRequestId} is not null and ${t.createPayloadHash} is not null and ${t.createPayloadHash} ~ '^[0-9a-f]{64}$')`),
+]);
+export type PropertyListRow = typeof propertyLists.$inferSelect;
+
 /** Saved MLS references only. Display fields/media are hydrated afresh, never copied into CRM storage. */
 export const contactProperties = pgTable("contact_properties", {
   id: uuid("id").primaryKey().defaultRandom(),
-  contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+  listId: uuid("list_id").notNull().references(() => propertyLists.id, { onDelete: "restrict" }),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
   dataset: text("dataset").notNull(),
   listingId: text("listing_id").notNull(),
   mlsNumber: text("mls_number").notNull(),
@@ -1128,7 +1153,8 @@ export const contactProperties = pgTable("contact_properties", {
   removedAt: timestamp("removed_at", { withTimezone: true }),
 }, t => [
   index("contact_properties_contact_created_idx").on(t.contactId, t.createdAt.desc(), t.id.desc()),
-  uniqueIndex("contact_properties_live_listing_idx").on(t.contactId, t.dataset, t.listingId).where(sql`${t.removedAt} is null`),
+  index("contact_properties_list_created_idx").on(t.listId, t.createdAt.desc(), t.id.desc()),
+  uniqueIndex("contact_properties_live_listing_idx").on(t.listId, t.dataset, t.listingId).where(sql`${t.removedAt} is null`),
   check("contact_properties_dataset_check", sql`${t.dataset} ~ '^[A-Za-z0-9_-]{1,80}$'`),
   check("contact_properties_listing_id_check", sql`char_length(${t.listingId}) between 1 and 256 and btrim(${t.listingId}) = ${t.listingId} and ${t.listingId} !~ '[[:cntrl:]]'`),
   check("contact_properties_mls_number_check", sql`${t.mlsNumber} ~ '^[A-Z0-9][A-Z0-9-]{0,39}$' and ${t.mlsNumber} ~ '[0-9]'`),

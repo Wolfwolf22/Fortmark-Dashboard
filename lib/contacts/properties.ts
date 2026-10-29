@@ -42,7 +42,8 @@ export interface PropertyMlsProvider {
 }
 export interface PropertyView {
   id: string;
-  contactId: string;
+  listId: string;
+  contactId: string | null;
   mlsNumber: string;
   listingId: string;
   addedAt: string;

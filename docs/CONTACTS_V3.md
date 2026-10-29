@@ -5,9 +5,9 @@ Branch: `claude/dashboard-status-yir55p` · Production baseline: `74ff9d4` (Lead
 Schema record: [`CONTACTS_V3_SCHEMA_PROPOSAL.md`](./CONTACTS_V3_SCHEMA_PROPOSAL.md) (APPROVED / APPLIED TO PREVIEW).
 
 **Current local release — 2026-10-29:** the reliability, client-context, Next Action,
-CSV import, reviewed merges and manual MLS property lists below are implemented and verified locally.
+CSV import, reviewed merges and multiple named MLS property lists below are implemented and verified locally.
 The historical Preview certification above does not certify these additions on a
-deployment. Migrations **0015–0019 remain unapplied to live databases**; Production
+deployment. Migrations **0015–0020 remain unapplied to live databases**; Production
 was not changed by this work.
 
 ## What changed
@@ -413,7 +413,7 @@ At 320×568, the dialogs fit without horizontal overflow, body scrolling reset
 between review steps, fixed actions stayed available and the success Close
 action returned to the contact list. No live records were used.
 
-## Manual property lists — current local update
+## Initial manual property list — superseded layout
 
 Every contact has one private, manually curated Property list, following Client
 needs in the contact file. Enter an exact MLS number, review the returned
@@ -482,3 +482,61 @@ for exact lookup, reviewed add, old-preview invalidation, missing-number copy,
 soft removal/re-add, and 320px layout. Removing the sole item on page 2 of a
 13-property list correctly returned to all 12 remaining cards. This is local
 verification, not certification against authenticated live MLS data.
+
+## Multiple named property lists — current local update
+
+Property lists now open in their own full-page workspace at `/property-lists`.
+The contact file has only New list and View lists launchers; it no longer
+hydrates, displays or edits the properties inside its side drawer. Users can
+create several named lists for one contact, or standalone lists for personal
+research. Opening a list shows its property grid. Add property opens a compact
+MLS-number dialog with exact lookup, review and explicit save.
+
+Lists are private to their owner and brokerage, including for admins. A contact
+association additionally requires current visibility of that contact. A global
+workspace entry is available through More, Contacts and Listings; contact
+launchers preserve their selected contact context. Gallery rows expose names,
+property counts and an optional contact name, with paginated access to older
+lists. Empty lists can be opened. List rename requires the reviewed revision.
+
+Creation uses a UUID request identity and payload hash: an identical retry
+recovers its original list, a changed request conflicts, and replay rechecks
+current scope. Lookup and property saves retain the exact reviewed MLS source,
+ListingKey and MLS number. The same property may belong to different lists;
+within one list it remains idempotent. Soft removal affects only the selected
+list. No listing snapshots, media or prices are copied into CRM storage.
+
+Migration 0020 backfills the original per-contact property references into
+named default lists, keeping their IDs, authors, timestamps and removal states.
+A property membership now requires its list ID and carries that list's optional
+contact association. Personal lists have no contact. Compatibility endpoints
+are restricted to an explicit owner-private default list; contact visibility
+alone never admits another user's list. Original default-contact anchors remain
+stable after a merge.
+
+Contact merge locks and fingerprints linked lists, including empty/private
+lists, before memberships. It transfers contact associations while retaining
+list IDs, names, owners and every membership. It never collapses two named lists
+or removes the same property from a different list. Only the caller's own
+visible list/property counts appear in review. Private references still
+participate in the concurrency guard without exposing their details.
+
+The pending migration set is **0015–0020**. This remains local source/preview
+work; no live migration, deployment, build, configuration change or push was
+performed. The earlier single-list layout above is historical.
+
+Final verification for this update: **5,469/5,469 counted checks passed** in the
+complete dashboard run, plus the unnumbered personal-workspace suite. Relevant
+coverage includes 58 named-list backend checks, 99 owner-private compatibility
+checks, 100 merge checks, 9 actual 0019→0020 backfill checks, 15 workspace view
+checks and 137 named-list adapter checks. Final TypeScript and targeted view/
+adapter checks passed after the source-availability guard was completed. All
+54 isolated preview groups pass.
+
+Browser review created and renamed a personal list, created a third list for
+one contact, opened an empty list and saved the same property independently
+in two lists. Contact View lists opened a filtered full-page gallery; no
+property cards or MLS form remained in the drawer. The 320×568 create and MLS
+review dialogs fit without horizontal overflow; Add to list stayed visible and
+closed the popup after confirmation. All browser records were synthetic and
+reset on reload. Screenshots are saved with the local project handoff.

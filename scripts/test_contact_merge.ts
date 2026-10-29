@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { createLocalContactDb } from "./helpers/contact-test-db.ts";
-import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, contacts, dashboardUsers, professionalProfiles, transactionParties, transactions } from "../lib/db/schema.ts";
+import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, propertyLists, contacts, dashboardUsers, professionalProfiles, transactionParties, transactions } from "../lib/db/schema.ts";
 import { createContact, getContact, contactSnapshot, listContactsPage, changeStage, type Ctx } from "../lib/contacts/service.ts";
 import { createContactSchema } from "../lib/contacts/domain.ts";
 import { addNote, listNotes } from "../lib/contacts/notes-service.ts";
@@ -162,32 +162,59 @@ try {
   const unicodeNotes = await listNotes(ctx, unicodeA);
   check("note chunks retain exact Unicode and original reading order", unicodeNotes.ok && unicodeNotes.value.map(note => note.body).join("") === originalText && unicodeNotes.value.every(note => note.body.length <= 10000));
   const propertyA = await make("Property list primary"), propertyB = await make("Property list source");
+  const listA = randomUUID(), listB = randomUUID(), emptyListB = randomUUID(), privateListB = randomUUID(), personalList = randomUUID();
+  await db.insert(propertyLists).values([
+    { id: listA, ownerUserId: OWNER, brokerageKey: "fortmark", contactId: propertyA, name: "Waterfront options", defaultForContactId: propertyA },
+    { id: listB, ownerUserId: OWNER, brokerageKey: "fortmark", contactId: propertyB, name: "Waterfront options", defaultForContactId: propertyB },
+    { id: emptyListB, ownerUserId: OWNER, brokerageKey: "fortmark", contactId: propertyB, name: "Unfilled research list" },
+    { id: privateListB, ownerUserId: ADMIN, brokerageKey: "fortmark", contactId: propertyB, name: "Other owner's private research" },
+    { id: personalList, ownerUserId: OWNER, brokerageKey: "fortmark", contactId: null, name: "Personal research" },
+  ]);
   const propertyIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const originalAdded = new Date("2026-08-01T12:00:00.000Z");
   await db.insert(contactProperties).values([
-    { id: propertyIds[0], contactId: propertyA, dataset: "synthetic", listingId: "common-key", mlsNumber: "A12345678", createdByUserId: OWNER, createdAt: originalAdded },
-    { id: propertyIds[1], contactId: propertyB, dataset: "synthetic", listingId: "common-key", mlsNumber: "A12345678", createdByUserId: OWNER },
-    { id: propertyIds[2], contactId: propertyB, dataset: "synthetic", listingId: "unique-key", mlsNumber: "F12345678", createdByUserId: OWNER },
-    { id: propertyIds[3], contactId: propertyB, dataset: "synthetic", listingId: "removed-key", mlsNumber: "RX-12345678", createdByUserId: OWNER, removedAt: originalAdded },
+    { id: propertyIds[0], listId: listA, contactId: propertyA, dataset: "synthetic", listingId: "common-key", mlsNumber: "A12345678", createdByUserId: OWNER, createdAt: originalAdded },
+    { id: propertyIds[1], listId: listB, contactId: propertyB, dataset: "synthetic", listingId: "common-key", mlsNumber: "A12345678", createdByUserId: OWNER },
+    { id: propertyIds[2], listId: listB, contactId: propertyB, dataset: "synthetic", listingId: "unique-key", mlsNumber: "F12345678", createdByUserId: OWNER },
+    { id: propertyIds[3], listId: listB, contactId: propertyB, dataset: "synthetic", listingId: "removed-key", mlsNumber: "RX-12345678", createdByUserId: OWNER, removedAt: originalAdded },
   ]);
+  const privateProperty = randomUUID();
+  await db.insert(contactProperties).values({ id: privateProperty, listId: privateListB, contactId: propertyB, dataset: "synthetic", listingId: "private-key", mlsNumber: "A88888888", createdByUserId: ADMIN });
   const propertyReview = await review(propertyA, propertyB);
-  check("merge review counts only visible saved properties and deduplicates shared identities", propertyReview.primary.counts.properties === 1 && propertyReview.duplicate.counts.properties === 2 && propertyReview.preservedCounts.properties === 2);
+  check("merge review retains separate-list memberships for the same property", propertyReview.primary.counts.properties === 1 && propertyReview.duplicate.counts.properties === 2 && propertyReview.preservedCounts.properties === 3);
+  check("merge review includes owned empty lists but no other user's private list count", propertyReview.preservedCounts.propertyLists === 3);
+  const adminPropertyReview = await review(propertyA, propertyB, adminCtx);
+  check("an admin sees only their own research counts, even on visible contacts", adminPropertyReview.preservedCounts.properties === 1 && adminPropertyReview.preservedCounts.propertyLists === 1);
   const propertyMerge = await mergeContacts(ctx, input(propertyReview), NOW);
-  check("contacts with a shared property merge successfully", propertyMerge.ok && propertyMerge.value.preservedCounts.properties === 2);
+  check("contacts with a shared property merge successfully", propertyMerge.ok && propertyMerge.value.preservedCounts.properties === 3);
   const propertyRows = await db.select().from(contactProperties).where(inArray(contactProperties.id, propertyIds));
   check("all saved and removed property associations are retained by original ID", propertyRows.length === 4 && propertyRows.every(row => row.contactId === propertyA));
-  check("shared property produces one visible card and preserves unique source property", propertyRows.filter(row => !row.removedAt).length === 2 && !propertyRows.find(row => row.id === propertyIds[2])?.removedAt);
+  check("same property in distinct lists remains saved in both lists", propertyRows.filter(row => !row.removedAt).length === 3 && propertyRows.find(row => row.id === propertyIds[0])?.listId === listA && propertyRows.find(row => row.id === propertyIds[1])?.listId === listB);
+  const mergedLists = await db.select().from(propertyLists).where(inArray(propertyLists.id, [listA, listB, emptyListB, privateListB]));
+  check("merge retains all named and empty lists without changing owner or collapsing names", mergedLists.length === 4 && mergedLists.every(row => row.contactId === propertyA) && mergedLists.filter(row => row.name === "Waterfront options").length === 2 && mergedLists.find(row => row.id === privateListB)?.ownerUserId === ADMIN);
+  check("default list anchors retain original identity through a merge", mergedLists.find(row => row.id === listA)?.defaultForContactId === propertyA && mergedLists.find(row => row.id === listB)?.defaultForContactId === propertyB);
+  check("private membership is moved internally without adding it to the visible count", (await db.select().from(contactProperties).where(eq(contactProperties.id, privateProperty)))[0]?.contactId === propertyA);
+  check("standalone research list remains unassociated with a contact", (await db.select().from(propertyLists).where(eq(propertyLists.id, personalList)))[0]?.contactId === null);
   check("merge retains original property save time and author", propertyRows.find(row => row.id === propertyIds[0])?.createdAt.toISOString() === originalAdded.toISOString() && propertyRows.every(row => row.createdByUserId === OWNER));
   check("previously removed property remains removed", propertyRows.find(row => row.id === propertyIds[3])?.removedAt?.toISOString() === originalAdded.toISOString());
   const lateProperty = randomUUID();
-  await db.insert(contactProperties).values({ id: lateProperty, contactId: propertyB, dataset: "synthetic", listingId: "late-key", mlsNumber: "A87654321", createdByUserId: OWNER });
+  await db.insert(contactProperties).values({ id: lateProperty, listId: listB, contactId: propertyB, dataset: "synthetic", listingId: "late-key", mlsNumber: "A87654321", createdByUserId: OWNER });
   check("late property association follows canonical contact", (await db.select().from(contactProperties).where(eq(contactProperties.id, lateProperty)))[0]?.contactId === propertyA);
+  const lateList = randomUUID();
+  await db.insert(propertyLists).values({ id: lateList, ownerUserId: OWNER, brokerageKey: "fortmark", contactId: propertyB, name: "Late list creation" });
+  check("late empty list follows the existing contact's canonical association", (await db.select().from(propertyLists).where(eq(propertyLists.id, lateList)))[0]?.contactId === propertyA);
   const propertyC = await make("Stale property list source"), propertyStale = input(await review(propertyA, propertyC));
   await db.update(contactProperties).set({ removedAt: NOW }).where(eq(contactProperties.id, lateProperty));
   const propertyRefused = await mergeContacts(ctx, propertyStale, NOW);
   check("saved-list change invalidates an opening merge review", !propertyRefused.ok && propertyRefused.reason === "conflict");
+  const emptyStale = input(await review(propertyA, propertyC));
+  await db.update(propertyLists).set({ name: "Changed empty research list" }).where(eq(propertyLists.id, emptyListB));
+  const emptyRefused = await mergeContacts(ctx, emptyStale, NOW);
+  check("renaming an empty list invalidates a merge review", !emptyRefused.ok && emptyRefused.reason === "conflict");
+  const listC = randomUUID();
+  await db.insert(propertyLists).values({ id: listC, ownerUserId: OWNER, brokerageKey: "fortmark", contactId: propertyC, name: "Racing research" });
   const propertyRace = input(await review(propertyA, propertyC)); let propertyInjected = false;
-  db.batch = (async statements => { if (!propertyInjected) { propertyInjected = true; await db.insert(contactProperties).values({ contactId: propertyC, dataset: "synthetic", listingId: "racing-key", mlsNumber: "A99999999", createdByUserId: OWNER }); } return baseBatch(statements); }) as typeof db.batch;
+  db.batch = (async statements => { if (!propertyInjected) { propertyInjected = true; await db.insert(contactProperties).values({ listId: listC, contactId: propertyC, dataset: "synthetic", listingId: "racing-key", mlsNumber: "A99999999", createdByUserId: OWNER }); } return baseBatch(statements); }) as typeof db.batch;
   const propertyRaceResult = await mergeContacts(ctx, propertyRace, NOW); db.batch = baseBatch;
   check("property saved after preflight is protected by atomic merge guard", !propertyRaceResult.ok && propertyRaceResult.reason === "conflict");
   check("refused merge leaves racing saved property in its original file", (await db.select().from(contactProperties).where(eq(contactProperties.contactId, propertyC))).length === 1 && !(await db.select().from(contacts).where(eq(contacts.id, propertyC)))[0]?.mergedIntoContactId);

@@ -22,7 +22,7 @@ type Choices = Partial<Record<MergeField, Winner>>;
 type PendingChoice = "primary" | "duplicate" | "none";
 const FIELDS: MergeField[] = ["name", "email", "phone", "company", "source", "stage", "birthday", "about", "personalDetails", "legacyNotes"];
 const LABELS: Record<MergeField, string> = { name: "Name", email: "Email", phone: "Phone", company: "Company", source: "Source", stage: "Stage", birthday: "Birthday", about: "About", personalDetails: "Named details", legacyNotes: "Legacy note" };
-const COUNT_LABELS = { notes: "Notes", needs: "Client needs", activities: "Activity records", opportunities: "Legacy opportunities", transactions: "Linked transactions", properties: "Saved properties" } as const;
+const COUNT_LABELS = { notes: "Notes", needs: "Client needs", activities: "Activity records", opportunities: "Legacy opportunities", transactions: "Linked transactions", propertyLists: "Saved lists", properties: "Saved properties" } as const;
 interface ContactDuplicatesProps {
   open: boolean; onOpenChange: (open: boolean) => void;
   onList: (cursor?: string) => Promise<DuplicateSuggestionsPage>;
