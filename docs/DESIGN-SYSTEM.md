@@ -184,6 +184,22 @@ const { data, loading } = useQuery(
 - Tables: 13px, `.text-micro` headers, paginate past ~10-12 rows with a
   quiet "Showing x–y of z" + Previous/Next buttons.
 
+## Working screens
+
+- Listings use framed source media, a clear price/address hierarchy, and a quiet
+  specification footer. The card stays one Link, with no nested interactive controls.
+- The listing gallery opens a full-viewport dialog with contained images, visible
+  photo counts, thumbnails, 44px controls, arrow-key navigation, Escape, and focus
+  return. Missing MLS photos remain neutral; never substitute a sample property.
+- Transaction progress identifies the current workflow position. Earlier steps
+  are not checked off and stage position is never a deal-completion percentage.
+  Paused and exited files retain their actual status and remain available in Table.
+- Detail drawers have a pinned header, scrolling details and pinned action footer.
+  Keep the close control visible, preserve keyboard focus on return, and state when
+  milestones or dates are absent. Query and action failures need visible feedback.
+- Horizontal boards scroll inside the page. The main shell clips horizontal
+  overflow without creating a second vertical scroll container; dialogs stay portaled.
+
 ## Copy checklist (every string you write)
 
 sentence case · plain verbs · button = the action ("Add lead", "Save

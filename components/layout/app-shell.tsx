@@ -53,7 +53,7 @@ export function AppShell({
       <div className="flex min-h-screen flex-col">
         <TopBar profile={profile} />
         {/* Wide but bounded: dense at 1440, never stretched on ultrawide. */}
-        <main className="mx-auto flex min-h-0 w-full max-w-[1520px] flex-1 flex-col px-4 py-5 md:px-6 md:py-6">
+        <main className="mx-auto flex min-h-0 min-w-0 w-full max-w-[1520px] flex-1 flex-col overflow-x-clip px-4 py-5 md:px-6 md:py-6">
           <PageHeading />
           <PageTransition>{children}</PageTransition>
         </main>

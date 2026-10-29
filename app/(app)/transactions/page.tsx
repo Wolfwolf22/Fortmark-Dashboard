@@ -13,7 +13,11 @@
  */
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search } from "lucide-react";
+import { Search, ServerCrash, Workflow } from "lucide-react";
+import { PageIntro } from "@/components/common/page-intro";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { KanbanBoard } from "@/components/transactions/kanban-board";
 import { TransactionDrawer } from "@/components/transactions/transaction-drawer";
 import { TransactionsTable } from "@/components/transactions/transactions-table";
@@ -29,6 +33,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { getTransactions } from "@/lib/data/adapters/transactions";
 import { useQuery } from "@/lib/data/hooks";
+import { TRANSACTION_STAGES } from "@/lib/data/types";
 
 type SideFilter = "all" | "listing" | "buyer";
 type View = "board" | "table";
@@ -36,6 +41,7 @@ type View = "board" | "table";
 function PageSkeleton() {
   return (
     <div className="space-y-5">
+      <PageIntro title="Transactions" description="Track each file’s stage, dates, and next milestone." icon={Workflow} />
       <div className="flex flex-wrap items-center gap-3">
         <Skeleton className="h-9 w-full sm:w-72" />
         <Skeleton className="h-9 w-36" />
@@ -84,7 +90,7 @@ function TransactionsPageInner() {
     }
   }, [openParam]);
 
-  const { data: transactions, loading } = useQuery(
+  const { data: transactions, loading, error, refetch } = useQuery(
     () =>
       getTransactions({
         query: debouncedSearch || undefined,
@@ -92,6 +98,7 @@ function TransactionsPageInner() {
       }),
     [debouncedSearch, side]
   );
+  const tableOnlyCount = transactions?.filter((txn) => !TRANSACTION_STAGES.includes(txn.stage)).length ?? 0;
 
   function openTransaction(id: string) {
     setDrawerId(id);
@@ -108,6 +115,7 @@ function TransactionsPageInner() {
 
   return (
     <div className="space-y-5">
+      <PageIntro title="Transactions" description="Track each file’s stage, dates, and next milestone." icon={Workflow} />
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative w-full sm:w-72">
           <Search
@@ -144,7 +152,22 @@ function TransactionsPageInner() {
           />
         </div>
       </div>
-      {view === "board" ? (
+      {view === "board" && !error && tableOnlyCount > 0 && (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
+          <span>{tableOnlyCount} {tableOnlyCount === 1 ? "paused or exited file is" : "paused or exited files are"} shown in the table.</span>
+          <button type="button" className="min-h-10 rounded-md font-semibold text-foreground underline underline-offset-4" onClick={() => setView("table")}>View table</button>
+        </p>
+      )}
+      {error ? (
+        <Card>
+          <EmptyState
+            icon={ServerCrash}
+            title="Transactions could not be loaded"
+            description="Your files are temporarily unavailable. Retry to load them again."
+            action={<Button variant="outline" onClick={refetch} disabled={loading}>{loading ? "Retrying…" : "Retry"}</Button>}
+          />
+        </Card>
+      ) : view === "board" ? (
         <KanbanBoard
           transactions={transactions}
           loading={loading}

@@ -20,9 +20,10 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Inbox } from "lucide-react";
+import { Building2, CalendarDays, Inbox } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { IconWell } from "@/components/ui/icon-well";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/ui/status-pill";
 import { updateTransactionStage } from "@/lib/data/adapters/transactions";
@@ -40,6 +41,8 @@ import {
   formatDateShort,
 } from "@/lib/utils";
 import { closeCountdown, SIDE_SHORT } from "./txn-shared";
+import { TransactionProgress } from "./transaction-progress";
+import { isActiveStage } from "@/lib/transactions/stages";
 
 interface KanbanBoardProps {
   transactions: Transaction[] | undefined;
@@ -50,17 +53,26 @@ interface KanbanBoardProps {
 function CardBody({ txn }: { txn: Transaction }) {
   return (
     <>
-      <p className="text-[13px] font-semibold leading-snug">{txn.address}</p>
-      <p className="mt-0.5 text-xs text-muted-foreground">{txn.clientName}</p>
-      <p className="tabular mt-2.5 text-sm font-semibold">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <IconWell icon={Building2} />
+        <Badge variant="muted">{SIDE_SHORT[txn.side]}</Badge>
+      </div>
+      <p className="break-words text-[14px] font-semibold leading-snug">{txn.address}</p>
+      <p className="mt-1 break-words text-xs text-muted-foreground">{txn.city}</p>
+      <p className="mt-3 break-words text-xs text-muted-foreground">Client <span className="ml-1 font-medium text-foreground">{txn.clientName}</span></p>
+      <p className="tabular mt-3 text-xl font-bold tracking-tight">
         {formatCurrency(txn.contractPrice)}
       </p>
-      <p className="tabular mt-0.5 text-xs text-muted-foreground">
+      <p className="mt-0.5 text-[11px] text-muted-foreground">Contract price</p>
+      <div className="my-3 border-t border-border pt-3">
+        <TransactionProgress stage={txn.stage} compact />
+      </div>
+      <p className="tabular flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+        <CalendarDays className="h-3.5 w-3.5 shrink-0" aria-hidden />
         {txn.closeDate ? `${formatDateShort(txn.closeDate)} · ` : ""}{closeCountdown(txn)}
       </p>
-      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        <StatusPill tone={txn.status}>{txn.statusLabel}</StatusPill>
-        <Badge variant="outline">{SIDE_SHORT[txn.side]}</Badge>
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <StatusPill tone={isActiveStage(txn.stage) ? txn.status : "neutral"}>{isActiveStage(txn.stage) ? txn.statusLabel : TRANSACTION_STAGE_LABELS[txn.stage]}</StatusPill>
       </div>
     </>
   );
@@ -84,12 +96,13 @@ function DraggableCard({
       type="button"
       {...attributes}
       {...listeners}
+      aria-label={`Open transaction ${txn.address}. Current stage: ${TRANSACTION_STAGE_LABELS[txn.stage]}.`}
       onClick={() => {
         // Suppress the click the browser fires right after a drag ends.
         if (!dragHappened.current) onOpen(txn.id);
       }}
       className={cn(
-        "w-full cursor-grab touch-none rounded-panel border border-border bg-card p-3 text-left transition-shadow duration-150 hover:shadow-card active:cursor-grabbing",
+        "w-full cursor-grab touch-none rounded-panel border border-border bg-card p-4 text-left shadow-card transition-shadow duration-150 hover:shadow-card-hover active:cursor-grabbing",
         isDragging && "opacity-40"
       )}
     >
@@ -114,12 +127,12 @@ function Column({
   return (
     <section
       aria-label={`${TRANSACTION_STAGE_LABELS[stage]} column`}
-      className="flex w-[280px] flex-none flex-col gap-2"
+      className="flex w-[264px] flex-none flex-col gap-3 sm:w-[288px]"
     >
       <div className="flex items-baseline justify-between px-1">
         <p className="flex items-baseline gap-1.5">
           <span className="text-micro">{TRANSACTION_STAGE_LABELS[stage]}</span>
-          <span className="tabular text-xs font-semibold text-muted-foreground">
+          <span className="tabular inline-flex h-5 min-w-5 items-center justify-center rounded-md bg-tint px-1 text-[11px] font-semibold text-muted-foreground">
             {items.length}
           </span>
         </p>
@@ -130,7 +143,7 @@ function Column({
       <div
         ref={setNodeRef}
         className={cn(
-          "flex min-h-[180px] flex-1 flex-col gap-2 rounded-panel bg-tint p-2",
+          "flex min-h-[220px] flex-1 flex-col gap-3 rounded-card border border-border bg-tint p-2",
           isOver && "ring-1 ring-ring"
         )}
       >
@@ -177,6 +190,7 @@ export function KanbanBoard({ transactions, loading, onOpen }: KanbanBoardProps)
   // whenever fresh adapter data arrives (the refetch carries the truth).
   const [overrides, setOverrides] = useState<Record<string, TransactionStage>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
   const dragHappened = useRef(false);
 
   useEffect(() => {
@@ -204,7 +218,9 @@ export function KanbanBoard({ transactions, loading, onOpen }: KanbanBoardProps)
     return map;
   }, [transactions, overrides]);
 
-  if (!transactions) return <BoardSkeleton />;
+  if (!transactions) return loading ? <BoardSkeleton /> : (
+    <EmptyState icon={Inbox} title="Transactions could not be loaded" description="Refresh the page to try again." />
+  );
 
   if (transactions.length === 0) {
     return (
@@ -221,6 +237,7 @@ export function KanbanBoard({ transactions, loading, onOpen }: KanbanBoardProps)
     : undefined;
 
   function handleDragStart(event: DragStartEvent) {
+    setMoveError(null);
     dragHappened.current = true;
     setActiveId(String(event.active.id));
   }
@@ -245,7 +262,15 @@ export function KanbanBoard({ transactions, loading, onOpen }: KanbanBoardProps)
     setOverrides((prev) => ({ ...prev, [txn.id]: target }));
     // A move the lifecycle refuses throws; a refetch drops the optimistic
     // override and the card returns to where the deal actually is.
-    void updateTransactionStage(txn.id, target).catch(() => bumpDataVersion());
+    void updateTransactionStage(txn.id, target).catch(() => {
+      setOverrides((prev) => {
+        const next = { ...prev };
+        delete next[txn.id];
+        return next;
+      });
+      setMoveError("The stage change could not be confirmed. Reloading the recorded stage. Open the file to check before trying again.");
+      bumpDataVersion();
+    });
   }
 
   return (
@@ -256,6 +281,7 @@ export function KanbanBoard({ transactions, loading, onOpen }: KanbanBoardProps)
       onDragEnd={handleDragEnd}
       onDragCancel={endDrag}
     >
+      {moveError && <p role="alert" className="mb-3 rounded-panel border border-border bg-tint px-4 py-3 text-sm">{moveError}</p>}
       <div
         aria-busy={loading}
         className="flex items-stretch gap-4 overflow-x-auto pb-4"
@@ -272,7 +298,7 @@ export function KanbanBoard({ transactions, loading, onOpen }: KanbanBoardProps)
       </div>
       <DragOverlay dropAnimation={null}>
         {activeTxn ? (
-          <div className="w-[264px] rounded-panel border border-border bg-card p-3 shadow-pop">
+          <div className="w-[248px] rounded-panel border border-border bg-card p-4 shadow-pop sm:w-[272px]">
             <CardBody txn={activeTxn} />
           </div>
         ) : null}

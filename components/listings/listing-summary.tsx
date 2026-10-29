@@ -60,8 +60,8 @@ export function ListingSummary({
 
   return (
     <Card>
-      <CardContent className="space-y-5 pt-6">
-        <div className="flex items-center gap-2">
+      <CardContent className="space-y-5 pt-5">
+        <div className="flex flex-wrap items-center gap-2">
           <StatusPill tone={pill.tone}>{pill.label}</StatusPill>
           {listing.isFortmark && <StatusPill tone="neutral">FortMark listing</StatusPill>}
         </div>
@@ -70,7 +70,7 @@ export function ListingSummary({
           {isClosed ? (
             <>
               <p className="text-micro">Closed price</p>
-              <p className="mt-1 text-3xl font-bold leading-none tabular">
+              <p className="mt-2 break-words text-[32px] font-semibold leading-none tracking-[-0.04em] tabular sm:text-[36px]">
                 {formatCurrency(listing.closedPrice as number)}
               </p>
               <p className="mt-1.5 text-[13px] text-muted-foreground">
@@ -84,7 +84,7 @@ export function ListingSummary({
           ) : (
             <>
               <p className="text-micro">List price</p>
-              <p className="mt-1 text-3xl font-bold leading-none tabular">
+              <p className="mt-2 break-words text-[32px] font-semibold leading-none tracking-[-0.04em] tabular sm:text-[36px]">
                 {formatCurrency(listing.listPrice)}
               </p>
             </>
@@ -92,8 +92,8 @@ export function ListingSummary({
         </div>
 
         <div>
-          <h2 className="text-display text-2xl">{listing.address}</h2>
-          <p className="mt-1.5 text-[13px] text-muted-foreground">
+          <h2 className="break-words text-2xl font-semibold leading-tight tracking-[-0.025em]">{listing.address}</h2>
+          <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
             {listing.city}, FL {listing.zip}
             {listing.neighborhood && <> · {listing.neighborhood}</>}
           </p>
@@ -111,11 +111,11 @@ export function ListingSummary({
 
         <Separator />
 
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-4">
           {specs.map((spec) => (
             <div key={spec.label}>
               <dt className="text-micro">{spec.label}</dt>
-              <dd className="mt-0.5 text-sm font-semibold tabular">
+              <dd className="mt-1 break-words text-sm font-semibold leading-snug tabular">
                 {spec.value}
               </dd>
             </div>

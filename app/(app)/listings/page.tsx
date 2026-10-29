@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { SearchX, ServerCrash } from "lucide-react";
+import { Building2, SearchX, ServerCrash } from "lucide-react";
+import { PageIntro } from "@/components/common/page-intro";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -207,6 +208,7 @@ export default function ListingsPage() {
 
   return (
     <div className="space-y-4">
+      <PageIntro title="Listings" description="Explore your listings, brokerage inventory, and MLS properties." icon={Building2} />
       <Segmented<ListingScope>
         options={SCOPE_OPTIONS}
         value={scope ?? "mls"}

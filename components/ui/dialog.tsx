@@ -59,10 +59,12 @@ const DialogContent = React.forwardRef<
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (event.defaultPrevented) return;
-          event.preventDefault();
           const target = opener.current;
           const destination = target && target.isConnected ? target : focusFallback?.();
-          destination?.focus();
+          if (destination?.isConnected) {
+            event.preventDefault();
+            destination.focus();
+          }
         }}
         {...props}
       >

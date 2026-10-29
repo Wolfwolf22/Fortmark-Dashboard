@@ -7,7 +7,7 @@
  */
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, Check } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Building2, CalendarDays, Check, ClipboardList, Users, Workflow, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +18,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { IconWell } from "@/components/ui/icon-well";
 import { StatusPill } from "@/components/ui/status-pill";
 import { getAgent } from "@/lib/data/adapters/agents";
 import {
@@ -34,6 +35,8 @@ import {
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { daysToClose, nextStage, SIDE_LABELS } from "./txn-shared";
 import { SampleDataNotice } from "@/components/listings/sample-data-notice";
+import { TransactionProgress } from "./transaction-progress";
+import { isActiveStage } from "@/lib/transactions/stages";
 
 export interface TransactionDrawerProps {
   transactionId: string | null;
@@ -51,11 +54,23 @@ function Fact({
   numeric?: boolean;
 }) {
   return (
-    <div>
-      <p className="text-micro">{label}</p>
-      <p className={cn("mt-1 text-sm font-semibold", numeric && "tabular")}>
+    <div className="min-w-0">
+      <dt className="text-[11px] leading-4 text-muted-foreground">{label}</dt>
+      <dd className={cn("mt-1.5 break-words text-sm font-semibold leading-snug", numeric && "tabular text-base tracking-tight")}>
         {value}
-      </p>
+      </dd>
+    </div>
+  );
+}
+
+function SectionHeading({ icon, children, detail }: { icon: LucideIcon; children: ReactNode; detail?: string }) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="flex items-center gap-2.5">
+        <IconWell icon={icon} />
+        <h3 className="text-[15px] font-semibold">{children}</h3>
+      </div>
+      {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
     </div>
   );
 }
@@ -90,9 +105,9 @@ function MilestoneRow({
           className="h-5 w-5 flex-none rounded-full border-2 border-input bg-card"
         />
       )}
-      <div className="flex flex-1 items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold leading-5">{milestone.label}</p>
+      <div className="flex min-w-0 flex-1 flex-wrap items-start justify-between gap-x-3 gap-y-1">
+        <div className="min-w-0">
+          <p className="break-words text-sm font-semibold leading-5">{milestone.label}</p>
           <p className="tabular mt-0.5 text-xs text-muted-foreground">
             {formatDate(milestone.date)}
           </p>
@@ -125,17 +140,17 @@ function DrawerSkeleton() {
           Transaction details are loading
         </SheetDescription>
       </SheetHeader>
-      <div className="space-y-2">
+      <div className="space-y-2 px-5 pt-7">
         <Skeleton className="h-6 w-3/5" />
         <Skeleton className="h-4 w-28" />
       </div>
-      <div className="mt-3 flex gap-1.5">
+      <div className="mt-3 flex gap-1.5 px-5">
         <Skeleton className="h-5 w-16 rounded-full" />
         <Skeleton className="h-5 w-24 rounded-full" />
         <Skeleton className="h-5 w-20 rounded-full" />
       </div>
-      <Skeleton className="mt-6 h-32 w-full rounded-panel" />
-      <div className="mt-6 space-y-3">
+      <div className="px-5"><Skeleton className="mt-6 h-48 w-full rounded-panel" /></div>
+      <div className="mt-6 space-y-3 px-5">
         {Array.from({ length: 6 }).map((_, i) => (
           <Skeleton key={i} className="h-10 w-full" />
         ))}
@@ -149,7 +164,7 @@ export function TransactionDrawer({
   open,
   onOpenChange,
 }: TransactionDrawerProps) {
-  const { data, loading } = useQuery<Transaction | undefined>(
+  const { data, loading, error, refetch } = useQuery<Transaction | undefined>(
     () => (transactionId ? getTransaction(transactionId) : Promise.resolve(undefined)),
     [transactionId]
   );
@@ -165,16 +180,19 @@ export function TransactionDrawer({
   );
 
   const [advancing, setAdvancing] = useState(false);
+  const [saveError, setSaveError] = useState<{ id: string; message: string } | null>(null);
 
   async function advance(to: TransactionStage) {
     if (!txn) return;
+    setSaveError(null);
     setAdvancing(true);
     try {
       // The adapter bumps the data version, so the drawer and every open
       // list refetch on their own.
       await updateTransactionStage(txn.id, to);
     } catch {
-      // A move the lifecycle refuses leaves the deal where it is.
+      setSaveError({ id: txn.id, message: "The stage change could not be confirmed. Review the refreshed stage before trying again." });
+      refetch();
     } finally {
       setAdvancing(false);
     }
@@ -185,92 +203,85 @@ export function TransactionDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-full flex-col overflow-y-auto p-6 sm:max-w-xl">
+      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
         {txn ? (
           <>
-            <SheetHeader className="pr-8">
-              <SheetTitle>{txn.address}</SheetTitle>
-              <SheetDescription>{txn.city}</SheetDescription>
+            <SheetHeader className="shrink-0 border-b border-border px-5 pb-5 pt-6 pr-14 sm:px-6 sm:pr-16">
+              <div className="mb-3 flex items-center gap-3">
+                <IconWell icon={Building2} className="h-10 w-10 rounded-panel" />
+                <p className="text-micro">Transaction file</p>
+              </div>
+              <SheetTitle className="break-words text-2xl font-semibold leading-tight tracking-tight">{txn.address}</SheetTitle>
+              <SheetDescription className="pt-0.5 text-[13px]">{txn.city}</SheetDescription>
+              <div className="flex flex-wrap items-center gap-1.5 pt-2.5">
+                <Badge variant="outline">{SIDE_LABELS[txn.side]}</Badge>
+                <StatusPill tone={isActiveStage(txn.stage) ? txn.status : "neutral"}>{isActiveStage(txn.stage) ? txn.statusLabel : TRANSACTION_STAGE_LABELS[txn.stage]}</StatusPill>
+              </div>
             </SheetHeader>
+            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5 sm:px-6">
             {txn.source === "sample" && (
-              <div className="mt-3">
+              <div>
                 <SampleDataNotice subject="This deal is generated for development and is not a real transaction." />
               </div>
             )}
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
-              <Badge variant="outline">{SIDE_LABELS[txn.side]}</Badge>
-              <Badge variant="muted">{TRANSACTION_STAGE_LABELS[txn.stage]}</Badge>
-              <StatusPill tone={txn.status}>{txn.statusLabel}</StatusPill>
-            </div>
-            {txn.listingId && (
-              <div className="mt-3">
+            {error && !loading && (
+              <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-border bg-tint p-3 text-sm">
+                <p>The latest details could not be refreshed.</p>
+                <Button type="button" variant="outline" size="sm" onClick={refetch}>Try again</Button>
+              </div>
+            )}
+            <section aria-label="Transaction stage">
+              <SectionHeading icon={Workflow}>Workflow position</SectionHeading>
+              <div className="rounded-panel border border-border p-4"><TransactionProgress stage={txn.stage} /></div>
+            </section>
+            <section aria-label="Deal overview">
+              <SectionHeading icon={ClipboardList}>Deal overview</SectionHeading>
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-5 rounded-panel border border-border bg-tint p-4">
+                <Fact label="Contract price" numeric value={formatCurrency(txn.contractPrice)} />
+                <Fact label="Projected gross commission" numeric value={txn.projectedCommission > 0 ? formatCurrency(txn.projectedCommission) : "—"} />
+                <Fact label="Close date" numeric value={txn.closeDate ? formatDate(txn.closeDate) : "Not set"} />
+                <Fact label="Days to close" numeric value={txn.stage === "closed" ? "Closed" : days === null ? "—" : days < 0 ? `${Math.abs(days)} days past due` : `${days} days`} />
+              </dl>
+              {txn.listingId && (
                 <Link
                   href={`/listings/${txn.listingId}`}
-                  className="inline-flex items-center gap-1 text-[13px] font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground"
+                  className="mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-md text-[13px] font-semibold underline-offset-4 hover:underline"
                 >
                   View listing
                   <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
                 </Link>
-              </div>
-            )}
-            <div className="flex-1">
-              <div className="mt-6 grid grid-cols-2 gap-x-4 gap-y-4 rounded-panel bg-tint p-4">
-                <Fact
-                  label="Contract price"
-                  numeric
-                  value={formatCurrency(txn.contractPrice)}
-                />
-                <Fact
-                  label="Projected GCI"
-                  numeric
-                  value={txn.projectedCommission > 0 ? formatCurrency(txn.projectedCommission) : "—"}
-                />
-                <Fact
-                  label="Close date"
-                  numeric
-                  value={txn.closeDate ? formatDate(txn.closeDate) : "—"}
-                />
-                <Fact
-                  label="Days to close"
-                  numeric
-                  value={
-                    txn.stage === "closed"
-                      ? "Closed"
-                      : days === null
-                        ? "—"
-                        : days < 0
-                          ? `${Math.abs(days)} days past due`
-                          : `${days} days`
-                  }
-                />
+              )}
+            </section>
+            <section aria-label="People on this file">
+              <SectionHeading icon={Users}>People</SectionHeading>
+              <dl className="grid grid-cols-2 gap-4 rounded-panel border border-border p-4">
                 <Fact label="Client" value={txn.clientName} />
                 <Fact label="Agent" value={txn.agentName ?? agent?.name ?? "—"} />
-              </div>
-              <p className="text-micro mt-6">Milestones</p>
-              <ol className="mt-3">
+              </dl>
+            </section>
+            <section aria-label="Recorded milestones">
+              <SectionHeading icon={CalendarDays} detail={txn.milestones.length ? `${txn.milestones.length} recorded` : undefined}>Milestones</SectionHeading>
+              {txn.milestones.length ? <ol className="rounded-panel border border-border p-4">
                 {txn.milestones.map((m, i) => (
                   <MilestoneRow
-                    key={m.key}
+                    key={m.id}
                     milestone={m}
                     last={i === txn.milestones.length - 1}
                   />
                 ))}
-              </ol>
+              </ol> : <div className="rounded-panel border border-dashed border-input px-4 py-5">
+                <p className="text-sm font-semibold">No milestones recorded</p>
+                <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">This file does not have any recorded deadlines yet.</p>
+              </div>}
+            </section>
             </div>
-            {txn.stage !== "closed" && next && (
-              <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-                <Button onClick={() => advance(next)} disabled={advancing}>
-                  Advance to {TRANSACTION_STAGE_LABELS[next].toLowerCase()}
+            {next && (
+              <div className="shrink-0 border-t border-border bg-card px-5 py-4 sm:px-6">
+                {saveError?.id === txn.id && <p role="alert" className="mb-3 text-sm text-destructive">{saveError.message}</p>}
+                <Button className="min-h-11 w-full justify-between" onClick={() => advance(next)} disabled={advancing}>
+                  {next === "closed" ? "Mark closed" : `Advance to ${TRANSACTION_STAGE_LABELS[next].toLowerCase()}`}
+                  <ArrowRight aria-hidden className="h-4 w-4" />
                 </Button>
-                {txn.stage === "closing_prep" && (
-                  <Button
-                    variant="ghost"
-                    onClick={() => advance("closed")}
-                    disabled={advancing}
-                  >
-                    Mark closed
-                  </Button>
-                )}
               </div>
             )}
           </>
@@ -284,9 +295,12 @@ export function TransactionDrawer({
                 Transaction details
               </SheetDescription>
             </SheetHeader>
-            <p className="mt-8 text-sm text-muted-foreground">
-              This file is no longer available.
-            </p>
+            <div className="px-5 py-12 sm:px-6">
+              <IconWell icon={Building2} className="mb-4 h-10 w-10 rounded-panel" />
+              <p role={error ? "alert" : undefined} className="text-sm font-semibold">{error ? "Transaction details could not be loaded" : "This file is no longer available."}</p>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{error ? "Try again to load this file." : "Close this panel and choose another transaction."}</p>
+              {error && <Button variant="outline" className="mt-4" onClick={refetch}>Try again</Button>}
+            </div>
           </>
         )}
       </SheetContent>

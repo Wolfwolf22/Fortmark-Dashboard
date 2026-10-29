@@ -353,7 +353,10 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
   check("validation errors name fields, never values", /fields \}/.test(list) && !/parsed\.error\.issues\.map\(\(i\) => i\.message/.test(list));
   check("the adapter asks the server which source is live", adapter.includes('"/api/transactions/source"'));
   check("the adapter converts dollars to cents before they leave the browser", adapter.includes("Math.round(input.contractPrice * 100)"));
-  check("a refused move surfaces to the board", readFileSync("components/transactions/kanban-board.tsx", "utf8").includes(".catch(() => bumpDataVersion())"));
+  const board = readFileSync("components/transactions/kanban-board.tsx", "utf8");
+  const refusedMove = board.slice(board.indexOf("updateTransactionStage(txn.id, target)"), board.indexOf("return (\n    <DndContext"));
+  check("a refused move refreshes the recorded data", refusedMove.includes(".catch(") && refusedMove.includes("bumpDataVersion()"));
+  check("a refused move gives the person visible feedback", refusedMove.includes("setMoveError(") && board.includes('role="alert"'));
   check("the drawer labels sample rows", readFileSync("components/transactions/transaction-drawer.tsx", "utf8").includes('txn.source === "sample"'));
   // A cancelled or on-hold deal is a real row that is not a pipeline column.
   check("the board tolerates a deal outside the pipeline columns",

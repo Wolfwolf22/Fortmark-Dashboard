@@ -15,6 +15,9 @@ const aliases = new Map([
   ["next/link", "link.jsx"], ["next/image", "image.jsx"], ["next/navigation", "next-stubs.jsx"],
   ["@/components/profile/profile-drawer", "preview-dialogs.jsx"],
   ["@/components/layout/quick-create-dialog", "preview-dialogs.jsx"],
+  ["@/lib/data/adapters/listings", "visual-adapters.mjs"],
+  ["@/lib/data/adapters/transactions", "visual-adapters.mjs"],
+  ["@/lib/data/adapters/agents", "visual-adapters.mjs"],
 ]);
 let currentBuild;
 async function compile() {
@@ -54,8 +57,20 @@ async function compile() {
 }
 
 const html = '<!doctype html><html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>FortMark · Design preview</title><link rel="stylesheet" href="/style.css"></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>';
-function responsiveHtml(width) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FortMark · Responsive design review</title><style>*{box-sizing:border-box}body{margin:0;background:#d9d9d9;color:#111;font:13px system-ui,sans-serif}header{height:58px;background:white;border-bottom:1px solid #bbb;display:flex;align-items:center;gap:16px;padding:0 20px;position:sticky;top:0;z-index:2}strong{font-size:13px}label{display:flex;align-items:center;gap:8px}select,button{padding:6px 10px;border:1px solid #777;border-radius:4px;background:white;color:#111}button{cursor:pointer}button:hover{background:#eee}button:focus-visible{outline:2px solid #111;outline-offset:2px}main{padding:24px;width:max-content;min-width:100%;display:flex;justify-content:center}iframe{display:block;border:1px solid #777;width:${width}px;height:1180px;background:black;flex:none;box-shadow:0 8px 32px #0002}span{color:#555;font-size:12px}@media(max-width:600px){header{gap:10px;padding:0 12px}header span{display:none}main{padding:12px}}</style></head><body><header><strong>FortMark · Design review</strong><label>Viewport <select id="width" aria-label="Preview width">${[320,390,768,1280,1440].map(w=>`<option value="${w}" ${w===width?"selected":""}>${w}px</option>`).join("")}</select></label><button type="button" id="return-top">Return to top</button><span>Actual application in an isolated viewport. Sample data only.</span></header><main><iframe title="FortMark dashboard design preview" src="/preview"></iframe></main><script>document.getElementById('width').addEventListener('change',function(){document.querySelector('iframe').style.width=this.value+'px';history.replaceState({},'', '/responsive?width='+this.value)});document.getElementById('return-top').addEventListener('click',function(){document.querySelector('iframe').contentWindow.scrollTo(0,0);window.scrollTo(0,0)})</script></body></html>`;
+function responsiveHtml(width, height, view, scenario) {
+  const frameQuery = new URLSearchParams({ view, scenario }).toString();
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FortMark · Responsive design review</title><style>
+  *{box-sizing:border-box}body{margin:0;background:#d9d9d9;color:#111;font:13px system-ui,sans-serif}header{min-height:58px;background:white;border-bottom:1px solid #bbb;display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 20px;position:sticky;top:0;z-index:2}strong{font-size:13px}label{display:flex;align-items:center;gap:8px}select,button{padding:6px 10px;border:1px solid #777;border-radius:4px;background:white;color:#111}button{cursor:pointer}button:hover{background:#eee}button:focus-visible{outline:2px solid #111;outline-offset:2px}main{padding:24px;width:max-content;min-width:100%;display:flex;justify-content:center}iframe{display:block;border:1px solid #777;width:${width}px;height:${height}px;background:black;flex:none;box-shadow:0 8px 32px #0002}span{color:#555;font-size:12px}@media(max-width:600px){header{gap:10px;padding:10px 12px}header span{display:none}main{padding:12px}}
+  </style></head><body><header><strong>FortMark · Design review</strong>
+  <label>Width <select id="width" aria-label="Preview width">${[320,390,768,1280,1440].map(w=>`<option value="${w}" ${w===width?"selected":""}>${w}px</option>`).join("")}</select></label>
+  <label>Height <select id="height" aria-label="Preview height">${[568,720,844,1024,1180].map(h=>`<option value="${h}" ${h===height?"selected":""}>${h}px</option>`).join("")}</select></label>
+  <button type="button" id="return-top">Return to top</button><span>Actual application in an isolated viewport. Sample data only.</span></header>
+  <main><iframe title="FortMark dashboard design preview" src="/preview?${frameQuery}"></iframe></main><script>
+  function setSize(dimension,value){document.querySelector('iframe').style[dimension]=value+'px';var url=new URL(window.location.href);url.searchParams.set(dimension,value);history.replaceState({},'',url)}
+  document.getElementById('width').addEventListener('change',function(){setSize('width',this.value)});
+  document.getElementById('height').addEventListener('change',function(){setSize('height',this.value)});
+  document.getElementById('return-top').addEventListener('click',function(){document.querySelector('iframe').contentWindow.scrollTo(0,0);window.scrollTo(0,0)})
+  </script></body></html>`;
 }
 const mime = { ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".map": "application/json" };
 
@@ -69,7 +84,12 @@ createServer(async (request, response) => {
     if (pathname === "/responsive") {
       const requested = Number(url.searchParams.get("width"));
       const width = [320,390,768,1280,1440].includes(requested) ? requested : 390;
-      response.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" }); response.end(responsiveHtml(width)); return;
+      response.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" }); const requestedHeight = Number(url.searchParams.get("height"));
+      const height = [568,720,844,1024,1180].includes(requestedHeight) ? requestedHeight : 844;
+      const requestedView = url.searchParams.get("view") || "/";
+      const view = /^\/(?:listings(?:\/[a-z0-9-]+)?|transactions(?:\?open=[a-z0-9-]+)?|settings)?$/i.test(requestedView) ? requestedView : "/";
+      const scenario = url.searchParams.get("scenario") === "unavailable" ? "unavailable" : "records";
+      response.end(responsiveHtml(width, height, view, scenario)); return;
     }
     if (pathname === "/" || pathname === "/preview") {
       await compile();

@@ -26,11 +26,13 @@ export function ListingImage({
   alt,
   className,
   source = "sample",
+  loading = "lazy",
 }: {
   src: string | undefined;
   alt: string;
   className?: string;
   source?: ListingSource;
+  loading?: "lazy" | "eager";
 }) {
   const initial = src || (source === "sample" ? FALLBACK_PLATE : undefined);
   const [resolved, setResolved] = React.useState<string | undefined>(initial);
@@ -60,7 +62,8 @@ export function ListingImage({
       src={assetPath(resolved)}
       alt={alt}
       className={cn("object-cover", className)}
-      loading="lazy"
+      loading={loading}
+      decoding="async"
       referrerPolicy="no-referrer"
       onError={() => {
         // Sample: fall back once to the plate (guarding a plate that itself

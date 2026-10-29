@@ -23,6 +23,11 @@ export function PreviewNavigation({ children }) {
   return <NavigationContext.Provider value={{ route, navigate }}>{children}</NavigationContext.Provider>;
 }
 export function usePathname() { return useContext(NavigationContext)?.route.split("?")[0] || "/"; }
+export function useParams() {
+  const route = useContext(NavigationContext)?.route.split("?")[0] || "/";
+  const segments = route.split("/").filter(Boolean);
+  return { id: segments[0] === "listings" ? segments[1] : undefined };
+}
 export function useRouter() {
   const navigation = useContext(NavigationContext);
   return { push: navigation.navigate, replace: (href) => navigation.navigate(href, true), back: () => window.history.back(), refresh: () => window.location.reload() };

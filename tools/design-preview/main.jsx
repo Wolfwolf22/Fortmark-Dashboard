@@ -16,6 +16,9 @@ import { PreviewNavigation, usePathname } from "./next-stubs";
 import { installPreviewTransport } from "./fixtures.mjs";
 import { connectLayoutStorage } from "@/lib/stores/layout";
 import { pageTitleFor } from "@/components/layout/nav-items";
+import ListingsPage from "@/app/(app)/listings/page";
+import ListingDetailPage from "@/app/(app)/listings/[id]/page";
+import TransactionsPage from "@/app/(app)/transactions/page";
 
 installPreviewTransport();
 // In-memory only: dragging in this review never touches account storage.
@@ -39,11 +42,19 @@ function DesignSystem() {
 function Content() {
   const route = usePathname();
   if (route === "/") return <HomeMetricsProvider><HomeHero greetingName="Sample" roleLabel="Admin" /><BentoGrid /></HomeMetricsProvider>;
+  if (route === "/listings") return <ListingsPage />;
+  if (route.startsWith("/listings/")) return <ListingDetailPage />;
+  if (route === "/transactions") return <TransactionsPage />;
   if (route === "/settings") return <DesignSystem />;
   return <Card className="p-8"><p className="text-micro">Design preview</p><h2 className="mt-3 text-3xl font-semibold tracking-tight">{pageTitleFor(route)}</h2><p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">This preview covers the shared identity and Home layout. This destination is shown to verify navigation, active states and shared styling. Production workflows and records are not connected.</p><Button className="mt-6" onClick={() => window.history.back()}>Go back</Button></Card>;
 }
 
+function PreviewControls() {
+  const route = usePathname();
+  const scenario = new URLSearchParams(window.location.search).get("scenario") || "records";
+  return <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-2 border-b border-border bg-card px-4 py-2 text-center text-xs text-muted-foreground"><span className="font-semibold text-foreground">Design preview</span><span aria-hidden>·</span><span>Sample data. No live accounts or services.</span><a href="/?view=%2Fsettings" className="ml-1 font-semibold text-foreground underline underline-offset-4">View foundations</a>{route === "/transactions" && <label className="ml-2 flex items-center gap-2">Preview data<select aria-label="Preview transaction data" value={scenario} className="rounded border border-input bg-card px-2 py-1 text-foreground" onChange={event => { const url = new URL(window.location.href); url.searchParams.set("scenario", event.target.value); window.location.assign(url); }}><option value="records">Records</option><option value="unavailable">First request unavailable</option></select></label>}</div>;
+}
 function Preview() {
-  return <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} storageKey="fortmark.design-preview.theme"><TooltipProvider delayDuration={250}><PreviewNavigation><div className="border-b border-border bg-card px-4 py-2 text-center text-xs text-muted-foreground"><span className="font-semibold text-foreground">Design preview</span><span className="mx-2" aria-hidden>·</span>Sample data. No live accounts or services.<a href="/?view=%2Fsettings" className="ml-3 font-semibold text-foreground underline underline-offset-4">View foundations</a></div><AppShell user={user} profile={profile}><Content /></AppShell></PreviewNavigation></TooltipProvider></ThemeProvider>;
+  return <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} storageKey="fortmark.design-preview.theme"><TooltipProvider delayDuration={250}><PreviewNavigation><PreviewControls /><AppShell user={user} profile={profile}><Content /></AppShell></PreviewNavigation></TooltipProvider></ThemeProvider>;
 }
 createRoot(document.getElementById("root")).render(<Preview />);

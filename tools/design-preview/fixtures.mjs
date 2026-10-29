@@ -1,11 +1,13 @@
 // Deliberately synthetic, nonpersistent fixtures for visual review only.
-const monthStart = "2026-10-01";
+import { visualTransactions } from "./visual-fixtures.mjs";
+const previewNow = new Date();
+const monthStart = new Date(Date.UTC(previewNow.getUTCFullYear(), previewNow.getUTCMonth(), 1)).toISOString().slice(0, 10);
 const monthly = Array.from({ length: 12 }, (_, index) => {
-  const date = new Date(Date.UTC(2025, 10 + index, 1));
+  const date = new Date(Date.UTC(previewNow.getUTCFullYear(), previewNow.getUTCMonth() - 11 + index, 1));
   return { month: date.toISOString().slice(0, 10), closedCount: 0, closedVolumeCents: 0, commissionCents: 0 };
 });
 export const metrics = {
-  source: "sample", generatedAt: "2026-10-28T16:00:00.000Z", scope: "brokerage", contactsScope: "brokerage", monthStart,
+  source: "sample", generatedAt: previewNow.toISOString(), scope: "brokerage", contactsScope: "brokerage", monthStart,
   transactions: { availability: "available", data: {
     activeCount: 2, onHoldCount: 0, activeVolumeCents: 1280000, activeVolumeUnpricedCount: 0,
     projectedCommissionCents: 0, projectedCommissionUntermedCount: 2, scheduledClosingsThisMonth: 0,
@@ -24,6 +26,28 @@ export const metrics = {
   ] },
   leaderboard: { availability: "available", data: [{ agentUserId: "sample-agent", name: "Sample Agent", activeCount: 2, closedCount: 0, closedVolumeCents: 0 }] },
 };
+
+// Keep the Home overview consistent with the same synthetic work list shown
+// on Transactions; these are fixture totals, never live business metrics.
+const active = visualTransactions.filter(deal => ["offer", "under_contract", "due_diligence", "financing", "closing_prep"].includes(deal.stage));
+const closed = visualTransactions.filter(deal => deal.stage === "closed");
+const closedThisMonth = closed.filter(deal => deal.closeDate?.startsWith(monthStart.slice(0, 7)));
+const sumCents = (rows, key) => Math.round(rows.reduce((total, row) => total + row[key], 0) * 100);
+Object.assign(metrics.transactions.data, {
+  activeCount: active.length,
+  onHoldCount: visualTransactions.filter(deal => deal.stage === "on_hold").length,
+  activeVolumeCents: sumCents(active, "contractPrice"),
+  projectedCommissionCents: sumCents(active, "projectedCommission"),
+  projectedCommissionUntermedCount: active.filter(deal => deal.commissionRate === 0).length,
+  scheduledClosingsThisMonth: active.filter(deal => deal.closeDate?.startsWith(monthStart.slice(0, 7))).length,
+  closedThisMonthCount: closedThisMonth.length,
+  closedThisMonthVolumeCents: sumCents(closedThisMonth, "contractPrice"),
+});
+monthly.forEach(point => {
+  const rows = closed.filter(deal => deal.closeDate?.startsWith(point.month.slice(0, 7)));
+  Object.assign(point, { closedCount: rows.length, closedVolumeCents: sumCents(rows, "contractPrice"), commissionCents: sumCents(rows, "projectedCommission") });
+});
+Object.assign(metrics.leaderboard.data[0], { activeCount: active.length, closedCount: closedThisMonth.length, closedVolumeCents: sumCents(closedThisMonth, "contractPrice") });
 
 const names = ["calendar", "documents", "messages", "notifications", "market", "team", "brokerage", "integrations", "reports"];
 const subsystems = Object.fromEntries(names.map(name => [name, "not_configured"]));
