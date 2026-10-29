@@ -14,8 +14,11 @@ export function PreviewNavigation({ children }) {
   const route = params.get("view") || "/";
   const navigate = (href, replace = false) => {
     const url = new URL(window.location.href);
+    const scenario = url.searchParams.get("scenario");
+    const sameSection = (params.get("view") || "/").split("?")[0] === href.split("?")[0];
     url.search = "";
     url.searchParams.set("view", href);
+    if (scenario && sameSection) url.searchParams.set("scenario", scenario);
     window.history[replace ? "replaceState" : "pushState"]({}, "", url);
     window.dispatchEvent(new PopStateEvent("popstate"));
     window.scrollTo(0, 0);

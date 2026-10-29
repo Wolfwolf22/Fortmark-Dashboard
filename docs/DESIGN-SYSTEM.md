@@ -199,6 +199,20 @@ const { data, loading } = useQuery(
   milestones or dates are absent. Query and action failures need visible feedback.
 - Horizontal boards scroll inside the page. The main shell clips horizontal
   overflow without creating a second vertical scroll container; dialogs stay portaled.
+- Contacts opens with the same section title treatment and a clear New contact
+  action. The attention snapshot leads with overdue and due-today reminders;
+  every count still applies exactly the filters it measures. Upcoming is a
+  shortcut over stored reminders, with no invented count.
+- The contact list gives the person's name and next follow-up a clear hierarchy.
+  Desktop tables keep sorting and paging on the server; phones show the same
+  records as readable single-action rows. Advanced filters expand on demand at
+  every width, with applied-filter summaries visible while collapsed. Keep the
+  desktop toolbar compact enough to reveal contacts early. Search text stays out
+  of the URL.
+- Contact drawers keep identity and the close control visible while details
+  scroll. Notes, activity, client needs, and linked deals retain their own clear
+  sections and honest missing-data states. Follow-up reminders and logged touches
+  stay distinct: completing a reminder does not claim the contact was reached.
 
 ## Copy checklist (every string you write)
 

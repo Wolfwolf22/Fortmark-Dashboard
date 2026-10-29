@@ -6,7 +6,7 @@
  * is ever shown. The day list follows the month, so February 30 and April 31
  * cannot be picked (February 29 can: the year is unknown).
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -27,6 +27,15 @@ export function LeadBirthday({
   const [editing, setEditing] = useState(false);
   const [month, setMonth] = useState<string>("");
   const [day, setDay] = useState<string>("");
+  const editButton = useRef<HTMLButtonElement>(null);
+  const monthControl = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(false);
+
+  useEffect(() => {
+    if (editing) monthControl.current?.focus();
+    else if (wasEditing.current) editButton.current?.focus();
+    wasEditing.current = editing;
+  }, [editing]);
 
   const shown = formatBirthday(value);
 
@@ -47,9 +56,9 @@ export function LeadBirthday({
 
   return (
     <div data-testid="lead-birthday">
-      <p className="text-micro">Birthday</p>
+      <p className="text-[11px] leading-4 text-muted-foreground">Birthday</p>
       {editing ? (
-        <div className="mt-1.5 flex flex-wrap items-end gap-2">
+        <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="grid gap-1.5">
             <Label htmlFor="lead-birthday-month">Month</Label>
             <Select
@@ -61,7 +70,7 @@ export function LeadBirthday({
               }}
               disabled={saving}
             >
-              <SelectTrigger id="lead-birthday-month" className="w-36">
+              <SelectTrigger ref={monthControl} id="lead-birthday-month" className="w-36">
                 <SelectValue placeholder="Month" />
               </SelectTrigger>
               <SelectContent>
@@ -96,13 +105,13 @@ export function LeadBirthday({
           </Button>
         </div>
       ) : (
-        <div className="mt-1 flex flex-wrap items-center gap-2">
+        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
           <p className={shown ? "text-sm font-semibold" : "text-sm text-muted-foreground"} data-testid="lead-birthday-value">
             {shown ?? "Not set"}
           </p>
           {canWrite && (
-            <>
-              <Button type="button" size="sm" variant="outline" disabled={saving} onClick={open}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Button ref={editButton} type="button" size="sm" variant="outline" disabled={saving} onClick={open}>
                 {shown ? "Change" : "Set"}
               </Button>
               {shown && (
@@ -110,7 +119,7 @@ export function LeadBirthday({
                   Clear
                 </Button>
               )}
-            </>
+            </div>
           )}
         </div>
       )}

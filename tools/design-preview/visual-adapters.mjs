@@ -1,5 +1,6 @@
 import { visualListings, visualTransactions, sampleAgent } from "./visual-fixtures.mjs";
 import { sortListings } from "@/lib/data/listing-sort";
+import { rejectPreviewWrite } from "./read-only.mjs";
 
 const copy = (value) => value === undefined ? undefined : structuredClone(value);
 export class ListingsError extends Error {
@@ -8,7 +9,7 @@ export class ListingsError extends Error {
 export class TransactionsError extends Error {
   constructor(code, status = 403) { super(`Preview transaction request: ${code}`); this.code = code; this.status = status; }
 }
-const readOnly = () => Promise.reject(new Error("Design preview is read-only. No records were changed."));
+const readOnly = rejectPreviewWrite;
 export const createListing = readOnly;
 export const createTransaction = readOnly;
 export const updateTransactionStage = readOnly;

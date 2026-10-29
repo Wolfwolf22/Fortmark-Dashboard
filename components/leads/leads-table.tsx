@@ -15,12 +15,12 @@
  * squeezing a nine-column table: name, stage, next follow-up, last touch and
  * (for a brokerage-wide role) the agent, one tap to open.
  */
-import { ArrowDown, ArrowUp, ChevronsUpDown, Users } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpRight, CalendarDays, ChevronsUpDown, Users } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { IconWell } from "@/components/ui/icon-well";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -67,9 +67,12 @@ function FollowUpCell({ lead }: { lead: Lead }) {
       {isFollowUpDue(followUp) ? (
         <StatusPill tone="warn">{followUpLabel(followUp)}</StatusPill>
       ) : followUp.state === "future" ? (
-        <span className="tabular whitespace-nowrap">{followUpLabel(followUp)}</span>
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-medium tabular">
+          <CalendarDays className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          {followUpLabel(followUp)}
+        </span>
       ) : (
-        <span className="text-muted-foreground">—</span>
+        <span className="text-muted-foreground" aria-label="No follow-up scheduled">—</span>
       )}
     </span>
   );
@@ -87,11 +90,24 @@ function LastTouchCell({ lead }: { lead: Lead }) {
 
 function TableSkeleton() {
   return (
-    <Card className="p-6" aria-busy>
-      <Skeleton className="mb-4 h-4 w-24" />
-      <div className="space-y-3">
+    <Card className="min-w-0 overflow-hidden p-4 sm:p-5" aria-busy>
+      <div className="mb-5 flex items-center gap-3">
+        <Skeleton className="h-8 w-8 rounded-lg" />
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-3 w-48" />
+        </div>
+      </div>
+      <div className="divide-y divide-border">
         {Array.from({ length: 8 }).map((_, i) => (
-          <Skeleton key={i} className="h-10 w-full" />
+          <div key={i} className="flex items-center gap-3 py-4">
+            <Skeleton className="h-9 w-9 shrink-0 rounded-lg" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <Skeleton className="h-4 w-36 max-w-full" />
+              <Skeleton className="h-3 w-48 max-w-full" />
+            </div>
+            <Skeleton className="hidden h-6 w-20 shrink-0 rounded-full sm:block" />
+          </div>
         ))}
       </div>
     </Card>
@@ -134,7 +150,7 @@ export function LeadsTable({
 
   if (!page && failed) {
     return (
-      <Card className="p-6">
+      <Card className="min-w-0 p-5" role="alert">
         <EmptyState
           icon={Users}
           title="Contacts could not be loaded"
@@ -157,11 +173,25 @@ export function LeadsTable({
   const last = Math.min(current * pageSize, total);
 
   return (
-    <Card aria-busy={loading} className={cn("p-4 md:p-6", loading && "opacity-80 transition-opacity")}>
-      <p role="status" aria-live="polite" className="tabular mb-3 text-[13px] text-muted-foreground">
-        {total === 1 ? "1 contact" : `${total} contacts`}
-        {failed && " · could not refresh"}
-      </p>
+    <Card aria-busy={loading} className="min-w-0 overflow-hidden p-4 sm:p-5">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <IconWell icon={Users} />
+          <div>
+            <p role="status" aria-live="polite" className="text-sm font-semibold leading-snug tabular">
+              {total === 1 ? "1 contact" : `${total} contacts`}
+              {loading && <span className="ml-2 text-xs font-normal text-muted-foreground">Refreshing…</span>}
+            </p>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">Open a contact to review details and follow-ups.</p>
+          </div>
+        </div>
+      </div>
+      {failed && (
+        <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-panel border border-border bg-tint px-3 py-2">
+          <p className="text-xs leading-relaxed text-muted-foreground">Could not refresh. Showing the last loaded contacts.</p>
+          <Button type="button" variant="ghost" size="sm" onClick={onRetry}>Try again</Button>
+        </div>
+      )}
       {total === 0 ? (
         <EmptyState
           icon={Users}
@@ -176,11 +206,11 @@ export function LeadsTable({
           }
         />
       ) : wide ? (
-        <Table containerClassName="max-h-[70vh] overflow-y-auto">
+        <Table className="min-w-[1060px]" containerClassName="max-h-[70vh] overflow-y-auto">
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               {COLUMNS.map((col) => {
-                const stick = "sticky top-0 z-10 bg-card";
+                const stick = "sticky top-0 z-10 border-b border-border bg-card";
                 if (!col.sortKey) {
                   return (
                     <TableHead key={col.id} className={stick}>
@@ -199,7 +229,7 @@ export function LeadsTable({
                       type="button"
                       onClick={() => onSort(col.sortKey!)}
                       className={cn(
-                        "text-micro inline-flex items-center gap-1 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        "text-micro inline-flex min-h-10 items-center gap-1 rounded-sm transition-colors duration-150 hover:text-foreground",
                         active && "text-foreground"
                       )}
                     >
@@ -219,35 +249,40 @@ export function LeadsTable({
             {items.map((lead) => {
               const agent = agentLabel(lead, byId);
               return (
-                <TableRow key={lead.id} onClick={() => onOpen(lead.id)} className="cursor-pointer" data-testid="lead-row">
-                  <TableCell>
+                <TableRow key={lead.id} onClick={() => onOpen(lead.id)} className="group cursor-pointer" data-testid="lead-row">
+                  <TableCell className="min-w-[225px] py-4">
+                    <div className="flex items-center gap-3">
+                      <Avatar className="h-9 w-9 rounded-lg" aria-hidden>
+                        <AvatarFallback className="rounded-lg bg-tint text-xs font-semibold text-foreground">{initials(lead.name)}</AvatarFallback>
+                      </Avatar>
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onOpen(lead.id);
                       }}
-                      className="text-left leading-snug focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="min-w-0 rounded-sm text-left leading-snug"
                     >
-                      <span className="block font-semibold hover:underline">{lead.name}</span>
-                      <span className="mt-0.5 block text-xs text-muted-foreground">{lead.email || lead.phone || " "}</span>
+                      <span className="block max-w-[17rem] break-words text-[14px] font-semibold group-hover:underline">{lead.name}</span>
+                      <span className="mt-1 block max-w-[17rem] break-all text-xs leading-relaxed text-muted-foreground">{lead.email || lead.phone || "No email or phone"}</span>
                     </button>
+                    </div>
                   </TableCell>
-                  <TableCell className={cn(lead.intent === "other" ? "text-muted-foreground/70" : "text-muted-foreground")}>
+                  <TableCell className="whitespace-nowrap text-muted-foreground">
                     {lead.intent === "other" ? "—" : INTENT_LABELS[lead.intent]}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="secondary">{LEAD_STAGE_LABELS[lead.stage]}</Badge>
+                    <StatusPill tone="neutral">{LEAD_STAGE_LABELS[lead.stage]}</StatusPill>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline">{LEAD_SOURCE_LABELS[lead.source]}</Badge>
+                    <span className="whitespace-nowrap text-muted-foreground">{LEAD_SOURCE_LABELS[lead.source]}</span>
                   </TableCell>
                   <TableCell>
                     <span className="flex items-center gap-2 whitespace-nowrap">
                       {/* No avatar for a placeholder: its initials would be a made-up person. */}
                       {agent !== "Unnamed agent" && agent !== "—" && (
-                        <Avatar className="h-6 w-6">
-                          <AvatarFallback className="text-[9px]">{initials(agent)}</AvatarFallback>
+                        <Avatar className="h-6 w-6" aria-hidden>
+                          <AvatarFallback className="bg-tint text-[9px] font-semibold text-foreground">{initials(agent)}</AvatarFallback>
                         </Avatar>
                       )}
                       <span className={cn((agent === "Unnamed agent" || agent === "—") && "text-muted-foreground")}>{agent}</span>
@@ -263,7 +298,7 @@ export function LeadsTable({
                   <TableCell>
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
                       aria-label={`Open ${lead.name}`}
                       onClick={(e) => {
@@ -272,6 +307,7 @@ export function LeadsTable({
                       }}
                     >
                       Open
+                      <ArrowUpRight aria-hidden />
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -289,27 +325,35 @@ export function LeadsTable({
                   type="button"
                   onClick={() => onOpen(lead.id)}
                   data-testid="lead-row"
-                  className="flex w-full flex-col gap-1.5 px-1 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="flex w-full min-w-0 flex-col gap-3 rounded-panel px-1 py-4 text-left transition-colors duration-150 hover:bg-tint"
                 >
-                  <span className="flex items-start justify-between gap-3">
-                    <span className="min-w-0 font-semibold leading-snug">{lead.name}</span>
-                    <Badge variant="secondary" className="shrink-0">
-                      {LEAD_STAGE_LABELS[lead.stage]}
-                    </Badge>
+                  <span className="flex w-full min-w-0 items-start gap-3">
+                    <Avatar className="h-9 w-9 rounded-lg" aria-hidden>
+                      <AvatarFallback className="rounded-lg bg-tint text-xs font-semibold text-foreground">{initials(lead.name)}</AvatarFallback>
+                    </Avatar>
+                    <span className="min-w-0 flex-1">
+                      <span className="block break-words text-[15px] font-semibold leading-snug">{lead.name}</span>
+                      <span className="mt-1 block break-all text-xs leading-relaxed text-muted-foreground">{lead.email || lead.phone || "No email or phone"}</span>
+                    </span>
+                    <ArrowUpRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   </span>
-                  <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <StatusPill tone="neutral">{LEAD_STAGE_LABELS[lead.stage]}</StatusPill>
+                    {lead.intent !== "other" && <span className="text-xs text-muted-foreground">{INTENT_LABELS[lead.intent]}</span>}
+                  </span>
+                  <span className="grid w-full min-w-0 grid-cols-1 gap-2 text-[13px] min-[430px]:grid-cols-2">
                     <span className="flex items-center gap-1.5">
-                      <span className="text-muted-foreground">Follow-up</span>
+                      <span className="text-xs text-muted-foreground">Follow-up</span>
                       <FollowUpCell lead={lead} />
                     </span>
                     <span className="flex items-center gap-1.5">
-                      <span className="text-muted-foreground">Last touch</span>
+                      <span className="text-xs text-muted-foreground">Last touch</span>
                       <LastTouchCell lead={lead} />
                     </span>
                   </span>
                   {showAgent && (
-                    <span className={cn("text-xs", agent === "Unnamed agent" ? "text-muted-foreground" : "text-muted-foreground")}>
-                      {agent}
+                    <span className="break-words text-xs leading-relaxed text-muted-foreground">
+                      Assigned agent · {agent}
                     </span>
                   )}
                 </button>
@@ -320,11 +364,11 @@ export function LeadsTable({
       )}
 
       {total > 0 && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
           <p className="tabular text-[13px] text-muted-foreground">
             Showing {first}–{last} of {total}
           </p>
-          <nav aria-label="Pagination" className="flex items-center gap-2">
+          <nav aria-label="Pagination" className="flex w-full flex-wrap items-center justify-between gap-2 sm:w-auto sm:justify-end">
             <Button variant="outline" size="sm" onClick={() => onPage(current - 1)} disabled={current <= 1}>
               Previous
             </Button>

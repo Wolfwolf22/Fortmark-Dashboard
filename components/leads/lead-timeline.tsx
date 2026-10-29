@@ -26,9 +26,12 @@ import {
   ListChecks,
   Target,
   Workflow,
+  History,
   type LucideIcon,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { IconWell } from "@/components/ui/icon-well";
 import { getTimeline, type TimelineItem } from "@/lib/data/adapters/leads";
 import { useQuery } from "@/lib/data/hooks";
 import { formatDate, formatRelative } from "@/lib/utils";
@@ -54,7 +57,7 @@ const ICONS: Record<TimelineItem["type"], LucideIcon> = {
 const COLLAPSED = 5;
 
 export function LeadTimeline({ leadId }: { leadId: string }) {
-  const { data, loading, error } = useQuery<TimelineItem[]>(() => getTimeline(leadId), [leadId]);
+  const { data, loading, error, refetch } = useQuery<TimelineItem[]>(() => getTimeline(leadId), [leadId]);
   const [all, setAll] = useState(false);
   // Every contact opens collapsed.
   const [forLead, setForLead] = useState(leadId);
@@ -65,9 +68,12 @@ export function LeadTimeline({ leadId }: { leadId: string }) {
 
   return (
     <section aria-labelledby="lead-activity-heading" data-testid="lead-timeline">
-      <h3 id="lead-activity-heading" className="text-micro">
+      <div className="flex items-center gap-2.5">
+      <IconWell icon={History} />
+      <h3 id="lead-activity-heading" className="text-[15px] font-semibold">
         Activity{data && data.length > 0 ? ` (${data.length})` : ""}
       </h3>
+      </div>
       {!data && loading ? (
         <div className="mt-3 space-y-3" aria-hidden>
           {Array.from({ length: 3 }).map((_, i) => (
@@ -75,25 +81,25 @@ export function LeadTimeline({ leadId }: { leadId: string }) {
           ))}
         </div>
       ) : error && !data ? (
-        <p role="status" className="mt-3 text-sm text-muted-foreground">
-          Activity could not be loaded.
-        </p>
+        <div role="alert" className="mt-3 rounded-panel border border-border bg-tint p-4 text-sm">
+          <p>Activity could not be loaded.</p>
+          <Button type="button" size="sm" variant="outline" className="mt-3" onClick={refetch}>Try again</Button>
+        </div>
       ) : !data || data.length === 0 ? (
-        <p className="mt-3 text-sm text-muted-foreground">No activity yet.</p>
+        <p className="mt-3 rounded-panel border border-dashed border-input px-4 py-5 text-[13px] text-muted-foreground">No activity yet.</p>
       ) : (
         <>
-          <ol id="lead-activity-list" className="mt-3 space-y-3">
+          <ol id="lead-activity-list" className="mt-3 rounded-panel border border-border p-4">
             {(all ? data : data.slice(0, COLLAPSED)).map((item) => {
               const Icon = ICONS[item.type] ?? StickyNote;
               return (
-                <li key={item.id} className="flex gap-3" data-testid="timeline-item" data-type={item.type}>
-                  <span className="mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full bg-tint text-muted-foreground">
-                    <Icon className="h-3.5 w-3.5" aria-hidden />
-                  </span>
+                <li key={item.id} className="group relative flex gap-3 pb-5 last:pb-0" data-testid="timeline-item" data-type={item.type}>
+                  <span aria-hidden className="absolute bottom-0 left-[15px] top-10 w-px bg-border group-last:hidden" />
+                  <IconWell icon={Icon} />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium leading-snug">{item.title}</p>
-                    {item.detail && <p className="mt-0.5 break-words text-sm text-muted-foreground">{item.detail}</p>}
-                    <p className="mt-0.5 text-xs text-muted-foreground">
+                    <p className="break-words text-sm font-semibold leading-snug">{item.title}</p>
+                    {item.detail && <p className="mt-1 break-words text-[13px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{item.detail}</p>}
+                    <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">
                       <time dateTime={item.at} title={formatDate(item.at)}>
                         {formatRelative(item.at)}
                       </time>
@@ -110,13 +116,14 @@ export function LeadTimeline({ leadId }: { leadId: string }) {
               aria-expanded={all}
               aria-controls="lead-activity-list"
               onClick={() => setAll((v) => !v)}
-              className="mt-3 text-[13px] font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="mt-3 min-h-10 rounded-lg border border-input px-3 py-2 text-[13px] font-semibold transition-colors hover:bg-accent"
             >
               {all ? "Show fewer" : "Show all activity"}
             </button>
           )}
         </>
       )}
+      {error && data && <p role="alert" className="mt-3 text-sm text-muted-foreground">Activity could not be refreshed. <button type="button" className="min-h-10 rounded-md px-1 font-semibold underline underline-offset-4" onClick={refetch}>Try again</button></p>}
     </section>
   );
 }

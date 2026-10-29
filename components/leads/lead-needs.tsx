@@ -13,9 +13,12 @@
  * stored so that a later search can use it without reading a paragraph.
  */
 import { useEffect, useState, type FormEvent } from "react";
+import { Target } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { IconWell } from "@/components/ui/icon-well";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -164,7 +167,7 @@ function NeedForm({
   const invalid = (id: string) => (error?.field === id ? true : undefined);
 
   return (
-    <form onSubmit={submit} className="mt-3 grid gap-3 rounded-panel border border-border p-4" aria-label="Client need">
+    <form onSubmit={submit} className="mt-3 grid min-w-0 gap-4 rounded-panel border border-border bg-tint p-4" aria-label="Client need">
       <div className="grid gap-1.5">
         <Label htmlFor="need-kind">Need type</Label>
         <Select value={s.kind} onValueChange={(v) => set("kind", v as NeedKind)} disabled={saving}>
@@ -202,7 +205,7 @@ function NeedForm({
         </div>
       </fieldset>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-4">
         <div className="grid gap-1.5">
           <Label htmlFor="need-price-min">Budget minimum ($)</Label>
           <Input id="need-price-min" inputMode="decimal" value={s.priceMin} onChange={(e) => set("priceMin", e.target.value)} disabled={saving} aria-invalid={invalid("need-price-min")} placeholder="600000" />
@@ -221,7 +224,7 @@ function NeedForm({
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="need-target-date">Target date</Label>
-          <Input id="need-target-date" type="date" value={s.targetDate} onChange={(e) => set("targetDate", e.target.value)} disabled={saving} />
+          <Input id="need-target-date" type="date" value={s.targetDate} onChange={(e) => set("targetDate", e.target.value)} disabled={saving} className="min-w-0" />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="need-timeline-note">Timeline note</Label>
@@ -288,14 +291,14 @@ function NeedSummary({ need }: { need: NeedView }) {
   const { headline, lines } = summarizeNeed(need);
   return (
     <div data-testid="need-summary">
-      <p className="text-sm font-semibold">
-        {headline}
-        {need.status !== "active" && <span className="ml-2 text-xs font-normal text-muted-foreground">{NEED_STATUS_LABELS[need.status]}</span>}
-      </p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <p className="break-words text-sm font-semibold">{headline}</p>
+        {need.status !== "active" && <Badge variant="muted">{NEED_STATUS_LABELS[need.status]}</Badge>}
+      </div>
       {lines.length > 0 ? (
-        <ul className="mt-1 space-y-0.5 text-sm text-muted-foreground">
+        <ul className="mt-2 space-y-1 text-[13px] leading-relaxed text-muted-foreground">
           {lines.map((l) => (
-            <li key={l} className="break-words">
+            <li key={l} className="break-words [overflow-wrap:anywhere]">
               {l}
             </li>
           ))}
@@ -353,10 +356,13 @@ export function LeadNeeds({ leadId, canWrite, available }: { leadId: string; can
 
   return (
     <section aria-labelledby="lead-needs-heading" data-testid="lead-needs">
-      <div className="flex items-center justify-between gap-3">
-        <h3 id="lead-needs-heading" className="text-micro">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+        <IconWell icon={Target} />
+        <h3 id="lead-needs-heading" className="text-[15px] font-semibold">
           Client needs
         </h3>
+        </div>
         {available && canWrite && !mode && (
           <Button type="button" size="sm" variant="outline" onClick={() => { setProblem(null); setMessage(null); setMode({ kind: "add" }); }}>
             {needs.length === 0 ? "Add client need" : "Add another"}
@@ -365,13 +371,14 @@ export function LeadNeeds({ leadId, canWrite, available }: { leadId: string; can
       </div>
 
       {!available ? (
-        <p className="mt-2 text-sm text-muted-foreground">Client needs are not available with sample data.</p>
+        <p className="mt-3 rounded-panel border border-border bg-tint p-4 text-[13px] leading-relaxed text-muted-foreground">Client needs are not available with sample data.</p>
       ) : !data && loading ? (
         <Skeleton className="mt-3 h-16 w-full" />
       ) : error && !data ? (
-        <p role="status" className="mt-2 text-sm text-muted-foreground">
-          Client needs could not be loaded.
-        </p>
+        <div role="alert" className="mt-3 rounded-panel border border-border bg-tint p-4 text-sm">
+          <p>Client needs could not be loaded.</p>
+          <Button type="button" size="sm" variant="outline" className="mt-3" onClick={refetch}>Try again</Button>
+        </div>
       ) : (
         <>
           {mode?.kind === "add" && (
@@ -381,13 +388,13 @@ export function LeadNeeds({ leadId, canWrite, available }: { leadId: string; can
             <NeedForm initial={fromNeed(mode.need)} saving={saving} submitLabel="Save changes" onCancel={() => setMode(null)} onSubmit={(body) => void run(() => updateNeed(leadId, mode.need.id, body), "Client need updated.")} />
           )}
 
-          {!mode && needs.length === 0 && <p className="mt-2 text-sm text-muted-foreground">No client needs added.</p>}
+          {!mode && needs.length === 0 && <p className="mt-3 rounded-panel border border-dashed border-input px-4 py-5 text-[13px] text-muted-foreground">No client needs added.</p>}
 
           {active.map((n) => (
-            <div key={n.id} className={mode ? "hidden" : "mt-3 rounded-panel bg-tint p-3"}>
+            <div key={n.id} className={mode ? "hidden" : "mt-3 rounded-panel border border-border bg-tint p-4"}>
               <NeedSummary need={n} />
               {canWrite && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
+                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border pt-3">
                   <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => setMode({ kind: "edit", need: n })}>
                     Edit
                   </Button>
@@ -413,10 +420,10 @@ export function LeadNeeds({ leadId, canWrite, available }: { leadId: string; can
               {showOthers && (
                 <div id="lead-other-needs" className="mt-1 space-y-2">
                   {others.map((n) => (
-                    <div key={n.id} className="rounded-panel border border-border p-3">
+                    <div key={n.id} className="rounded-panel border border-border p-4">
                       <NeedSummary need={n} />
                       {canWrite && (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
+                        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border pt-3">
                           <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => setStatus(n, "active", "Client need reactivated.")}>
                             Reactivate
                           </Button>
@@ -435,6 +442,7 @@ export function LeadNeeds({ leadId, canWrite, available }: { leadId: string; can
           )}
         </>
       )}
+      {available && error && data && <p role="alert" className="mt-3 text-sm text-muted-foreground">Client needs could not be refreshed. <button type="button" className="min-h-10 rounded-md px-1 font-semibold underline underline-offset-4" onClick={refetch}>Try again</button></p>}
 
       {problem && (
         <p role="alert" className="mt-2 text-sm text-destructive">

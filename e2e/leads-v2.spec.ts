@@ -83,6 +83,10 @@ const reloadReady = (p: Page, ready: Locator, timeout = 30_000) =>
 
 /** Open a Radix select by its accessible name and choose an option. */
 async function pick(p: Page, label: string, option: string | RegExp) {
+  if (label.startsWith("Filter by ")) {
+    const disclosure = p.getByRole("button", { name: "Filters", exact: true });
+    if (await disclosure.getAttribute("aria-expanded") === "false") await disclosure.click();
+  }
   await p.getByRole("combobox", { name: label }).click();
   await p.getByRole("option", { name: option }).first().click();
 }
@@ -431,6 +435,14 @@ test("desktop: the workspace loads with a snapshot, views, filters and a dense t
     await expect(page.getByRole("columnheader", { name: h })).toBeVisible();
   }
   await expect(page.getByRole("columnheader", { name: "Last touch" })).toHaveAttribute("aria-sort", "descending");
+  // The advanced panel is disclosed at every width; the list stays visible first.
+  const filters = page.getByRole("button", { name: "Filters", exact: true });
+  await expect(filters).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("combobox", { name: "Filter by stage" })).toBeHidden();
+  await filters.click();
+  await expect(page.getByRole("combobox", { name: "Filter by stage" })).toBeVisible();
+  await filters.click();
+  await expect(page.getByRole("combobox", { name: "Filter by stage" })).toBeHidden();
   // Views.
   const views = PRIVILEGED ? ["All leads", "My leads", "Due today", "Overdue", "No touch 14+ days"] : ["My leads", "Due today", "Overdue", "No touch 14+ days"];
   for (const v of views) await expect(page.getByRole("button", { name: v, exact: true })).toBeVisible();

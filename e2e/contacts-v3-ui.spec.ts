@@ -197,7 +197,10 @@ test("Contacts, not Leads: the nav, the page, the views and the legacy address",
   else await expect(page.getByText(/^CV3 Colleague Rep$/)).toHaveCount(0);
   // Scope is by role, not by what the Transactions page allows: a personal-book role has no Owner filter
   // and never sees a colleague's contact, even a broker or coordinator whose DEALS are brokerage-wide.
-  if (IS_ADMIN) await expect(page.getByRole("combobox", { name: "Filter by agent" })).toBeVisible();
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  if (IS_ADMIN) {
+    await expect(page.getByRole("combobox", { name: "Filter by agent" })).toBeVisible();
+  }
   else {
     await expect(page.getByRole("combobox", { name: "Filter by agent" }), "no Owner filter outside admin").toHaveCount(0);
     await expect(page.getByText(/^CV3 Colleague (Rep|Lead)$/)).toHaveCount(0);

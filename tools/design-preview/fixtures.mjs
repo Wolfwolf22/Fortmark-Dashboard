@@ -1,6 +1,10 @@
 // Deliberately synthetic, nonpersistent fixtures for visual review only.
 import { visualTransactions } from "./visual-fixtures.mjs";
-const previewNow = new Date();
+import { previewContacts, contactFixtureNow } from "./contact-fixtures.mjs";
+import { ACTIVE_CLIENT_STAGES, LIFECYCLE_STAGES, OPEN_PIPELINE_STAGES } from "../../lib/contacts/stages.ts";
+import { followUpStatus } from "../../lib/contacts/follow-up.ts";
+import { businessDayKey, dayDiff } from "../../lib/metrics/business-day.ts";
+const previewNow = contactFixtureNow;
 const monthStart = new Date(Date.UTC(previewNow.getUTCFullYear(), previewNow.getUTCMonth(), 1)).toISOString().slice(0, 10);
 const monthly = Array.from({ length: 12 }, (_, index) => {
   const date = new Date(Date.UTC(previewNow.getUTCFullYear(), previewNow.getUTCMonth() - 11 + index, 1));
@@ -48,6 +52,30 @@ monthly.forEach(point => {
   Object.assign(point, { closedCount: rows.length, closedVolumeCents: sumCents(rows, "contractPrice"), commissionCents: sumCents(rows, "projectedCommission") });
 });
 Object.assign(metrics.leaderboard.data[0], { activeCount: active.length, closedCount: closedThisMonth.length, closedVolumeCents: sumCents(closedThisMonth, "contractPrice") });
+
+const thisMonthContacts = previewContacts.filter(contact => new Date(contact.createdDate) >= new Date(`${monthStart}T00:00:00Z`));
+const sourceCounts = new Map();
+thisMonthContacts.forEach(contact => sourceCounts.set(contact.source, (sourceCounts.get(contact.source) || 0) + 1));
+const contactAttention = previewContacts.flatMap(contact => {
+  if (!OPEN_PIPELINE_STAGES.includes(contact.stage)) return [];
+  const status = followUpStatus(contact.nextFollowUpDate, previewNow);
+  return status.state === "due_today" || status.state === "overdue" ? [{ id: `follow-up:${contact.id}`, kind: "follow_up_due", label: "Follow up", subject: contact.name, dueDate: status.day, daysAway: status.daysAway, href: `/contacts?open=${contact.id}` }] : [];
+});
+Object.assign(metrics.contacts.data, {
+  activeClients: previewContacts.filter(contact => ACTIVE_CLIENT_STAGES.includes(contact.stage)).length,
+  newLeadsThisMonth: thisMonthContacts.length,
+  followUpsDue: contactAttention.length,
+  lifecycle: LIFECYCLE_STAGES.map(stage => ({ stage, count: previewContacts.filter(contact => contact.stage === stage).length })),
+  newLeadsBySource: [...sourceCounts].map(([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count),
+});
+const transactionAttention = active.flatMap(deal => deal.milestones.flatMap(milestone => {
+  if (milestone.state === "done") return [];
+  const dueDate = businessDayKey(new Date(milestone.date));
+  const daysAway = dayDiff(dueDate, businessDayKey(previewNow));
+  return daysAway <= 7 ? [{ id: `deadline:${deal.id}:${milestone.id}`, kind: daysAway < 0 ? "deadline_overdue" : "deadline_soon", label: milestone.label, subject: deal.address, dueDate, daysAway, href: `/transactions?open=${deal.id}` }] : [];
+}));
+const attention = [...contactAttention, ...transactionAttention].sort((a, b) => a.daysAway - b.daysAway || a.id.localeCompare(b.id));
+Object.assign(metrics.attention.data, { items: attention, overdueCount: attention.filter(item => item.daysAway < 0).length, soonCount: attention.filter(item => item.daysAway >= 0).length });
 
 const names = ["calendar", "documents", "messages", "notifications", "market", "team", "brokerage", "integrations", "reports"];
 const subsystems = Object.fromEntries(names.map(name => [name, "not_configured"]));

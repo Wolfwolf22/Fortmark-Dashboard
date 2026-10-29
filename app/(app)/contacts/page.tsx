@@ -15,7 +15,8 @@
  */
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Plus, Users } from "lucide-react";
+import { PageIntro } from "@/components/common/page-intro";
 import { useSessionUser } from "@/components/layout/session-user";
 import { LeadDrawer } from "@/components/leads/lead-drawer";
 import { leadAbilities } from "@/components/leads/lead-shared";
@@ -51,7 +52,7 @@ function defaultOrder(query: ContactQuery): { sort: SortKey; dir: SortDir } {
 function PageSkeleton() {
   return (
     <div className="space-y-4">
-      <Skeleton className="h-9 w-40" />
+      <PageIntro icon={Users} title="Contacts" description="Manage relationships, follow-ups, and activity." />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {Array.from({ length: 5 }).map((_, i) => (
           <Skeleton key={i} className="h-[3.75rem] rounded-panel" />
@@ -68,9 +69,10 @@ function emptyCopy(query: ContactQuery, narrowing: boolean): { title: string; de
     return { title: "No contacts yet", description: "Add a contact with New contact to start your book." };
   }
   const view = matchingView(query);
-  if (view === "overdue") return { title: "No overdue follow-ups", description: "Nothing you owe a call is past its day." };
-  if (view === "due_today") return { title: "No follow-ups due today", description: "Nothing is scheduled for today." };
-  if (view === "no_touch_14") return { title: "Nobody has gone quiet", description: "Everyone active has been touched in the last 14 days." };
+  if (view === "overdue") return { title: "No overdue follow-ups", description: "No overdue reminders match these filters." };
+  if (view === "due_today") return { title: "No follow-ups due today", description: "No reminders for today match these filters." };
+  if (query.followUp === "upcoming") return { title: "No upcoming follow-ups", description: "No future reminders match these filters." };
+  if (view === "no_touch_14") return { title: "Nobody has gone quiet", description: "Contacts without a recent recorded touch will appear here." };
   return { title: "No contacts match these filters", description: "Clear a filter or try a different search." };
 }
 
@@ -167,21 +169,12 @@ function LeadsPageInner() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          {/* The section's one heading is the shell's (visually hidden); this is its visible title. */}
-          <p aria-hidden className="text-display text-2xl">
-            Contacts
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">Manage relationships, follow-ups and activity.</p>
-        </div>
-        {abilities.canWrite && (
-          <Button type="button" onClick={() => setQuickCreate("lead")}>
+      <PageIntro icon={Users} title="Contacts" description="Manage relationships, follow-ups, and activity." action={abilities.canWrite ? (
+          <Button type="button" className="min-h-11 w-full sm:w-auto" onClick={() => setQuickCreate("lead")}>
             <Plus aria-hidden />
             New contact
           </Button>
-        )}
-      </div>
+        ) : undefined} />
 
       <LeadsSnapshotStrip
         snapshot={snapshot.data}

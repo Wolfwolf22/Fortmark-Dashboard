@@ -14,15 +14,18 @@
  * anything, is shown once and read-only as a "Legacy note", with no invented date.
  */
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Trash2 } from "lucide-react";
+import { StickyNote, Trash2 } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { IconWell } from "@/components/ui/icon-well";
 import { addNote, deleteNote, getNotes, LeadsError, type NoteView } from "@/lib/data/adapters/leads";
 import { useQuery } from "@/lib/data/hooks";
 import { CONTACT_NOTE_MAX_LENGTH } from "@/lib/contacts/notes";
 import { formatNoteStamp } from "@/lib/contacts/note-format";
+import { initials } from "@/lib/utils";
 
 export function LeadNotes({
   leadId,
@@ -116,16 +119,17 @@ export function LeadNotes({
 
   return (
     <section aria-labelledby="lead-notes-heading" data-testid="lead-notes">
-      <h3 id="lead-notes-heading" className="text-micro">
-        Notes
-      </h3>
+      <div className="flex items-center gap-2.5">
+        <IconWell icon={StickyNote} />
+        <h3 id="lead-notes-heading" className="text-[15px] font-semibold">Notes</h3>
+      </div>
 
       {!available ? (
-        <p className="mt-2 text-sm text-muted-foreground">Notes are not available with sample data.</p>
+        <p className="mt-3 rounded-panel border border-border bg-tint p-4 text-[13px] leading-relaxed text-muted-foreground">Notes are not available with sample data.</p>
       ) : (
         <>
           {canWrite && (
-            <form onSubmit={submit} className="mt-3 grid gap-2">
+            <form onSubmit={submit} className="mt-3 grid gap-3 rounded-panel border border-border bg-tint p-3">
               <Textarea
                 ref={composer}
                 aria-label="Add a note"
@@ -133,11 +137,12 @@ export function LeadNotes({
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 rows={3}
+                className="min-h-24 resize-y bg-card leading-relaxed"
                 disabled={saving}
                 aria-invalid={problem || tooLong ? true : undefined}
                 aria-describedby={problem || tooLong ? "lead-note-problem" : undefined}
               />
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <Button type="submit" size="sm" disabled={saving || !trimmed || tooLong}>
                   {saving ? "Saving…" : "Save note"}
                 </Button>
@@ -170,15 +175,20 @@ export function LeadNotes({
               <Skeleton className="h-12 w-full" />
             </div>
           ) : error && !data ? (
-            <p role="status" className="mt-3 text-sm text-muted-foreground">
-              Notes could not be loaded.
-            </p>
+            <div role="alert" className="mt-3 rounded-panel border border-border bg-tint p-4 text-sm">
+              <p>Notes could not be loaded.</p>
+              <Button type="button" size="sm" variant="outline" className="mt-3" onClick={refetch}>Try again</Button>
+            </div>
           ) : data && data.length > 0 ? (
-            <ul className="mt-3 divide-y divide-border" aria-label="Notes">
+            <ul className="mt-3 space-y-3" aria-label="Notes">
               {data.map((note) => (
-                <li key={note.id} className="py-3 first:pt-0" data-testid="note">
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="text-xs text-muted-foreground">
+                <li key={note.id} className="rounded-panel border border-border p-4" data-testid="note">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-start gap-2.5">
+                      <Avatar aria-hidden className="h-8 w-8">
+                        <AvatarFallback className="bg-tint text-[10px] text-foreground">{initials(note.author ?? "Team member")}</AvatarFallback>
+                      </Avatar>
+                    <p className="min-w-0 break-words text-xs leading-relaxed text-muted-foreground">
                       <span className="font-medium text-foreground" data-testid="note-author">
                         {note.author ?? "Team member"}
                       </span>
@@ -187,12 +197,13 @@ export function LeadNotes({
                         {formatNoteStamp(note.createdAt)}
                       </time>
                     </p>
+                    </div>
                     {note.canDelete && canWrite && (
                       <Button
                         type="button"
                         size="sm"
                         variant="ghost"
-                        className="-mr-2 h-8 px-2 text-muted-foreground"
+                        className="-mr-1 px-2 text-muted-foreground"
                         onClick={() => setPendingDelete(note)}
                         aria-label={`Delete note from ${formatNoteStamp(note.createdAt)}`}
                       >
@@ -202,22 +213,23 @@ export function LeadNotes({
                     )}
                   </div>
                   {/* A text node, so nothing in a note can ever be interpreted as markup. */}
-                  <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-6" data-testid="note-body">
+                  <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]" data-testid="note-body">
                     {note.body}
                   </p>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="mt-3 text-sm text-muted-foreground">No notes yet.</p>
+            <p className="mt-3 rounded-panel border border-dashed border-input px-4 py-5 text-[13px] text-muted-foreground">No notes yet.</p>
           )}
+          {error && data && <p role="alert" className="mt-3 text-sm text-muted-foreground">Notes could not be refreshed. <button type="button" className="min-h-10 rounded-md px-1 font-semibold underline underline-offset-4" onClick={refetch}>Try again</button></p>}
         </>
       )}
 
       {legacyNote.trim() && (
-        <div className="mt-4 rounded-panel bg-tint p-3" data-testid="legacy-note">
+        <div className="mt-4 rounded-panel border border-border bg-tint p-4" data-testid="legacy-note">
           <p className="text-micro">Legacy note</p>
-          <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{legacyNote}</p>
+          <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]">{legacyNote}</p>
         </div>
       )}
 

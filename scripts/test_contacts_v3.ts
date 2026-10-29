@@ -697,7 +697,7 @@ function readMigrations(): string {
   const internal = ["lib/routes.ts", "components/layout/nav-items.ts", "components/layout/command-palette.tsx", "components/layout/quick-create-dialog.tsx", "components/home/daily-brief.tsx", "lib/contacts/search.ts", "lib/contacts/metrics.ts", "lib/data/sample-metrics.ts", "app/(app)/contacts/page.tsx"].map((f) => strip(src(f))).join("\n");
   check("rename: no internal link still points at /leads", !/["'`]\/leads[?"'`/]/.test(internal) && !internal.includes("ROUTES.leads"));
   check("rename: the top navigation says Contacts", src("components/layout/nav-items.ts").includes('label: "Contacts"') && !src("components/layout/nav-items.ts").includes('label: "Leads"'));
-  check("rename: the page's visible title and empty states say contacts", (() => { const page = src("app/(app)/contacts/page.tsx"); return page.includes("Contacts\n          </p>") && page.includes("New contact") && page.includes("No contacts yet") && !/>\s*Leads\s*</.test(page); })());
+  check("rename: the page's visible title and empty states say contacts", (() => { const page = src("app/(app)/contacts/page.tsx"); return /<PageIntro\b[^>]*title="Contacts"/.test(page) && page.includes("New contact") && page.includes("No contacts yet") && !/>\s*Leads\s*</.test(page); })());
   check("rename: the new-menu item and dialog say contact", src("components/layout/new-menu.tsx").includes("Contact") && src("components/layout/quick-create-dialog.tsx").includes('title: "New contact"'));
 
   // The role rule is decided by role, never by an address.

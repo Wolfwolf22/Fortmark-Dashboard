@@ -45,3 +45,35 @@ Direct examples:
 The responsive review offers width and height selectors and Return to top.
 Transaction preview controls include a first-request-unavailable scenario;
 the real page's Retry action then recovers the sample records.
+
+## Contacts and follow-ups
+
+Contacts now renders the actual list, filters, paging and contact drawer.
+Thirty synthetic contacts exercise two pages and include due-today, overdue,
+upcoming, never-touched, past-client, colleague-owned and labeled sample-fallback
+cases. The preview reuses the production pure query evaluator for filters, sorts,
+snapshot counts and pagination. Changing filters preserves preview scenarios
+within the same section.
+
+Most fixtures intentionally have the stored-record DTO shape (`recordSource:
+"db"`) so the real birthday, needs, notes, activity and linked-transaction UI
+can be inspected. This does not connect a database or alter production gates:
+every name is prefixed Sample, the persistent preview banner says read-only
+sample data, and every mutation rejects. `sample-labeled-fallback` retains the
+actual sample-source unavailable sections for comparison.
+
+Useful contact routes:
+
+- `/preview?view=%2Fcontacts`
+- `/preview?view=%2Fcontacts%3Fopen%3Dsample-overdue`
+- `/preview?view=%2Fcontacts%3Fopen%3Dsample-due-today`
+- `/preview?view=%2Fcontacts%3Fopen%3Dsample-upcoming`
+- `/preview?view=%2Fcontacts%3Fopen%3Dsample-quiet`
+- `/preview?view=%2Fcontacts%3Fopen%3Dsample-labeled-fallback`
+- `/preview?view=%2Fcontacts%3Fopen%3Dsample-contact-23` (long name and email)
+- `/responsive?width=320&height=568&view=/contacts?open=sample-overdue`
+
+Contacts has Records, Empty contact book and First request unavailable preview
+scenarios. The unavailable scenario fails the first list request; the actual
+Retry control recovers the fixture list. Home contact totals and its attention
+queue derive from these same sample contacts and transaction milestones.

@@ -27,13 +27,14 @@
  */
 import Link from "next/link";
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Pencil } from "lucide-react";
+import { ArrowRight, ArrowRightLeft, CalendarClock, Pencil, Phone, ShieldCheck, UserCheck, UserRound, Workflow, type LucideIcon } from "lucide-react";
 import { useSessionUser } from "@/components/layout/session-user";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { IconWell } from "@/components/ui/icon-well";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -94,19 +95,37 @@ export interface LeadDrawerProps {
 }
 
 type Panel = "touch" | "followUp" | "stage" | "edit" | null;
+const ACTION_ICONS: Record<Exclude<Panel, null>, LucideIcon> = {
+  touch: Phone,
+  followUp: CalendarClock,
+  stage: ArrowRightLeft,
+  edit: Pencil,
+};
 
 function Fact({ label, value, numeric }: { label: string; value: ReactNode; numeric?: boolean }) {
   return (
-    <div>
-      <p className="text-micro">{label}</p>
-      <p className={cn("mt-1 text-sm font-semibold", numeric && "tabular")}>{value}</p>
+    <div className="min-w-0">
+      <p className="text-[11px] leading-4 text-muted-foreground">{label}</p>
+      <p className={cn("mt-1.5 break-words text-sm font-semibold leading-snug", numeric && "tabular")}>{value}</p>
+    </div>
+  );
+}
+
+function SectionHeading({ id, icon, children, detail }: { id: string; icon: LucideIcon; children: ReactNode; detail?: string }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex items-center gap-2.5">
+        <IconWell icon={icon} />
+        <h3 id={id} className="text-[15px] font-semibold">{children}</h3>
+      </div>
+      {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
     </div>
   );
 }
 
 function DrawerSkeleton() {
   return (
-    <>
+    <div className="overflow-y-auto px-5 py-6 sm:px-6">
       <SheetHeader>
         <SheetTitle className="sr-only">Loading contact</SheetTitle>
         <SheetDescription className="sr-only">Contact details are loading</SheetDescription>
@@ -125,7 +144,7 @@ function DrawerSkeleton() {
           <Skeleton key={i} className="h-10 w-full" />
         ))}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -316,13 +335,15 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
     );
   }
 
-  const heading = "text-micro";
+  const heading = "text-sm font-semibold";
   const shownOwner = ownerName ?? (sample ? undefined : "Unnamed agent");
   const stageChoices = lead && !LEAD_STAGES.includes(lead.stage) ? [...LEAD_STAGES, lead.stage] : LEAD_STAGES;
   const linkedDeals = linked.data ?? [];
   const engaged = lead?.stage === "representation" || lead?.stage === "active_client";
 
-  const actionButton = (id: Exclude<Panel, null>, label: string, icon?: ReactNode) => (
+  const actionButton = (id: Exclude<Panel, null>, label: string) => {
+    const ActionIcon = ACTION_ICONS[id];
+    return (
     <Button
       key={id}
       type="button"
@@ -332,32 +353,34 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
       aria-controls={`lead-panel-${id}`}
       disabled={saving}
       onClick={() => togglePanel(id)}
+      className="justify-start"
     >
-      {icon}
+      <ActionIcon aria-hidden />
       {label}
     </Button>
-  );
+    );
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-full flex-col overflow-y-auto p-6 sm:max-w-xl">
+      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
         {lead ? (
           <>
-            <SheetHeader className="pr-8">
-              <SheetTitle>{lead.name}</SheetTitle>
+            <SheetHeader className="max-h-[42dvh] shrink-0 overflow-y-auto border-b border-border px-5 pb-5 pt-6 pr-14 sm:px-6 sm:pr-16">
+              <div className="mb-3 flex items-center gap-3">
+                <Avatar aria-hidden className="h-11 w-11 rounded-panel border border-border shadow-card">
+                  <AvatarFallback className="rounded-panel bg-tint text-sm font-semibold text-foreground">{initials(lead.name)}</AvatarFallback>
+                </Avatar>
+                <p className="text-micro">Contact file</p>
+              </div>
+              <SheetTitle className="break-words text-2xl font-semibold leading-tight tracking-tight">{lead.name}</SheetTitle>
               {/* Only what exists: a contact with no email or phone has no subtitle, not a lone separator. */}
               {[lead.email, lead.phone].filter(Boolean).length > 0 ? (
-                <SheetDescription>{[lead.email, lead.phone].filter(Boolean).join(" · ")}</SheetDescription>
+                <SheetDescription className="break-words pt-0.5 text-[13px] [overflow-wrap:anywhere]">{[lead.email, lead.phone].filter(Boolean).join(" · ")}</SheetDescription>
               ) : (
                 <SheetDescription className="sr-only">Contact details</SheetDescription>
               )}
-            </SheetHeader>
-            {sample && (
-              <div className="mt-3">
-                <SampleDataNotice subject="This contact is generated for development and is not a real person." />
-              </div>
-            )}
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5 pt-2.5">
               <Badge variant="secondary" data-testid="lead-stage-badge">
                 {LEAD_STAGE_LABELS[lead.stage]}
               </Badge>
@@ -369,36 +392,46 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
             </div>
             {/* An admin looking at a colleague's contact is told whose it is. Read-only: never a control. */}
             {lead.ownedByViewer === false && shownOwner && (
-              <p className="mt-2 flex items-center gap-2 text-[13px] text-muted-foreground" data-testid="lead-owner">
+              <p className="flex flex-wrap items-center gap-2 pt-2 text-xs text-muted-foreground" data-testid="lead-owner">
                 Owner:
                 {shownOwner !== "Unnamed agent" && (
                   <Avatar className="h-5 w-5">
                     <AvatarFallback className="text-[9px]">{initials(shownOwner)}</AvatarFallback>
                   </Avatar>
                 )}
-                <span className={cn("font-medium", shownOwner === "Unnamed agent" ? "text-muted-foreground" : "text-foreground")}>{shownOwner}</span>
+                <span className={cn("min-w-0 break-words font-medium", shownOwner === "Unnamed agent" ? "text-muted-foreground" : "text-foreground")}>{shownOwner}</span>
               </p>
             )}
+            </SheetHeader>
 
+            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5 sm:px-6">
+            {sample && (
+              <SampleDataNotice subject="This contact is generated for development and is not a real person." />
+            )}
+            {loadError && !loading && (
+              <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-border bg-tint p-3 text-sm">
+                <p>The latest contact details could not be refreshed.</p>
+                <Button type="button" size="sm" variant="outline" onClick={refetch}>Try again</Button>
+              </div>
+            )}
             {!abilities.canWrite && (
-              <p role="note" className="mt-4 rounded-panel bg-tint px-3 py-2 text-[13px] text-muted-foreground">
+              <p role="note" className="rounded-panel border border-border bg-tint px-4 py-3 text-[13px] leading-relaxed text-muted-foreground">
                 You have read-only access to this contact.
               </p>
             )}
 
-            <div className="flex-1 space-y-6">
               {/* --- Quick actions -------------------------------------------- */}
               {abilities.canWrite && (
-                <div className="mt-5" role="group" aria-label="Contact actions">
-                  <div className="flex flex-wrap gap-2">
+                <div role="group" aria-label="Contact actions">
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                     {actionButton("touch", "Log touch")}
                     {actionButton("followUp", "Follow-up")}
                     {actionButton("stage", "Change stage")}
-                    {actionButton("edit", "Edit contact", <Pencil aria-hidden />)}
+                    {actionButton("edit", "Edit contact")}
                   </div>
 
                   {panel === "touch" && (
-                    <form id="lead-panel-touch" aria-labelledby="log-touch-heading" onSubmit={submitTouch} className="mt-3 space-y-3 rounded-panel border border-border p-4">
+                    <form id="lead-panel-touch" aria-labelledby="log-touch-heading" onSubmit={submitTouch} className="mt-3 space-y-4 rounded-panel border border-border bg-tint p-4">
                       <h3 id="log-touch-heading" className={heading}>
                         Log a touch
                       </h3>
@@ -447,11 +480,11 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                   )}
 
                   {panel === "followUp" && (
-                    <div id="lead-panel-followUp" className="mt-3 rounded-panel border border-border p-4">
+                    <div id="lead-panel-followUp" className="mt-3 rounded-panel border border-border bg-tint p-4">
                       <h3 id="follow-up-heading" className={heading}>
                         Next follow-up
                       </h3>
-                      <p className="mt-1 text-sm">{followUpLabel(followUp, { withDate: true })}</p>
+                      <p className="tabular mt-1.5 text-sm">{followUpLabel(followUp, { withDate: true })}</p>
                       <form onSubmit={saveFollowUp} className="mt-3 flex flex-wrap items-end gap-2">
                         <div className="grid gap-1.5">
                           <Label htmlFor="lead-follow-up-day">{hasFollowUp ? "New date" : "Date"}</Label>
@@ -471,7 +504,7 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                   )}
 
                   {panel === "stage" && (
-                    <div id="lead-panel-stage" className="mt-3 rounded-panel border border-border p-4">
+                    <div id="lead-panel-stage" className="mt-3 rounded-panel border border-border bg-tint p-4">
                       <p className={heading}>Stage</p>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <Select value={lead.stage} onValueChange={(v) => changeStage(v as LeadStage)} disabled={saving}>
@@ -517,61 +550,47 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                 </div>
               )}
 
-              {error && (
-                <p role="alert" className="text-sm text-destructive">
-                  {error}
-                </p>
-              )}
-              {notice && (
-                <p role="status" className="text-sm text-muted-foreground">
-                  {notice}
-                </p>
-              )}
-
               {/* --- Details -------------------------------------------------- */}
-              <section aria-labelledby="lead-details-heading" className={abilities.canWrite ? undefined : "mt-6"}>
-                <h3 id="lead-details-heading" className={heading}>
-                  Details
-                </h3>
-                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-4 rounded-panel bg-tint p-4">
+              <section aria-labelledby="lead-details-heading">
+                <SectionHeading id="lead-details-heading" icon={UserRound}>Details</SectionHeading>
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-5 rounded-panel border border-border bg-tint p-4">
                   <Fact label="Company" value={lead.editable?.company || "—"} />
                   <Fact label="Last touch" numeric value={lead.lastTouchDate || sample ? formatRelative(lead.lastContactDate) : "Never"} />
                   <div>
-                    <p className="text-micro">Next follow-up</p>
+                    <p className="text-[11px] leading-4 text-muted-foreground">Next follow-up</p>
                     <p
                       data-testid="lead-next-follow-up"
-                      className={cn("mt-1 text-sm font-semibold tabular", followUp.state === "none" && "font-normal text-muted-foreground", isFollowUpDue(followUp) && "text-status-warn")}
+                      className={cn("mt-1.5 break-words text-sm font-semibold leading-snug tabular", followUp.state === "none" && "font-normal text-muted-foreground", isFollowUpDue(followUp) && "text-status-warn")}
                     >
                       {followUpLabel(followUp, { withDate: true })}
                     </p>
                   </div>
                   <Fact label="Created" numeric value={formatDate(lead.createdDate)} />
-                  <div className="col-span-2">
+                  <div className="col-span-2 border-t border-border pt-4">
                     {sample ? (
                       <Fact label="Birthday" value={<span className="font-normal text-muted-foreground">Not available with sample data</span>} />
                     ) : (
-                      <LeadBirthday value={lead.birthday} canWrite={abilities.canWrite} saving={saving} onSave={saveBirthday} />
+                      <LeadBirthday key={lead.id} value={lead.birthday} canWrite={abilities.canWrite} saving={saving} onSave={saveBirthday} />
                     )}
                   </div>
                 </div>
               </section>
 
               {/* --- Client needs --------------------------------------------- */}
-              <LeadNeeds leadId={lead.id} canWrite={abilities.canWrite} available={!sample} />
+              <LeadNeeds key={`needs-${lead.id}`} leadId={lead.id} canWrite={abilities.canWrite} available={!sample} />
 
               {/* --- Notes ----------------------------------------------------- */}
-              <LeadNotes leadId={lead.id} legacyNote={lead.notes} canWrite={abilities.canWrite} available={!sample} />
+              <LeadNotes key={`notes-${lead.id}`} leadId={lead.id} legacyNote={lead.notes} canWrite={abilities.canWrite} available={!sample} />
 
               {/* --- Activity --------------------------------------------------- */}
-              <LeadTimeline leadId={lead.id} />
+              <LeadTimeline key={`timeline-${lead.id}`} leadId={lead.id} />
 
               {/* --- Representation -------------------------------------------- */}
               {engaged && (
                 <section aria-labelledby="lead-representation-heading" data-testid="lead-representation">
-                  <h3 id="lead-representation-heading" className={heading}>
-                    Representation
-                  </h3>
-                  <p className="mt-2 text-sm text-muted-foreground">
+                  <SectionHeading id="lead-representation-heading" icon={ShieldCheck}>Representation</SectionHeading>
+                  <div className="mt-3 rounded-panel border border-border p-4">
+                  <p className="text-[13px] leading-relaxed text-muted-foreground">
                     Engagement documents are not stored in FortMark yet. Confirm an active brokerage engagement is in place before you open a deal.
                   </p>
                   {lead.stage === "representation" && abilities.canWrite && !sample && (
@@ -579,40 +598,49 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
                       Create transaction
                     </Button>
                   )}
+                  </div>
                 </section>
               )}
 
               {/* --- Transactions ----------------------------------------------- */}
               {linkedDeals.length > 0 && (
                 <section aria-labelledby="lead-transactions-heading" data-testid="lead-transactions">
-                  <h3 id="lead-transactions-heading" className={heading}>
-                    Transactions
-                  </h3>
-                  <ul className="mt-2 divide-y divide-border">
+                  <SectionHeading id="lead-transactions-heading" icon={Workflow} detail={`${linkedDeals.length} linked`}>Transactions</SectionHeading>
+                  <ul className="mt-3 overflow-hidden rounded-panel border border-border divide-y divide-border">
                     {linkedDeals.map((t) => (
                       <li key={t.id}>
                         <Link
                           href={`/transactions?open=${encodeURIComponent(t.id)}`}
-                          className="flex items-baseline justify-between gap-3 py-2 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="flex min-h-14 items-center justify-between gap-3 px-4 py-3 text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                         >
                           <span className="min-w-0 break-words font-medium">
                             {t.address}
-                            <span className="font-normal text-muted-foreground">, {t.city}</span>
+                            <span className="mt-1 block text-xs font-normal text-muted-foreground">{t.city}</span>
+                            <span className="mt-2 inline-block text-xs text-muted-foreground">{TRANSACTION_STAGE_LABELS[t.stage as TransactionStage] ?? t.stage}</span>
                           </span>
-                          <span className="flex-none text-xs text-muted-foreground">{TRANSACTION_STAGE_LABELS[t.stage as TransactionStage] ?? t.stage}</span>
+                          <ArrowRight aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
                         </Link>
                       </li>
                     ))}
                   </ul>
                 </section>
               )}
+              {linked.error && (
+                <div role="alert" className="rounded-panel border border-border bg-tint p-4 text-sm">
+                  <p>Linked transactions could not be loaded.</p>
+                  <Button type="button" size="sm" variant="outline" className="mt-3" onClick={linked.refetch}>Try again</Button>
+                </div>
+              )}
             </div>
             {abilities.canWrite && (
-              <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border pt-4">
-                <Button variant="outline" onClick={() => void run(() => markContacted(lead.id))} disabled={saving}>
+              <div className="shrink-0 border-t border-border bg-card px-5 py-4 sm:px-6">
+                {error && <p role="alert" className="mb-3 text-sm text-destructive">{error}</p>}
+                {notice && <p role="status" className="mb-3 text-sm text-muted-foreground">{notice}</p>}
+                <Button variant="outline" className="min-h-11 w-full" onClick={() => void run(() => markContacted(lead.id))} disabled={saving}>
+                  <UserCheck aria-hidden />
                   Mark contacted today
                 </Button>
-                <p className="text-xs text-muted-foreground">Sets last contact to now. The follow-up is kept.</p>
+                <p className="mt-2 text-center text-[11px] leading-relaxed text-muted-foreground">Sets last contact to now. The follow-up is kept.</p>
               </div>
             )}
             <EngagementNotice target={pendingStage} busy={saving} onCancel={() => setPendingStage(null)} onContinue={() => void confirmEngagement()} returnFocusTo="lead-stage-select" />
@@ -627,14 +655,15 @@ export function LeadDrawer({ leadId, open, onOpenChange }: LeadDrawerProps) {
             </SheetHeader>
             {/* Only a real 404 means the contact is gone (or not yours). A failed load is said to be a failed load. */}
             {loadError && leadId ? (
-              <div role="alert" className="mt-8 grid gap-3 text-sm text-muted-foreground">
+              <div role="alert" className="grid gap-3 overflow-y-auto px-5 py-12 text-sm text-muted-foreground sm:px-6">
+                <IconWell icon={UserRound} className="mb-1 h-10 w-10 rounded-panel" />
                 <p>We could not load this contact. Check your connection and try again.</p>
                 <div>
                   <Button variant="outline" onClick={refetch}>Try again</Button>
                 </div>
               </div>
             ) : (
-              <p className="mt-8 text-sm text-muted-foreground">This contact is no longer available.</p>
+              <p className="overflow-y-auto px-5 py-12 text-sm text-muted-foreground sm:px-6">This contact is no longer available.</p>
             )}
           </>
         )}
