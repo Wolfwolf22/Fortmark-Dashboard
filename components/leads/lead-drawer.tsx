@@ -73,6 +73,7 @@ import { ClientInfo } from "./client-info";
 import { NextActionView } from "./next-action";
 import type { ClientInfoSave } from "@/lib/contacts/client-info";
 import { LeadNeeds } from "./lead-needs";
+import { ContactProperties } from "./contact-properties";
 import { LeadNotes } from "./lead-notes";
 import { LeadTimeline } from "./lead-timeline";
 
@@ -673,6 +674,9 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
 
               {/* --- Client needs --------------------------------------------- */}
               <LeadNeeds key={`needs-${lead.id}`} leadId={lead.id} canWrite={abilities.canWrite} available={!sample} refreshKey={refreshKey} />
+
+              {/* --- Manually saved properties ------------------------------- */}
+              <ContactProperties contactId={lead.id} canWrite={abilities.canWrite} available={!sample} refreshKey={refreshKey} />
 
               {/* --- Notes ----------------------------------------------------- */}
               <LeadNotes key={`notes-${lead.id}`} leadId={lead.id} legacyNote={lead.notes} canWrite={abilities.canWrite} available={!sample} refreshKey={refreshKey} />

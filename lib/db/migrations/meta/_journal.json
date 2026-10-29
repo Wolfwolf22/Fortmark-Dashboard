@@ -134,6 +134,13 @@
       "when": 1793408400000,
       "tag": "0018_contact_import_merge",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793494800000,
+      "tag": "0019_contact_properties",
+      "breakpoints": true
     }
   ]
 }

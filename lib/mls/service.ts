@@ -280,6 +280,34 @@ export async function getListing(
   }
   if (!record) return null;
 
+  return listingWithPhotos(config, record, signal, ctx);
+}
+
+/** An entered MLS number must identify one property, never the first of several. */
+export class AmbiguousMlsNumberError extends Error {
+  constructor() { super("The MLS number identifies more than one listing."); this.name = "AmbiguousMlsNumberError"; }
+}
+
+/** Exact ListingId lookup across all displayable types and statuses, including rentals. */
+export async function getListingByMlsNumber(
+  config: BridgeConfig, mlsNumber: string, signal?: AbortSignal, ctx: ListingContext = {}
+): Promise<Listing | null> {
+  const number = mlsNumber.trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9-]{0,39}$/.test(number) || !/\d/.test(number)) return null;
+  const result = await bridgeRequest<ResoRecord>(config, "Property", {
+    $filter: andFilters([DISPLAYABLE, eq("ListingId", number)]), $select: WITH_MEDIA, $top: 2,
+  }, signal);
+  if (result.value.length > 1) throw new AmbiguousMlsNumberError();
+  const record = result.value[0];
+  if (!record) return null;
+  // The upstream must actually honour the identifier filter; never attach a different listing.
+  if (String(record.ListingId ?? "").trim().toUpperCase() !== number) return null;
+  return listingWithPhotos(config, record, signal, ctx);
+}
+
+async function listingWithPhotos(
+  config: BridgeConfig, record: ResoRecord, signal?: AbortSignal, ctx: ListingContext = {}
+): Promise<Listing | null> {
   const listing = toListing(record, [], ctx);
   if (!listing) return null;
 

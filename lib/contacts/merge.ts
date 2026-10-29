@@ -18,7 +18,7 @@ export interface MergeValues {
   email: string; phone: string; company: string; source: LeadSource; stage: LeadStage;
   birthday: Birthday | null; about: string; personalDetails: { label: string; value: string }[]; legacyNotes: string;
 }
-export interface MergeCounts { notes: number; needs: number; activities: number; opportunities: number; transactions: number }
+export interface MergeCounts { notes: number; needs: number; activities: number; opportunities: number; transactions: number; properties?: number }
 export interface MergeReviewContact {
   id: string; name: string; updatedAt: string; historyFingerprint: string;
   values: MergeValues; nextAction: NextAction | null; nextFollowUpDate?: string;
@@ -57,7 +57,7 @@ export function mergeValues(review: Pick<MergeReview, "primary" | "duplicate">, 
   return Object.fromEntries(MERGE_FIELDS.map(field => [field, review[choices[field]].values[field]])) as unknown as MergeValues;
 }
 export function mergeCounts(primary: MergeCounts, duplicate: MergeCounts): MergeCounts {
-  return Object.fromEntries(Object.keys(primary).map(key => [key, primary[key as keyof MergeCounts] + duplicate[key as keyof MergeCounts]])) as unknown as MergeCounts;
+  return Object.fromEntries([...new Set([...Object.keys(primary), ...Object.keys(duplicate)])].map(key => [key, (primary[key as keyof MergeCounts] ?? 0) + (duplicate[key as keyof MergeCounts] ?? 0)])) as unknown as MergeCounts;
 }
 export function chooseMergedAction(review: Pick<MergeReview, "primary" | "duplicate">, choice: ContactMergeInput["nextActionChoice"]): NextAction | null {
   return choice === "none" ? null : review[choice].nextAction;

@@ -3,6 +3,7 @@
 import { contactNeeds, contactNotes, timelineFor, SAMPLE_AGENT_ID } from "./contact-fixtures.mjs";
 import { allPreviewContacts, duplicateNeeds, duplicateNotes, duplicateTimeline, duplicateOpportunities, contactTransactionIds, previewRecordId } from "./import-merge-fixtures.mjs";
 import { projectContactNeedSummary } from "../../lib/contacts/needs-summary.ts";
+import { sampleContactProperties } from "./property-fixtures.mjs";
 
 const copy = value => value === undefined ? undefined : structuredClone(value);
 const sessionContacts = new Map(allPreviewContacts.map(contact => [contact.id, copy(contact)]));
@@ -18,6 +19,7 @@ const sessionHistory = new Map();
 const sessionLinks = new Map(Object.entries(contactTransactionIds).map(([id, ids]) => [id, copy(ids)]));
 const sessionOpportunities = new Map();
 const receipts = new Map();
+const sessionProperties = new Map(Object.entries(sampleContactProperties).map(([id, items]) => [id, copy(items)]));
 
 export const SAMPLE_ACTOR = { userId: SAMPLE_AGENT_ID, role: "admin", brokerageKey: "design-preview" };
 export function getPreviewScenario() {
@@ -34,6 +36,8 @@ export function readSampleNeeds(id) {
   return copy(interactiveSamples() ? sessionNeeds.get(id) || [] : fixtureNeeds[id] || []);
 }
 export function readSampleNotes(id) { return copy(interactiveSamples() ? sessionNotes.get(id) || [] : fixtureNotes[id] || []); }
+export function readSamplePropertyRows(id) { return copy(interactiveSamples() ? sessionProperties.get(id) || [] : sampleContactProperties[id] || []); }
+export function readSampleProperties(id) { return readSamplePropertyRows(id).filter(item => !item.removedAt); }
 export function readSampleTransactionIds(id) { return copy(interactiveSamples() ? sessionLinks.get(id) || [] : contactTransactionIds[id] || []); }
 export function readSampleOpportunities(id) {
   const contact = readSampleRawContacts().find(item => item.id === id);
@@ -77,6 +81,7 @@ export function readSampleActionActivity() {
 export function replaceSampleContact(contact) { sessionContacts.set(contact.id, copy(contact)); }
 export function replaceSampleNeeds(id, needs) { sessionNeeds.set(id, copy(needs)); }
 export function replaceSampleNotes(id, notes) { sessionNotes.set(id, copy(notes)); }
+export function replaceSampleProperties(id, items) { sessionProperties.set(id, copy(items)); }
 export function replaceSampleTransactionIds(id, ids) { sessionLinks.set(id, copy(ids)); }
 export function replaceSampleOpportunities(id, items) { sessionOpportunities.set(id, copy(items)); }
 export function replaceSampleTimeline(id, items) { sessionHistory.set(id, copy(items)); sessionTimeline.set(id, []); }

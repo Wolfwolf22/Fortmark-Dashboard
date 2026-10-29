@@ -1115,3 +1115,22 @@ export const contactMergeRequests = pgTable("contact_merge_requests", {
   result: jsonb("result").$type<Record<string, unknown>>().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => [uniqueIndex("contact_merge_requests_actor_request_idx").on(t.actorUserId, t.requestId), check("contact_merge_requests_hash_check", sql`length(${t.payloadHash}) = 64`)]);
+
+/** Saved MLS references only. Display fields/media are hydrated afresh, never copied into CRM storage. */
+export const contactProperties = pgTable("contact_properties", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+  dataset: text("dataset").notNull(),
+  listingId: text("listing_id").notNull(),
+  mlsNumber: text("mls_number").notNull(),
+  createdByUserId: uuid("created_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  removedAt: timestamp("removed_at", { withTimezone: true }),
+}, t => [
+  index("contact_properties_contact_created_idx").on(t.contactId, t.createdAt.desc(), t.id.desc()),
+  uniqueIndex("contact_properties_live_listing_idx").on(t.contactId, t.dataset, t.listingId).where(sql`${t.removedAt} is null`),
+  check("contact_properties_dataset_check", sql`${t.dataset} ~ '^[A-Za-z0-9_-]{1,80}$'`),
+  check("contact_properties_listing_id_check", sql`char_length(${t.listingId}) between 1 and 256 and btrim(${t.listingId}) = ${t.listingId} and ${t.listingId} !~ '[[:cntrl:]]'`),
+  check("contact_properties_mls_number_check", sql`${t.mlsNumber} ~ '^[A-Z0-9][A-Z0-9-]{0,39}$' and ${t.mlsNumber} ~ '[0-9]'`),
+]);
+export type ContactPropertyRow = typeof contactProperties.$inferSelect;

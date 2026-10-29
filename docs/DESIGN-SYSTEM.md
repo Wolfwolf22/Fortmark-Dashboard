@@ -293,6 +293,26 @@ const { data, loading } = useQuery(
   keeps its control present for focus. Retry returns to a stable review control;
   closing returns focus to the toolbar action that opened the dialog.
 
+## Manual contact property lists
+
+- Place Property list after Client needs in each contact file. Use the existing
+  glass icon well, neutral inset form, card borders and restrained status pills.
+- The primary flow is Add by MLS number → Find property → review → Add to list.
+  No recommendation scores or automatic matching. Keep a changed or failed
+  lookup input; invalidate its old preview. Clear only a confirmed successful
+  add, retain its success notice and focus the saved card after refresh.
+- Each saved card separates photo/status, factual price/specifications, MLS
+  identity, listing-office attribution and Checked time. Respect unavailable
+  media, withheld addresses and sample labels. Missing MLS data keeps a visible
+  reference; an outage never becomes a false empty list.
+- Keep View listing and Remove from list as sibling controls. Removal names the
+  contact's list in an inline confirmation and returns focus to the section
+  heading. Read-only users retain the cards and listing links without mutation
+  controls. Offer Refresh from MLS and honest paginated progress.
+- Wrap addresses, identifiers and attribution at 320px. Recover from clamped
+  last pages using only settled current-request answers; stale data must not
+  undo Next, and failed page requests must expose a retry action.
+
 ## Copy checklist (every string you write)
 
 sentence case · plain verbs · button = the action ("Add lead", "Save

@@ -86,13 +86,14 @@ function PreviewControls() {
       </label>}
     </div>
     {interactive && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
-      Contact stages, next actions, needs, client information, CSV import and duplicate merges can save these synthetic samples. Other writes remain blocked. Reload or Reset samples discards every change.
+      Contact stages, next actions, needs, client information, property lists, CSV import and duplicate merges can save these synthetic samples. Other writes remain blocked. Reload or Reset samples discards every change.
+      {route === "/contacts" && <span className="ml-1">Property list examples: SAMPLE-002 and SAMPLE-003. Fictional MLS references only.</span>}
     </p>}
     {route === "/contacts" && scenario === "conflict" && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
       Conflict rehearsal: change a sample contact's Company or next action, or review a duplicate merge, then save. The refused save reveals a predefined newer sample version. Review latest details to compare it with your kept draft. No draft is written.
     </p>}
     {writeBlocked && <div role="alert" className="flex items-center justify-center gap-3 border-b border-border bg-card px-4 py-2 text-xs">
-      <span>{interactive ? "This write is disabled in interactive samples. Only stages, next actions, needs, client information, import and duplicate merge can save." : "Design preview is read-only. No records were changed."}</span>
+      <span>{interactive ? "This write is disabled in interactive samples. Only stages, next actions, needs, client information, property lists, import and duplicate merge can save." : "Design preview is read-only. No records were changed."}</span>
       <button type="button" className="font-semibold underline underline-offset-4" onClick={() => setWriteBlocked(false)}>Dismiss</button>
     </div>}
   </>;

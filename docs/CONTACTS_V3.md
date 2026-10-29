@@ -5,9 +5,9 @@ Branch: `claude/dashboard-status-yir55p` · Production baseline: `74ff9d4` (Lead
 Schema record: [`CONTACTS_V3_SCHEMA_PROPOSAL.md`](./CONTACTS_V3_SCHEMA_PROPOSAL.md) (APPROVED / APPLIED TO PREVIEW).
 
 **Current local release — 2026-10-29:** the reliability, client-context, Next Action,
-CSV import and reviewed-merge additions below are implemented and verified locally.
+CSV import, reviewed merges and manual MLS property lists below are implemented and verified locally.
 The historical Preview certification above does not certify these additions on a
-deployment. Migrations **0015–0018 remain unapplied to live databases**; Production
+deployment. Migrations **0015–0019 remain unapplied to live databases**; Production
 was not changed by this work.
 
 ## What changed
@@ -412,3 +412,73 @@ refused a stale merge and showed the newer version with explicit choices kept.
 At 320×568, the dialogs fit without horizontal overflow, body scrolling reset
 between review steps, fixed actions stayed available and the success Close
 action returned to the contact list. No live records were used.
+
+## Manual property lists — current local update
+
+Every contact has one private, manually curated Property list, following Client
+needs in the contact file. Enter an exact MLS number, review the returned
+property, then explicitly Add to list. This is independent of saved needs and
+does not recommend properties or filter by budget, type or status. Lookup uses
+exact `ListingId`, including numeric identifiers with leading zeroes. Two
+records with the same number produce an ambiguity refusal; no first result is
+picked. A changed input invalidates its old preview.
+
+The existing authenticated MLS connection resolves current displayable data.
+Saving rechecks the reviewed dataset, durable ListingKey and normalized MLS
+number. A changed identity requires a new review. Duplicate adds are idempotent
+and do not duplicate references or audit events. The successful form clears for
+the next MLS number; an uncertain save keeps its reviewed input for recovery.
+There is no automatic outreach, matching, task creation or last-touch change.
+
+Saved cards show current photo, price, status, address, factual specifications,
+MLS number and listing-office attribution when provided. Address withholding,
+display permission and missing-photo rules use the existing MLS normalizer.
+Only dataset, listing identifiers, creator/time and soft-removal state are
+stored in `contact_properties`; licensed display fields and media are fetched
+afresh on opening or Refresh from MLS. Missing, disconnected and unavailable
+results retain their saved MLS reference with a truthful message. There is no
+sample fallback in production. A malformed upstream success is a failed read,
+not an empty result.
+
+The list is scoped through its parent contact before provider creation or MLS
+access. Members can read but cannot look up, add or remove entries. Mutations
+lock and recheck the same visible, unmerged parent before atomic child/audit
+writes. Removal affects only this contact's list and retains a tombstone; a
+property can be added again after review. No property listing is deleted. Audit
+metadata contains only contact/property IDs and the action.
+
+Pages default to 12, with a maximum of 24; fresh MLS hydration runs at most four
+requests concurrently. The UI accepts only answers for the requested page,
+recovers when removing the final item on the last page, and provides retry
+feedback for failed page reads. Long values wrap on 320px screens, and controls
+remain separate from the listing-detail link.
+
+Contact merges lock and fingerprint all property associations as a sixth child
+domain. Shared dataset/ListingKey pairs yield one visible card while retaining
+both association rows. Unique entries and previous removal history move to the
+primary. Canonical routing protects late child writes, and intervening list
+changes invalidate a merge review. The reviewed retained-record count includes
+Saved properties.
+
+The contact-scoped API exposes GET/POST `/api/contacts/:id/properties`, POST
+`/api/contacts/:id/properties/lookup`, and DELETE
+`/api/contacts/:id/properties/:propertyId`. Lookup/add accept only bounded
+identifiers (2 KiB body limit); snapshots and arbitrary client fields are
+refused. Reads are private/no-store. Lookup is explicitly classified as a
+retryable read; add/remove are not retried automatically.
+
+`0019_contact_properties.sql` is prepared locally, including the partial live
+identity uniqueness rule and canonical child trigger. Live rollout requires
+the pending 0015–0019 migrations. No live migration, data mutation, build,
+credential/configuration change, push or deployment was performed.
+
+Verification: **5,236 counted checks**, plus the personal-workspace suite. The
+complete dashboard run passed 5,225 checks; final source-binding and UI
+regressions subsequently passed their targeted suites (95 backend, 18 view and
+88 adapter checks), with TypeScript and whitespace checks passing. Other
+coverage includes 29 exact-MLS/provider checks and 90 expanded merge checks.
+All 44 isolated preview groups pass. Browser checks used synthetic properties
+for exact lookup, reviewed add, old-preview invalidation, missing-number copy,
+soft removal/re-add, and 320px layout. Removing the sole item on page 2 of a
+13-property list correctly returned to all 12 remaining cards. This is local
+verification, not certification against authenticated live MLS data.

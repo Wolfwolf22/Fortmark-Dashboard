@@ -117,7 +117,8 @@ Select **Interactive samples** in the contact preview controls, or open:
 - `/responsive?width=320&height=568&view=/contacts?open=sample-quiet&scenario=interactive`
 
 This mode permits only contact stage changes, structured next actions, client
-need creation/content/status changes, and the optional About/named personal-details section. The fixture actor
+need creation/content/status changes, manual property references, import/merge,
+and the optional About/named personal-details section. The fixture actor
 is explicitly a synthetic Admin. Stage changes use the production transition
 graph and optional expected-stage check. About/details use the production schema
 and saved revision; need changes use the production schemas and update planner.
@@ -255,3 +256,42 @@ The checks cover concurrent/stale saves, valid assignees, time boundaries,
 no-op/edit/reschedule, complete with and without successor, cancellation, exited
 relationships, task history text, Home/list agreement, denied legacy/transport
 writes, unchanged drafts on conflict and immutable base fixtures.
+
+## Manual contact property lists
+
+The actual contact drawer now renders the production Property list component.
+Open `sample-due-today` to see a saved available **SAMPLE-001** plus retained
+**SAMPLE-MISSING-901** and **SAMPLE-OFFLINE-902** references. A missing or
+unavailable read keeps the saved IDs and number; it never silently removes a row.
+The banner suggests **SAMPLE-002** and **SAMPLE-003** for an exact manual lookup,
+review and add. All listing DTOs are explicitly synthetic and use local
+illustrations. No fictional input ever reaches an MLS provider.
+
+Useful routes:
+
+- `/preview?view=%2Fcontacts%3Fopen%3Dsample-due-today&scenario=interactive`
+- `/preview?view=%2Fcontacts%3Fopen%3Dsample-long-history&scenario=interactive`
+- `/responsive?width=320&height=568&view=/contacts?open=sample-due-today&scenario=interactive`
+
+`sample-long-history` has thirteen unique references for 12+1 paging. Extra
+fictional listings also resolve through the normal listing-detail component.
+Unknown **SAMPLE-999** gives a no-result response. Lookup of
+**SAMPLE-OFFLINE-902** simulates an unavailable provider, while
+**SAMPLE-NOT-CONFIGURED-903** simulates an unconfigured feed.
+
+The isolated adapters reuse the production normalization, strict lookup/add
+schemas and paging rules. A save checks the freshly resolved listing identity,
+so an obsolete reviewed ID is refused. Repeated add returns the active reference;
+remove is soft and repeatable; re-adding creates a new ID with the removed row
+retained. Saves change neither the contact revision nor touch/stage/history.
+Records/conflict modes reject writes. Reload/Reset discards all changes.
+
+The Morgan River duplicate pair shares SAMPLE-001 and has a distinct SAMPLE-002.
+Merge review counts unique active dataset/listing identities. A merge reparents
+every row, including removed rows, and soft-removes the duplicate visible saved
+reference. Complete property row data participates in the child fingerprint,
+so an add or removal after review requires a fresh merge review.
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-property-session.mjs
+```

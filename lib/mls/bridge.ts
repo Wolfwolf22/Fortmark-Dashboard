@@ -140,8 +140,11 @@ export async function bridgeRequest<T = Record<string, unknown>>(
     throw new BridgeError(classify(res.status), resource, res.status, detail);
   }
 
-  const json = (await res.json()) as Record<string, unknown>;
-  const value = Array.isArray(json.value) ? (json.value as T[]) : [];
+  const json = (await res.json()) as Record<string, unknown> | null;
+  if (!json || typeof json !== "object" || !Array.isArray(json.value)) {
+    throw new BridgeError("upstream", resource, res.status);
+  }
+  const value = json.value as T[];
   return {
     count: typeof json["@odata.count"] === "number" ? (json["@odata.count"] as number) : null,
     value,

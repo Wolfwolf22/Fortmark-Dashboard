@@ -22,7 +22,7 @@ type Choices = Partial<Record<MergeField, Winner>>;
 type PendingChoice = "primary" | "duplicate" | "none";
 const FIELDS: MergeField[] = ["name", "email", "phone", "company", "source", "stage", "birthday", "about", "personalDetails", "legacyNotes"];
 const LABELS: Record<MergeField, string> = { name: "Name", email: "Email", phone: "Phone", company: "Company", source: "Source", stage: "Stage", birthday: "Birthday", about: "About", personalDetails: "Named details", legacyNotes: "Legacy note" };
-const COUNT_LABELS = { notes: "Notes", needs: "Client needs", activities: "Activity records", opportunities: "Legacy opportunities", transactions: "Linked transactions" } as const;
+const COUNT_LABELS = { notes: "Notes", needs: "Client needs", activities: "Activity records", opportunities: "Legacy opportunities", transactions: "Linked transactions", properties: "Saved properties" } as const;
 interface ContactDuplicatesProps {
   open: boolean; onOpenChange: (open: boolean) => void;
   onList: (cursor?: string) => Promise<DuplicateSuggestionsPage>;
@@ -71,7 +71,7 @@ export function DuplicateSuggestionCounts({ loaded, scanned, total, hasMore }: {
   return <p role="status" className="text-xs text-muted-foreground tabular">{loaded} {loaded === 1 ? "suggestion" : "suggestions"} loaded · {scanned} of {total} {total === 1 ? "contact" : "contacts"} examined{hasMore ? " · more contacts remain" : ""}</p>;
 }
 export function PreservedCounts({ review }: { review: Pick<MergeReview, "preservedCounts"> }) {
-  return <div className="rounded-panel border border-border bg-tint p-3"><p className="text-xs font-semibold">Records retained from both contacts</p><dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{(Object.keys(COUNT_LABELS) as (keyof typeof COUNT_LABELS)[]).map((field) => <div key={field}><dt className="text-[11px] text-muted-foreground">{COUNT_LABELS[field]}</dt><dd className="mt-1 text-sm font-semibold tabular">{review.preservedCounts[field]}</dd></div>)}</dl></div>;
+  return <div className="rounded-panel border border-border bg-tint p-3"><p className="text-xs font-semibold">Records retained from both contacts</p><dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{(Object.keys(COUNT_LABELS) as (keyof typeof COUNT_LABELS)[]).map((field) => <div key={field}><dt className="text-[11px] text-muted-foreground">{COUNT_LABELS[field]}</dt><dd className="mt-1 text-sm font-semibold tabular">{review.preservedCounts[field] ?? 0}</dd></div>)}</dl></div>;
 }
 export function MergeSelectedValues({ review, choices }: { review: MergeReview; choices: Record<MergeField, Winner> }) {
   return <dl className="space-y-3">{FIELDS.map((field) => <div key={field} className="min-w-0 border-b border-border pb-3"><dt className="text-xs font-semibold text-muted-foreground">{LABELS[field]}</dt><dd className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed [overflow-wrap:anywhere]">{mergeFieldText(field, review[choices[field]].values)}</dd></div>)}</dl>;

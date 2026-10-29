@@ -1,6 +1,7 @@
 import { visualListings, visualTransactions, sampleAgent } from "./visual-fixtures.mjs";
 import { sortListings } from "@/lib/data/listing-sort";
 import { rejectPreviewWrite } from "./read-only.mjs";
+import { samplePropertyCatalog } from "./property-fixtures.mjs";
 
 const copy = (value) => value === undefined ? undefined : structuredClone(value);
 export class ListingsError extends Error {
@@ -34,7 +35,7 @@ export async function searchListings(query) {
   const pageSize = Math.max(1, query.pageSize || 12);
   return copy({ source: "sample", items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize, sortApplied: true });
 }
-export async function getListing(id) { return copy(visualListings.find(listing => listing.id === id)); }
+export async function getListing(id) { return copy(samplePropertyCatalog.find(listing => listing.id === id)); }
 export async function getFeaturedListing() { return undefined; }
 export async function getFortmarkListingSummary() { throw new ListingsError("mls_not_configured", 503); }
 export async function getComparables(id) {

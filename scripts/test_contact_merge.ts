@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { createLocalContactDb } from "./helpers/contact-test-db.ts";
-import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contacts, dashboardUsers, professionalProfiles, transactionParties, transactions } from "../lib/db/schema.ts";
+import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, contacts, dashboardUsers, professionalProfiles, transactionParties, transactions } from "../lib/db/schema.ts";
 import { createContact, getContact, contactSnapshot, listContactsPage, changeStage, type Ctx } from "../lib/contacts/service.ts";
 import { createContactSchema } from "../lib/contacts/domain.ts";
 import { addNote, listNotes } from "../lib/contacts/notes-service.ts";
@@ -161,5 +161,35 @@ try {
   check("long legacy Unicode text can be preserved as notes", (await mergeContacts(ctx, unicodeInput, NOW)).ok);
   const unicodeNotes = await listNotes(ctx, unicodeA);
   check("note chunks retain exact Unicode and original reading order", unicodeNotes.ok && unicodeNotes.value.map(note => note.body).join("") === originalText && unicodeNotes.value.every(note => note.body.length <= 10000));
+  const propertyA = await make("Property list primary"), propertyB = await make("Property list source");
+  const propertyIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  const originalAdded = new Date("2026-08-01T12:00:00.000Z");
+  await db.insert(contactProperties).values([
+    { id: propertyIds[0], contactId: propertyA, dataset: "synthetic", listingId: "common-key", mlsNumber: "A12345678", createdByUserId: OWNER, createdAt: originalAdded },
+    { id: propertyIds[1], contactId: propertyB, dataset: "synthetic", listingId: "common-key", mlsNumber: "A12345678", createdByUserId: OWNER },
+    { id: propertyIds[2], contactId: propertyB, dataset: "synthetic", listingId: "unique-key", mlsNumber: "F12345678", createdByUserId: OWNER },
+    { id: propertyIds[3], contactId: propertyB, dataset: "synthetic", listingId: "removed-key", mlsNumber: "RX-12345678", createdByUserId: OWNER, removedAt: originalAdded },
+  ]);
+  const propertyReview = await review(propertyA, propertyB);
+  check("merge review counts only visible saved properties and deduplicates shared identities", propertyReview.primary.counts.properties === 1 && propertyReview.duplicate.counts.properties === 2 && propertyReview.preservedCounts.properties === 2);
+  const propertyMerge = await mergeContacts(ctx, input(propertyReview), NOW);
+  check("contacts with a shared property merge successfully", propertyMerge.ok && propertyMerge.value.preservedCounts.properties === 2);
+  const propertyRows = await db.select().from(contactProperties).where(inArray(contactProperties.id, propertyIds));
+  check("all saved and removed property associations are retained by original ID", propertyRows.length === 4 && propertyRows.every(row => row.contactId === propertyA));
+  check("shared property produces one visible card and preserves unique source property", propertyRows.filter(row => !row.removedAt).length === 2 && !propertyRows.find(row => row.id === propertyIds[2])?.removedAt);
+  check("merge retains original property save time and author", propertyRows.find(row => row.id === propertyIds[0])?.createdAt.toISOString() === originalAdded.toISOString() && propertyRows.every(row => row.createdByUserId === OWNER));
+  check("previously removed property remains removed", propertyRows.find(row => row.id === propertyIds[3])?.removedAt?.toISOString() === originalAdded.toISOString());
+  const lateProperty = randomUUID();
+  await db.insert(contactProperties).values({ id: lateProperty, contactId: propertyB, dataset: "synthetic", listingId: "late-key", mlsNumber: "A87654321", createdByUserId: OWNER });
+  check("late property association follows canonical contact", (await db.select().from(contactProperties).where(eq(contactProperties.id, lateProperty)))[0]?.contactId === propertyA);
+  const propertyC = await make("Stale property list source"), propertyStale = input(await review(propertyA, propertyC));
+  await db.update(contactProperties).set({ removedAt: NOW }).where(eq(contactProperties.id, lateProperty));
+  const propertyRefused = await mergeContacts(ctx, propertyStale, NOW);
+  check("saved-list change invalidates an opening merge review", !propertyRefused.ok && propertyRefused.reason === "conflict");
+  const propertyRace = input(await review(propertyA, propertyC)); let propertyInjected = false;
+  db.batch = (async statements => { if (!propertyInjected) { propertyInjected = true; await db.insert(contactProperties).values({ contactId: propertyC, dataset: "synthetic", listingId: "racing-key", mlsNumber: "A99999999", createdByUserId: OWNER }); } return baseBatch(statements); }) as typeof db.batch;
+  const propertyRaceResult = await mergeContacts(ctx, propertyRace, NOW); db.batch = baseBatch;
+  check("property saved after preflight is protected by atomic merge guard", !propertyRaceResult.ok && propertyRaceResult.reason === "conflict");
+  check("refused merge leaves racing saved property in its original file", (await db.select().from(contactProperties).where(eq(contactProperties.contactId, propertyC))).length === 1 && !(await db.select().from(contacts).where(eq(contacts.id, propertyC)))[0]?.mergedIntoContactId);
   console.log(`\n${passed}/${passed} contact merge checks passed (ephemeral PostgreSQL; no live access)`);
 } finally { await pg.close(); }

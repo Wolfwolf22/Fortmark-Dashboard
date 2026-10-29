@@ -33,6 +33,7 @@ import type { NextActionInput } from "../../contacts/next-action.ts";
 import type { ImportCommitInput, ImportPreview, ImportPreviewInput, ImportResult } from "../../contacts/import.ts";
 import type { DuplicateSuggestionsPage } from "../../contacts/duplicates.ts";
 import type { ContactMergeInput, ContactMergeResult, MergeReview } from "../../contacts/merge.ts";
+import type { AddPropertyInput, PropertyLookup, PropertyPage, PropertyView } from "../../contacts/properties.ts";
 import { HISTORY_PAGE_SIZE, type HistoryPage } from "../../contacts/history.ts";
 
 export type { LeadFilters };
@@ -534,4 +535,39 @@ export async function getLinkedTransactions(id: string): Promise<LinkedTransacti
   if ((await getLeadSource()) === "sample") return [];
   const { items } = await request<{ items: LinkedTransaction[] }>(`/api/contacts/${encodeURIComponent(id)}/transactions`);
   return items;
+}
+
+// --- A manually chosen property list for one contact -------------------------
+
+/** Saved entries remain in the response even when their current MLS read fails. */
+export async function getContactProperties(id: string, page = 1): Promise<PropertyPage> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  return request<PropertyPage>(`/api/contacts/${encodeURIComponent(id)}/properties?${new URLSearchParams({ page: String(page) })}`);
+}
+
+/** Exact MLS-number lookup is a read; its input stays in the POST body. */
+export async function lookupContactProperty(id: string, mlsNumber: string): Promise<PropertyLookup> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  return request<PropertyLookup>(`/api/contacts/${encodeURIComponent(id)}/properties/lookup`, {
+    method: "POST", body: JSON.stringify({ mlsNumber }),
+  }, { read: true });
+}
+
+/** Never retry a write automatically; the server makes explicit add retries idempotent. */
+export async function addContactProperty(id: string, input: AddPropertyInput): Promise<PropertyView> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try {
+    const { property } = await request<{ property: PropertyView }>(`/api/contacts/${encodeURIComponent(id)}/properties`, {
+      method: "POST", body: JSON.stringify(input),
+    });
+    return property;
+  } finally { bumpDataVersion(); }
+}
+
+/** Soft removal changes this contact's list, never the MLS listing. */
+export async function removeContactProperty(id: string, propertyId: string): Promise<{ removed: true }> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try {
+    return await request<{ removed: true }>(`/api/contacts/${encodeURIComponent(id)}/properties/${encodeURIComponent(propertyId)}`, { method: "DELETE" });
+  } finally { bumpDataVersion(); }
 }

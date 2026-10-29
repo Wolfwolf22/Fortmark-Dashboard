@@ -11,7 +11,7 @@ import { contactAgents } from "./contact-fixtures.mjs";
 import { previewRecordId, previewPublicRecordId } from "./import-merge-fixtures.mjs";
 import { LeadsError } from "./contact-errors.mjs";
 import { announceReadOnly } from "./read-only.mjs";
-import { SAMPLE_ACTOR, interactiveSamples, getPreviewScenario, readSampleRawContacts, readSampleContact, readSampleNotes, readSampleNeeds, readSampleTimeline, readSampleActivities, readSampleTransactionIds, readSampleOpportunities, replaceSampleContact, replaceSampleNotes, replaceSampleNeeds, replaceSampleTimeline, replaceSampleTransactionIds, replaceSampleOpportunities, appendSampleTimeline, nextSampleRevision, readSampleReceipt, replaceSampleReceipt } from "./sample-session.mjs";
+import { SAMPLE_ACTOR, interactiveSamples, getPreviewScenario, readSampleRawContacts, readSampleContact, readSampleNotes, readSampleNeeds, readSampleTimeline, readSampleActivities, readSampleTransactionIds, readSampleOpportunities, readSamplePropertyRows, replaceSampleContact, replaceSampleNotes, replaceSampleNeeds, replaceSampleTimeline, replaceSampleTransactionIds, replaceSampleOpportunities, replaceSampleProperties, appendSampleTimeline, nextSampleRevision, readSampleReceipt, replaceSampleReceipt } from "./sample-session.mjs";
 
 const copy = value => structuredClone(value);
 const error = (code, status = 400) => new LeadsError(code, status);
@@ -117,11 +117,13 @@ function pairRecords(primaryId, duplicateId) {
   if (!primary || !duplicate) throw error("not_found", 404);
   return [primary, duplicate];
 }
-function children(id) { return { notes: readSampleNotes(id), needs: readSampleNeeds(id), activities: readSampleActivities(id), opportunities: readSampleOpportunities(id), transactions: readSampleTransactionIds(id), timeline: readSampleTimeline(id) }; }
+function children(id) { return { notes: readSampleNotes(id), needs: readSampleNeeds(id), activities: readSampleActivities(id), opportunities: readSampleOpportunities(id), transactions: readSampleTransactionIds(id), timeline: readSampleTimeline(id), properties: readSamplePropertyRows(id) }; }
+const propertyIdentity = item => `${item.dataset}\u0000${item.listingId}`;
 const pairStamp = records => JSON.stringify(records.map(contact => ({ contact, children: children(contact.id) })));
 async function reviewContact(contact) {
   const child = children(contact.id);
   const counts = Object.fromEntries(["notes", "needs", "activities", "opportunities", "transactions"].map(key => [key, child[key].length]));
+  counts.properties = new Set(child.properties.filter(item => !item.removedAt).map(propertyIdentity)).size;
   return { id: previewPublicRecordId(contact.id), name: contact.name, updatedAt: contact.updatedAt, historyFingerprint: await payloadHash(child),
     values: { name: { firstName: contact.editable?.firstName || "", lastName: contact.editable?.lastName || "", preferredName: contact.editable?.preferredName || "" }, email: contact.email || "", phone: contact.phone || "", company: contact.editable?.company || "", source: contact.source, stage: contact.stage, birthday: contact.birthday || null, about: contact.about || "", personalDetails: contact.personalDetails || [], legacyNotes: contact.notes || "" }, nextAction: contact.nextAction || null, nextFollowUpDate: contact.nextFollowUpDate, counts };
 }
@@ -131,6 +133,7 @@ export async function getContactMergeReview(primaryId, duplicateId) {
   if (pairStamp(pairRecords(primaryId, duplicateId)) !== stamp) throw error("conflict", 409);
   const preservedCounts = mergeCounts(primary.counts, duplicate.counts);
   preservedCounts.transactions = new Set(records.flatMap(contact => readSampleTransactionIds(contact.id))).size;
+  preservedCounts.properties = new Set(records.flatMap(contact => readSamplePropertyRows(contact.id)).filter(item => !item.removedAt).map(propertyIdentity)).size;
   return copy({ primary, duplicate, conflicts: mergeConflicts(primary.values, duplicate.values), defaults: defaultMergeChoices(primary.values, duplicate.values), preservedCounts });
 }
 const unique = items => [...new Map(items.map(item => [typeof item === "string" ? item : item.id, item])).values()];
@@ -160,6 +163,13 @@ export async function mergeContacts(input) {
     replaceSampleTimeline(primary.id, unique([...p.timeline, ...d.timeline])); replaceSampleTimeline(duplicate.id, []);
     replaceSampleOpportunities(primary.id, unique([...p.opportunities, ...d.opportunities])); replaceSampleOpportunities(duplicate.id, []);
     replaceSampleTransactionIds(primary.id, unique([...p.transactions, ...d.transactions])); replaceSampleTransactionIds(duplicate.id, []);
+    const activeProperties = new Set(p.properties.filter(item => !item.removedAt).map(propertyIdentity));
+    const movedProperties = d.properties.map(item => {
+      const duplicateActive = !item.removedAt && activeProperties.has(propertyIdentity(item));
+      if (!item.removedAt) activeProperties.add(propertyIdentity(item));
+      return { ...item, contactId: primary.id, ...(duplicateActive ? { removedAt: at } : {}) };
+    });
+    replaceSampleProperties(primary.id, [...p.properties, ...movedProperties]); replaceSampleProperties(duplicate.id, []);
     for (const record of [review.primary, review.duplicate]) {
       if (record.nextAction && record.nextAction.id !== nextAction?.id) {
         const action = record.nextAction;
