@@ -26,8 +26,8 @@ const snapshot = JSON.stringify({ sampleShowings, samplePropertyLists, samplePro
 let groups = 0;
 
 const base = getSampleShowings(range());
-assert.equal(base.total, 5); assert(!base.items.some(item => item.id === SAMPLE_PRIVATE_SHOWING_ID));
-assert.equal(getSampleShowingSummary().total, 2);
+assert.equal(base.total, 11); assert(!base.items.some(item => item.id === SAMPLE_PRIVATE_SHOWING_ID));
+assert.equal(getSampleShowingSummary().total, 8);
 assert.equal(getSampleShowing(SAMPLE_UPCOMING_SHOWING_ID).listing.source, "sample");
 assert.equal(nextActionLocalParts(getSampleShowing(SAMPLE_UPCOMING_SHOWING_ID).startsAt).time, "10:00");
 assert.equal(getSampleShowing(SAMPLE_PAST_PLAN_ID).listing, null);
@@ -48,20 +48,20 @@ const linked = await contacts.getLead(previewPublicRecordId("sample-due-today"))
 assert.equal(linked.id, previewPublicRecordId("sample-due-today"));
 const picker = await contacts.getLeadsPage({ page: 1, pageSize: 100, sort: "name", dir: "asc" });
 assert(picker.items.every(person => /^[a-f0-9-]{36}$/i.test(person.id) && person.recordSource === "db"));
-const linkedPlan = body(5, { contactId: linked.id }); assert(createShowingInputSchema.safeParse(linkedPlan).success);
+const linkedPlan = body(6, { contactId: linked.id }); assert(createShowingInputSchema.safeParse(linkedPlan).success);
 const personBefore = readSampleContact("sample-due-today"), timelineBefore = readSampleTimeline(personBefore.id).length, activityBefore = JSON.stringify(getPreviewMetrics().activity.data);
 const planned = createSampleShowing(linkedPlan);
 assert.equal(planned.contactId, linked.id); assert.equal(planned.status, "scheduled");
 assert.deepEqual(readSampleContact(personBefore.id), personBefore);
 assert.equal(readSampleTimeline(personBefore.id).length, timelineBefore);
 assert.equal(JSON.stringify(getPreviewMetrics().activity.data), activityBefore);
-assert.equal(getSampleShowingSummary().total, 3); groups++;
+assert.equal(getSampleShowingSummary().total, 9); groups++;
 
 const frozen = Object.freeze({ ...linkedPlan });
 assert.equal(createSampleShowing(frozen).id, planned.id);
 denied(() => createSampleShowing({ ...linkedPlan, notes: "Different request payload" }), 409, "request_conflict");
-denied(() => createSampleShowing(body(5)), 409, "time_conflict");
-const adjacent = createSampleShowing(body(5, { startsAt: planned.endsAt, endsAt: new Date(Date.parse(planned.endsAt) + 900000).toISOString() }));
+denied(() => createSampleShowing(body(6)), 409, "time_conflict");
+const adjacent = createSampleShowing(body(6, { startsAt: planned.endsAt, endsAt: new Date(Date.parse(planned.endsAt) + 900000).toISOString() }));
 assert.notEqual(adjacent.id, planned.id); groups++;
 
 denied(() => createSampleShowing(body(6, { contactId: "sample-due-today" })), 400, "invalid_showing");
@@ -113,7 +113,7 @@ assert.equal(visitEvents.length, 1); assert.equal(visitEvents[0].title, "Showing
 const feed = getPreviewMetrics().activity.data.find(item => item.at === now.toISOString() && item.summary === "Showing completed");
 assert(feed); assert.equal(feed.kind, "contact_touch"); assert.equal(feed.subject, personBefore.name);
 assert(!JSON.stringify(feed).includes("Private")); assert(!JSON.stringify(feed).includes("SAMPLE-001"));
-assert.equal(getSampleShowingSummary().total, 2); groups++;
+assert.equal(getSampleShowingSummary().total, 8); groups++;
 
 const offlineBefore = getSampleShowing(past.id), offlineSource = offlineBefore.sourceProperty;
 replaceSampleListPropertyRows(offlineSource.listId, readSampleListPropertyRows(offlineSource.listId).map(item => item.id === offlineSource.id ? { ...item, removedAt: now.toISOString(), updatedAt: now.toISOString() } : item));
@@ -141,7 +141,7 @@ const allAgenda = getSampleShowingAgenda(range({ status: "cancelled", pageSize: 
 assert(allAgenda.nextActions.items.some(item => item.contactId === previewPublicRecordId(ownPerson.id) && item.action.assigneeId === SAMPLE_COLLEAGUE_ID));
 assert(!allAgenda.nextActions.items.some(item => item.contactId === previewPublicRecordId(otherPerson.id)));
 assert.equal(getSampleShowingAgenda(range({ contactId: personBefore.id })).showings.total, getSampleShowingAgenda(range({ contactId: previewPublicRecordId(personBefore.id) })).showings.total);
-assert.equal(getSampleShowings(range({ page: "9999" })).page, 1);
+assert.equal(getSampleShowings(range({ page: "9999" })).page, Math.ceil(getSampleShowings(range()).total / 12));
 replaceSampleContact(ownPerson); replaceSampleContact(otherPerson); groups++;
 
 for (const params of [new URLSearchParams(), range({ from: "bad" }), range({ to: at(100) }), range({ pageSize: "25" }), range({ contactId: "not-a-contact" }), range({ private: "x" })]) denied(() => getSampleShowings(params), 400, "invalid_showing_query");
@@ -182,7 +182,7 @@ assert.equal(readSampleContactShowings(DUPLICATE_SOURCE_ID).length, 0);
 assert.equal(getSampleShowingAgenda(range({ contactId: DUPLICATE_PRIMARY_ID })).showings.total, 1); groups++;
 
 mode("records");
-assert.equal(getSampleShowings(range()).total, 5); assert.equal(getSampleShowingSummary().total, 2);
+assert.equal(getSampleShowings(range()).total, 11); assert.equal(getSampleShowingSummary().total, 8);
 assert.equal(JSON.stringify(getPreviewMetrics().activity.data), JSON.stringify(metrics.activity.data));
 assert.equal(JSON.stringify({ sampleShowings, samplePropertyLists, samplePropertyListRows }), snapshot);
 denied(() => getSampleShowing(planned.id), 404);

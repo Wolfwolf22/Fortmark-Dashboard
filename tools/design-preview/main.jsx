@@ -73,6 +73,7 @@ function PreviewControls() {
       <span>{interactive ? "Changes stay in memory. Reload resets. No live services." : "Read-only sample data. No live accounts or services."}</span>
       <PreviewLink href="/settings" className="ml-1 font-semibold text-foreground underline underline-offset-4">View foundations</PreviewLink>
       {route === "/contacts" && <PreviewLink href="/contacts?open=sample-long-history" className="font-semibold text-foreground underline underline-offset-4">Long history case</PreviewLink>}
+      {route === "/showings" && <PreviewLink href="/showings?showing=84000000-0000-4000-8000-000000000101" className="font-semibold text-foreground underline underline-offset-4">Six-stop sample tour</PreviewLink>}
       {route === "/contacts" && <a href={`data:text/csv;charset=utf-8,${encodeURIComponent(sampleImportCsv)}`} download="fortmark-synthetic-contacts.csv" className="font-semibold text-foreground underline underline-offset-4">Sample CSV</a>}
       {interactive && <button type="button" className="font-semibold text-foreground underline underline-offset-4" onClick={() => window.location.reload()}>Reset samples</button>}
       {["/transactions", "/contacts", "/property-lists", "/showings"].includes(route) && <label className="ml-2 flex items-center gap-2">Preview data

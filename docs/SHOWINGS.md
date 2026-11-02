@@ -4,6 +4,10 @@ Local implementation, 2026-11-02. Migration `0022_showings.sql` is prepared;
 **0015–0022 remain unapplied to live databases**. This update does not certify
 authenticated production access, a live MLS connection or a deployment.
 
+The subsequent [Showing Tours update](./SHOWING_TOURS.md) adds a map and private
+itinerary to showing details, with road-route recommendations and explicit
+fixed/flexible timing. Its verification and mapping setup are documented there.
+
 ## Agent workflow
 
 Choose **Plan showing** on a saved property. A contact-linked list defaults to

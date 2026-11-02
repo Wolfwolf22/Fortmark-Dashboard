@@ -8,6 +8,7 @@ import { nextActionAttentionFields, attentionIsOverdue, compareAttention } from 
 import { businessDayKey, dayDiff } from "../../lib/metrics/business-day.ts";
 import { showingTransport } from "./showing-transport.mjs";
 import { getSampleShowingActivity } from "./showing-model.mjs";
+import { tourTransport } from "./tour-transport.mjs";
 const previewNow = contactFixtureNow;
 const monthStart = new Date(Date.UTC(previewNow.getUTCFullYear(), previewNow.getUTCMonth(), 1)).toISOString().slice(0, 10);
 const monthly = Array.from({ length: 12 }, (_, index) => {
@@ -116,6 +117,8 @@ export function installPreviewTransport() {
     const url = new URL(typeof input === "string" ? input : input.url, window.location.origin);
     if (url.origin !== window.location.origin) return json({ error: "External requests are disabled in the design preview." }, 403);
     const path = url.pathname.replace(/^\/dashboard/, "");
+    const tourResponse = await tourTransport(path, url, input, init);
+    if (tourResponse) return tourResponse;
     const showingResponse = await showingTransport(path, url, input, init);
     if (showingResponse) return showingResponse;
     if ((init.method || "GET").toUpperCase() !== "GET") {

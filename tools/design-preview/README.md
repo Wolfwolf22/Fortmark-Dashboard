@@ -388,3 +388,46 @@ merge fingerprints and move to the canonical contact while retaining their IDs.
 ```sh
 node --experimental-strip-types --no-warnings tools/design-preview/test-showing-session.mjs
 ```
+
+## Read-only showing tours
+
+The **Six-stop sample tour** link in the Showing preview banner opens showing
+`84000000-0000-4000-8000-000000000101`. Its source **Saturday tour** list
+(`83000000-0000-4000-8000-000000000009`) contains six fictional properties linked
+to the same sample contact, with six 45-minute appointments five days ahead in
+New York time. The scheduled order deliberately zigzags between their illustrative
+locations. The visits are spaced 90 minutes apart so the fixed schedule remains
+feasible with a ten-minute buffer. This additional list contributes six actual
+rows to the same list/agenda/Home projections, rather than a separate tour mock.
+
+The real tour client adapter reads the isolated GET/POST
+`/api/showings/:id/tour` transport. Both are read-only in Records and Interactive
+samples: no recommendation writes appointments, history, next actions, research,
+receipts or data versions. SHA-256 context tokens use the shared canonical
+encoder over the complete authorized source/list/appointment snapshot, independent
+of candidate page and display geometry. POST rechecks ownership, contact/day,
+membership identity, revisions and fresh displayable locations. Removed sources,
+stale reviews and withheld/unresolved stops return controlled errors. Candidate
+pages are bounded to 24, selected stops to eight, and multiple appointments for
+one membership are explicit and nonselectable.
+
+The map has `kind: sample` and uses local SVG illustrations. The drive matrix is
+an explicit asymmetric table of sample road durations/distances, separate from
+coordinate drawing; it never estimates driving time from straight-line distance.
+The production `optimizeTour` function computes the recommendation. Flexible
+ordering reduces the seeded 103-minute driving baseline to 38 minutes. Fixed
+appointments preserve their recorded order and times. Returned `resolvedStops`
+are the freshly authorized locations used for that recommendation. Sample results
+have no live traffic timestamp or fabricated Google road geometry. No map keys,
+external tiles, routing requests or live services are used.
+
+Automatic first-stop selection uses the shared optimizer across every permitted
+ordering. If the current selected order cannot fit its booked appointment times,
+the result omits baseline driving figures and savings rather than showing a
+misleading comparison. Opening a later showing still defaults to the earliest
+selectable booked visit. Both context reads and calculated results recheck source
+scope and the complete fingerprint after resolving their locations/calculation.
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-tour-session.mjs
+```

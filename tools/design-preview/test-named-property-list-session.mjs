@@ -18,12 +18,12 @@ function mergeInput(review) { return { requestId: crypto.randomUUID(), primaryId
 let groups = 0;
 
 let index = await api.getPropertyLists();
-assert.equal(index.total, 7); assert.equal(index.pageSize, 12);
+assert.equal(index.total, 8); assert.equal(index.pageSize, 12);
 assert.equal(index.items.filter(list => list.contactId === null).length, 2);
 assert(!JSON.stringify(index).includes("Sample colleague private research"));
 const dueLists = await api.getPropertyLists({ contactId: dueId });
-assert.equal(dueLists.total, 2);
-assert.deepEqual(new Set(dueLists.items.map(list => list.name)), new Set(["Waterfront options", "Investment research"]));
+assert.equal(dueLists.total, 3);
+assert.deepEqual(new Set(dueLists.items.map(list => list.name)), new Set(["Waterfront options", "Investment research", "Saturday tour"]));
 assert.equal((await api.getPropertyList(waterfrontId)).propertyCount, 3);
 assert.equal((await api.getPropertyList(investmentId)).propertyCount, 1);
 assert.equal((await api.getPropertyList(emptyId)).propertyCount, 0);
@@ -49,7 +49,7 @@ const [personal, replay] = await Promise.all([api.createPropertyList(create), ap
 assert.equal(personal.id, replay.id); assert.equal(personal.name, "Synthetic personal research");
 assert.equal(personal.contactId, null); assert.equal(personal.propertyCount, 0);
 assert.equal(useDataVersion.getState().version, version + 1);
-assert.equal((await api.getPropertyLists()).total, 8);
+assert.equal((await api.getPropertyLists()).total, 9);
 assert.equal((await api.createPropertyList({ ...create, name: "Synthetic personal research" })).id, personal.id);
 await denied(() => api.createPropertyList({ ...create, name: "Changed receipt payload" }), 409, "request_conflict"); groups++;
 
@@ -57,8 +57,8 @@ const parentBefore = await api.getLead(dueId), historyBefore = await api.getTime
 const linkedCreate = { requestId: crypto.randomUUID(), name: "Synthetic additional contact list", contactId: dueId };
 const linked = await api.createPropertyList(linkedCreate);
 assert.equal(linked.contactId, previewPublicRecordId(dueId));
-assert.equal((await api.getPropertyLists({ contactId: dueId })).total, 3);
-assert.equal((await api.getPropertyLists({ contactId: linked.contactId })).total, 3);
+assert.equal((await api.getPropertyLists({ contactId: dueId })).total, 4);
+assert.equal((await api.getPropertyLists({ contactId: linked.contactId })).total, 4);
 assert.equal((await api.getLead(dueId)).lastTouchDate, parentBefore.lastTouchDate);
 assert.equal((await api.getLead(dueId)).updatedAt, parentBefore.updatedAt);
 assert.deepEqual(await api.getTimeline(dueId), historyBefore);
@@ -149,8 +149,8 @@ assert.equal((await window.fetch("/api/property-lists", { method: "POST" })).sta
 assert.equal((await window.fetch("https://example.invalid/property-lists")).status, 403);
 assert.equal(immutable(), original);
 mode("records");
-assert.equal((await api.getPropertyLists()).total, 7);
-assert.equal((await api.getPropertyLists({ contactId: dueId })).total, 2);
+assert.equal((await api.getPropertyLists()).total, 8);
+assert.equal((await api.getPropertyLists({ contactId: dueId })).total, 3);
 await denied(() => api.getPropertyList(personal.id), 404);
 mode("interactive");
 const fresh = await import("./sample-session.mjs?fresh-named-list-page");

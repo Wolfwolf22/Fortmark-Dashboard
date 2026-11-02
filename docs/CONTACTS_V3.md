@@ -623,3 +623,10 @@ synthetic, isolated and reset on reload.
 ## Showing planner — current local update (2026-11-02)
 
 The internal [Showing Planner](./SHOWINGS.md) connects privately saved MLS properties to contact appointments, a full-page agenda and an upcoming-showings card on Home. Confirmed visits support private feedback and an optional original-list review update. The separate follow-up step uses the contact’s existing Next Action editor. See the dedicated document for scope, concurrency and local verification details.
+
+The [Showing Tour map and route planner](./SHOWING_TOURS.md) now groups one
+client's scheduled list properties for one New York day. It provides numbered
+locations, road-drive estimates, route order suggestions and an optional
+automatic first property. Recommendations do not change bookings. The Google
+Maps integration is prepared but remains disabled without explicitly configured
+keys; the local demo uses clearly labelled illustrative roads and travel times.
