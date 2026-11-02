@@ -20,6 +20,8 @@
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { freshToken, refreshingApiFor, signInCertificationUser } from "./session";
+import { nextStage as nextTransactionStage } from "../lib/transactions/stages";
+import { TRANSACTION_STAGE_LABELS, type TransactionStage } from "../lib/data/types";
 
 test.describe.configure({ mode: "serial" });
 
@@ -242,8 +244,10 @@ test.describe("agent workday", () => {
 
   test("9. move the deal forward by hand; Home and history reflect it", async () => {
     const before = await metrics();
-    await gotoReady(page, `/dashboard/transactions?open=${state.dated}`, page.getByRole("button", { name: /^Advance to / }));
-    await page.getByRole("button", { name: /^Advance to offer/i }).click();
+    await gotoReady(page, `/dashboard/transactions?open=${state.dated}`, page.getByRole("combobox", { name: "Change transaction stage" }));
+    await page.getByRole("combobox", { name: "Change transaction stage" }).click();
+    await page.getByRole("option", { name: "Offer", exact: true }).click();
+    await page.getByRole("dialog", { name: "Review stage change" }).getByRole("button", { name: "Confirm stage", exact: true }).click();
     await expect(async () => {
       const t = (await api(`/dashboard/api/transactions/${state.dated}`)).body.transaction as { stage: string };
       expect(t.stage).toBe("offer");
@@ -354,8 +358,12 @@ test.describe("broker workday", () => {
     const list = (await api("/dashboard/api/transactions")).body.items as { id: string; stage: string }[];
     const deal = list.find((t) => t.id === COLLEAGUE_TXN);
     expect(deal, "the broker sees the colleague's deal").toBeTruthy();
-    await gotoReady(page, `/dashboard/transactions?open=${COLLEAGUE_TXN}`, page.getByRole("button", { name: /^Advance to / }));
-    await page.getByRole("button", { name: /^Advance to / }).click();
+    await gotoReady(page, `/dashboard/transactions?open=${COLLEAGUE_TXN}`, page.getByRole("combobox", { name: "Change transaction stage" }));
+    const next = nextTransactionStage(deal!.stage as TransactionStage);
+    expect(next, "the colleague’s file has a next active stage").toBeTruthy();
+    await page.getByRole("combobox", { name: "Change transaction stage" }).click();
+    await page.getByRole("option", { name: TRANSACTION_STAGE_LABELS[next!], exact: true }).click();
+    await page.getByRole("dialog", { name: "Review stage change" }).getByRole("button", { name: "Confirm stage", exact: true }).click();
     await expect(async () => {
       const t = (await api(`/dashboard/api/transactions/${COLLEAGUE_TXN}`)).body.transaction as { stage: string };
       expect(t.stage).not.toBe(deal!.stage);

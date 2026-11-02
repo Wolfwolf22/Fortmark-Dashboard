@@ -80,56 +80,29 @@ returned success — leaving a deal whose stage had moved with **nothing at all
 recording that it had**. On the record that carries the money and the closing
 date, that is the worst place in the application for a silent history gap.
 
-## 5. The shared operation
+## 5. The shared operation (updated 2026-11-02)
 
-```
-planStageChange(ctx, id, to, { mechanism?, metadata?, now? })
-  -> authorize   visibleTo + canSee + canWrite
-  -> validate    canTransition (which refuses same-stage)
-  -> derive      from = row.stage          (never supplied by a caller)
-  -> build       three writes, unperformed
-  -> return      { row, from, to, writes }
+`planStageChange` remains the shared authorization/lifecycle planner, and
+`commitStageChange` commits its complete statement list through `db.batch`.
+The current planner captures the saved owner, brokerage, stage and revision.
+The browser supplies the reviewed revision and a stable request UUID.
 
-commitStageChange(db, writes)
-  -> db.batch(writes)   one Neon HTTP server-side PostgreSQL transaction
+The batch locks the actor and transaction, inserts a guarded request receipt,
+updates only the captured current version, and inserts the domain event and
+required audit. A failed scope/revision guard or history write aborts every
+statement. A stale proposal cannot overwrite a later stage or reassignment.
+An exact retry reauthorizes current access and recovers the committed receipt.
 
-changeStage(ctx, id, to, now)   the manual path, used by the pipeline UI
-  -> plan, commit, re-read
-```
+Closing stamps the actual New York calendar day in `closed_date`; an exit
+stamps `cancelled_date`. Existing actual dates remain intact on other moves.
+Money, party snapshots and entered deadline completion are unchanged by a stage
+move. The UI reviews the selected from/to stages and warns explicitly before
+an irreversible terminal move. Members cannot drag or change stages.
 
-The planned writes:
-
-```
-1. update transactions
-     stage, updated_by_user_id, updated_at,
-     closed_date    = today when moving to closed, otherwise unchanged
-     cancelled_date = today when moving to another terminal stage, otherwise unchanged
-2. insert transaction_events   event_type transaction_stage_changed, { from, to }
-3. insert audit_events         event_type transaction_stage_changed,
-                               { transactionId, from, to }
-```
-
-Returning the writes rather than performing them is the whole point: a second
-caller appends its own statement to this list instead of reimplementing the
-authorization, the lifecycle rule and the date handling around a copy. That is
-what the contacts refactor proved, and what makes a future AI-confirmed
-execution a one-line addition rather than a second writer.
-
-**Preserved exactly:** transitions, authorization, labels, kanban behaviour,
-metric definitions, commission arithmetic, deadline semantics, the event
-summary shape, and the audit conventions. A manual change records no
-`mechanism`, so existing history stays comparable.
-
-**Proven against the real database:** the actual three-statement batch with the
-audit insert forced to violate a foreign key left the stage at `closing_prep`,
-`closed_date` null, `updated_by_user_id` null, zero events and zero audits.
-The same three with a valid actor committed together: `closed`, closed date
-stamped, cancelled date still null, price and deadlines untouched, exactly one
-event and one audit.
-
-**Mutation-tested:** reverting the commit to sequential awaits fails 2 checks,
-dropping the audit write from the plan fails 4, and letting a stage change
-clear `closed_date` fails 1.
+Creation now uses the same atomic principle: file, client parties, entered
+deadlines, receipt, events and contact-link audit commit together. The old
+best-effort history helper is removed. See
+[TRANSACTION_WORKSPACE.md](TRANSACTION_WORKSPACE.md) for details/deadline edits.
 
 ## 6. Terminal-state findings, for a future decision
 
@@ -173,8 +146,8 @@ Recorded as architecture input. **Not authorized, not implemented.**
 - **Risk: higher than contact stage.** A contact stage change moves a headline
   count. A transaction stage change moves money in reporting, stamps a date
   that cannot be un-stamped, and cannot be undone at all.
-- **Fingerprint:** `{ id, stage }` by the same reasoning as contacts — stage is
-  the sole input to transition validity. `closed_date` should *not* be
+- **Fingerprint:** include `{ id, stage, updatedAt, agentUserId, brokerageKey }`
+  and recheck current permissions; stage alone cannot prevent concurrent stale writes. `closed_date` should *not* be
   included: it is written by the transition, not consulted by it.
 - **Scope recommendation:** if a capability is ever authorized, start with
   **active-stage moves only** — forward, back-one, and `on_hold` in both

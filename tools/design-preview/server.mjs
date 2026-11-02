@@ -16,7 +16,6 @@ const aliases = new Map([
   ["@/components/profile/profile-drawer", "preview-dialogs.jsx"],
   ["@/components/layout/quick-create-dialog", "preview-dialogs.jsx"],
   ["@/lib/data/adapters/listings", "visual-adapters.mjs"],
-  ["@/lib/data/adapters/transactions", "visual-adapters.mjs"],
   ["@/lib/data/adapters/agents", "visual-adapters.mjs"],
   ["@/lib/data/adapters/leads", "contact-adapters.mjs"],
 ]);
@@ -88,7 +87,7 @@ createServer(async (request, response) => {
       response.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" }); const requestedHeight = Number(url.searchParams.get("height"));
       const height = [568,720,844,1024,1180].includes(requestedHeight) ? requestedHeight : 844;
       const requestedView = url.searchParams.get("view") || "/";
-      const view = /^\/(?:listings(?:\/[a-z0-9-]+)?|transactions|contacts|property-lists|showings|showing-tours|settings)?(?:\?[a-z0-9_%=,&-]*)?$/i.test(requestedView) ? requestedView : "/";
+      const view = /^\/(?:listings(?:\/[a-z0-9-]+)?|transactions(?:\/[a-z0-9-]+)?|contacts|property-lists|showings|showing-tours|settings)?(?:\?[a-z0-9_%=,&-]*)?$/i.test(requestedView) ? requestedView : "/";
       const requestedScenario = url.searchParams.get("scenario");
       const scenario = ["unavailable", "empty", "conflict", "interactive"].includes(requestedScenario) ? requestedScenario : "records";
       response.end(responsiveHtml(width, height, view, scenario)); return;

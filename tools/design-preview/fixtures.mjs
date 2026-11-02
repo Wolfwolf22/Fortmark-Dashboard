@@ -1,7 +1,6 @@
 // Deliberately synthetic, nonpersistent fixtures for visual review only.
-import { visualTransactions } from "./visual-fixtures.mjs";
-import { contactFixtureNow } from "./contact-fixtures.mjs";
-import { readSampleContacts, readSampleActionActivity } from "./sample-session.mjs";
+import { contactFixtureNow, contactAgents } from "./contact-fixtures.mjs";
+import { readSampleContacts, readSampleActionActivity, SAMPLE_ACTOR } from "./sample-session.mjs";
 import { ACTIVE_CLIENT_STAGES, LIFECYCLE_STAGES, OPEN_PIPELINE_STAGES } from "../../lib/contacts/stages.ts";
 import { effectiveFollowUpStatus } from "../../lib/contacts/follow-up.ts";
 import { nextActionAttentionFields, attentionIsOverdue, compareAttention } from "../../lib/metrics/attention.ts";
@@ -10,6 +9,11 @@ import { showingTransport } from "./showing-transport.mjs";
 import { getSampleShowingActivity } from "./showing-model.mjs";
 import { tourTransport } from "./tour-transport.mjs";
 import { savedTourTransport } from "./saved-tour-transport.mjs";
+import { transactionTransport } from "./transaction-transport.mjs";
+import { readPreviewTransactionBundles, previewTransactionActivity } from "./transaction-model.mjs";
+import { previewTransactionPublicId } from "./transaction-fixtures.mjs";
+import { isActiveStage } from "../../lib/transactions/stages.ts";
+import { projectCommission } from "../../lib/transactions/money.ts";
 const previewNow = contactFixtureNow;
 const monthStart = new Date(Date.UTC(previewNow.getUTCFullYear(), previewNow.getUTCMonth(), 1)).toISOString().slice(0, 10);
 const monthly = Array.from({ length: 12 }, (_, index) => {
@@ -37,27 +41,17 @@ export const metrics = {
   leaderboard: { availability: "available", data: [{ agentUserId: "sample-agent", name: "Sample Agent", activeCount: 2, closedCount: 0, closedVolumeCents: 0 }] },
 };
 
-// Keep the Home overview consistent with the same synthetic work list shown
-// on Transactions; these are fixture totals, never live business metrics.
-const active = visualTransactions.filter(deal => ["offer", "under_contract", "due_diligence", "financing", "closing_prep"].includes(deal.stage));
-const closed = visualTransactions.filter(deal => deal.stage === "closed");
-const closedThisMonth = closed.filter(deal => deal.closeDate?.startsWith(monthStart.slice(0, 7)));
-const sumCents = (rows, key) => Math.round(rows.reduce((total, row) => total + row[key], 0) * 100);
-Object.assign(metrics.transactions.data, {
-  activeCount: active.length,
-  onHoldCount: visualTransactions.filter(deal => deal.stage === "on_hold").length,
-  activeVolumeCents: sumCents(active, "contractPrice"),
-  projectedCommissionCents: sumCents(active, "projectedCommission"),
-  projectedCommissionUntermedCount: active.filter(deal => deal.commissionRate === 0).length,
-  scheduledClosingsThisMonth: active.filter(deal => deal.closeDate?.startsWith(monthStart.slice(0, 7))).length,
-  closedThisMonthCount: closedThisMonth.length,
-  closedThisMonthVolumeCents: sumCents(closedThisMonth, "contractPrice"),
-});
-monthly.forEach(point => {
-  const rows = closed.filter(deal => deal.closeDate?.startsWith(point.month.slice(0, 7)));
-  Object.assign(point, { closedCount: rows.length, closedVolumeCents: sumCents(rows, "contractPrice"), commissionCents: sumCents(rows, "projectedCommission") });
-});
-Object.assign(metrics.leaderboard.data[0], { activeCount: active.length, closedCount: closedThisMonth.length, closedVolumeCents: sumCents(closedThisMonth, "contractPrice") });
+// All business projections read the same ephemeral raw transaction book.
+function setTransactionGroups(target, at) {
+  const rows = readPreviewTransactionBundles().map(bundle => bundle.row), active = rows.filter(row => isActiveStage(row.stage)), closed = rows.filter(row => row.stage === "closed"), month = businessDayKey(at).slice(0, 7);
+  const closedMonth = closed.filter(row => row.closedDate?.startsWith(month)), cents = items => items.reduce((sum, row) => sum + (row.contractPriceCents || 0), 0), commission = items => items.reduce((sum, row) => sum + projectCommission(row).grossCents, 0);
+  const monthly = Array.from({ length: 12 }, (_, index) => { const value = new Date(`${month}-01T12:00:00Z`); value.setUTCMonth(value.getUTCMonth() - 11 + index); const key = value.toISOString().slice(0, 10), items = closed.filter(row => row.closedDate?.startsWith(key.slice(0, 7))); return { month: key, closedCount: items.length, closedVolumeCents: cents(items), commissionCents: commission(items) }; });
+  Object.assign(target.transactions.data, { activeCount: active.length, onHoldCount: rows.filter(row => row.stage === "on_hold").length, activeVolumeCents: cents(active), activeVolumeUnpricedCount: active.filter(row => row.contractPriceCents === null).length, projectedCommissionCents: commission(active), projectedCommissionUntermedCount: active.filter(row => projectCommission(row).basis === "none").length, scheduledClosingsThisMonth: active.filter(row => row.closingDate?.startsWith(month)).length, closedThisMonthCount: closedMonth.length, closedThisMonthVolumeCents: cents(closedMonth), monthly });
+  const owners = [...new Set(rows.map(row => row.agentUserId))];
+  const brokerageScope = ["admin", "broker", "transaction_coordinator"].includes(SAMPLE_ACTOR.role);
+  target.scope = brokerageScope ? "brokerage" : "own";
+  target.leaderboard.data = brokerageScope ? owners.map(agentUserId => ({ agentUserId, name: contactAgents.find(agent => agent.id === agentUserId)?.name || "Sample Agent", activeCount: active.filter(row => row.agentUserId === agentUserId).length, closedCount: closedMonth.filter(row => row.agentUserId === agentUserId).length, closedVolumeCents: cents(closedMonth.filter(row => row.agentUserId === agentUserId)) })) : [];
+}
 
 function contactFigures(contacts, at, month) {
   const thisMonthContacts = contacts.filter(contact => new Date(contact.createdDate) >= new Date(`${month}T00:00:00Z`));
@@ -80,11 +74,11 @@ function contactFigures(contacts, at, month) {
   };
 }
 function transactionAttentionAt(at) {
-  return active.flatMap(deal => deal.milestones.flatMap(milestone => {
-    if (milestone.state === "done") return [];
-    const dueDate = businessDayKey(new Date(milestone.date));
+  return readPreviewTransactionBundles().filter(bundle => isActiveStage(bundle.row.stage)).flatMap(bundle => bundle.deadlines.flatMap(deadline => {
+    if (deadline.completedAt || deadline.removedAt) return [];
+    const dueDate = deadline.dueDate;
     const daysAway = dayDiff(dueDate, businessDayKey(at));
-    return daysAway <= 7 ? [{ id: `deadline:${deal.id}:${milestone.id}`, kind: daysAway < 0 ? "deadline_overdue" : "deadline_soon", label: milestone.label, subject: deal.address, dueDate, daysAway, href: `/transactions?open=${deal.id}` }] : [];
+    return daysAway <= 7 ? [{ id: `deadline:${deadline.id}`, kind: daysAway < 0 ? "deadline_overdue" : "deadline_soon", label: deadline.label, subject: bundle.row.addressLine1, dueDate, daysAway, href: `/transactions/${encodeURIComponent(previewTransactionPublicId(bundle.row.id))}` }] : [];
   }));
 }
 function setContactGroups(target, contacts, at) {
@@ -94,6 +88,7 @@ function setContactGroups(target, contacts, at) {
   target.attention.data = { items: attention, overdueCount: attention.filter(attentionIsOverdue).length, soonCount: attention.filter(item => !attentionIsOverdue(item) && item.daysAway <= 7).length };
 }
 setContactGroups(metrics, readSampleContacts(), previewNow);
+setTransactionGroups(metrics, previewNow);
 metrics.activity.data = [...getSampleShowingActivity(), ...metrics.activity.data].sort((a, b) => b.at.localeCompare(a.at));
 
 /** A fresh view of the same ephemeral session used by all contact reads. */
@@ -101,8 +96,9 @@ export function getPreviewMetrics(at = new Date()) {
   const result = structuredClone(metrics);
   result.generatedAt = at.toISOString();
   setContactGroups(result, readSampleContacts(), at);
+  setTransactionGroups(result, at);
   // Match the production Home feed's eight most recent business events.
-  result.activity.data = [...new Map([...readSampleActionActivity(), ...getSampleShowingActivity(), ...result.activity.data].map(item => [item.id, item])).values()]
+  result.activity.data = [...new Map([...readSampleActionActivity(), ...getSampleShowingActivity(), ...previewTransactionActivity(), ...result.activity.data].map(item => [item.id, item])).values()]
     .sort((a, b) => b.at.localeCompare(a.at))
     .slice(0, 8);
   return result;
@@ -118,6 +114,8 @@ export function installPreviewTransport() {
     const url = new URL(typeof input === "string" ? input : input.url, window.location.origin);
     if (url.origin !== window.location.origin) return json({ error: "External requests are disabled in the design preview." }, 403);
     const path = url.pathname.replace(/^\/dashboard/, "");
+    const transactionResponse = await transactionTransport(path, url, input, init);
+    if (transactionResponse) return transactionResponse;
     const savedTourResponse = await savedTourTransport(path, url, input, init);
     if (savedTourResponse) return savedTourResponse;
     const tourResponse = await tourTransport(path, url, input, init);
@@ -130,8 +128,6 @@ export function installPreviewTransport() {
     }
     if (path === "/api/metrics") return json(getPreviewMetrics());
     if (path === "/api/subsystems") return json({ subsystems });
-    if (path === "/api/transactions/source") return json({ source: "db" });
-    if (path === "/api/transactions") return json({ items: [] });
     if (path === "/api/listings/source") return json({ source: "not_configured" });
     return json({ error: "This service is not part of the design preview." }, 404);
   };

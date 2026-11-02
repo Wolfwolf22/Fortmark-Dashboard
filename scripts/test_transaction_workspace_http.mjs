@@ -1,0 +1,61 @@
+/** Real transaction HTTP boundaries with synthetic auth/service responses; no network. */
+import { build } from "esbuild";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+const root = fileURLToPath(new URL("../", import.meta.url)), folder = mkdtempSync(join(tmpdir(), "fortmark-transaction-http-"));
+const fixtures = new Map([
+  ["next/server", `export const NextResponse={json:(body,options={})=>new Response(JSON.stringify(body),{...options,headers:{'Content-Type':'application/json',...options.headers}})};`],
+  ["auth/require-caller", `export async function requireCaller(){const s=globalThis.transactionHttp;return s.auth?{ok:true,clerkUserId:'synthetic'}:{ok:false,response:Response.json({error:'Unauthorized'},{status:401,headers:{'Cache-Control':'private, no-store'}})}}`],
+  ["flags", `export const transactionsDatabaseEnabled=()=>globalThis.transactionHttp.source==='db';`],
+  ["data/sample-transactions", `export function getSampleTransaction(id){return {id,stage:'opportunity'}};export function updateSampleTransactionStage(id,stage){return {id,stage}};export function listSampleTransactions(){return []}`],
+  ["transactions/service", `export async function resolveActor(){const s=globalThis.transactionHttp;s.actorCalls++;return {ok:true,value:{actor:{userId:'11111111-1111-4111-8111-111111111111',role:s.role,brokerageKey:'fortmark'},db:{}}}};async function run(name,args){const s=globalThis.transactionHttp;s.calls.push({name,args});if(s.throwService)throw Error('Private notes and client');return s.answers[name]??{ok:true,value:s.values[name]}};export const createTransaction=(...a)=>run('create',a),changeStage=(...a)=>run('stage',a);export async function getTransaction(){return globalThis.transactionHttp.values.create};export async function listTransactions(){return []}`],
+  ["transactions/workspace-service", `async function run(name,args){const s=globalThis.transactionHttp;s.calls.push({name,args});if(s.throwService)throw Error('Private file/notes');return s.answers[name]??{ok:true,value:s.values.workspace}};export const getTransactionWorkspace=(...a)=>run('get',a),updateTransactionWorkspace=(...a)=>run('edit',a),mutateTransactionDeadline=(...a)=>run('deadline',a);`],
+]);
+const entry = `
+import assert from 'node:assert/strict';
+import {readTransactionBody,failure} from './lib/transactions/http';
+import * as base from './app/api/transactions/route';
+import * as stage from './app/api/transactions/[id]/stage/route';
+import * as workspace from './app/api/transactions/[id]/workspace/route';
+import * as deadlines from './app/api/transactions/[id]/deadlines/route';
+(async()=>{
+const id='22222222-2222-4222-8222-222222222222',url='https://synthetic.invalid/api/transactions',context={params:Promise.resolve({id})},transaction={id,stage:'offer'},file={transaction,details:{notes:'Private authorized note'},deadlines:[],parties:[],history:{items:[],total:0,page:1,pageSize:20},canEdit:true,updatedAt:'2026-11-02T15:00:00Z'};
+const s=globalThis.transactionHttp={auth:true,source:'db',role:'agent',actorCalls:0,calls:[],answers:{},values:{create:transaction,stage:transaction,workspace:file}};
+let checks=0;function check(v,label){assert.ok(v,label);checks++};const reset=()=>{s.calls=[];s.actorCalls=0};const privateResponse=r=>r.headers.get('Cache-Control')==='private, no-store';
+const request=(value={},method='POST',suffix='')=>new Request(url+suffix,{method,body:typeof value==='string'?value:JSON.stringify(value)});
+check((await readTransactionBody(request('"'+'x'.repeat(65534)+'"'))).ok,'exact64KiBaccepted');const stream=new Request(url,{method:'POST',body:new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('"'+'x'.repeat(65535)+'"'));c.close()}}),duplex:'half',headers:{'content-length':'1'}});check(!(await readTransactionBody(stream)).ok,'actualstreamboundcannotbypass');check(!(await readTransactionBody(request('{bad'))).ok,'malformedJSONrefused');check(!(await readTransactionBody(new Request(url,{method:'POST'}))).ok,'missingbodyrefused');
+s.auth=false;const unauthorized=await workspace.GET(new Request(url),context);check(unauthorized.status===401&&privateResponse(unauthorized)&&s.calls.length===0&&s.actorCalls===0,'authbeforeallservicework');s.auth=true;
+s.source='sample';const sample=await workspace.PATCH(request(),context);check(sample.status===404&&s.calls.length===0&&s.actorCalls===0,'workspaceDBonlyfailsclosed');s.source='db';
+const invalidId=await workspace.GET(new Request(url),{params:Promise.resolve({id:'bad'})});check(invalidId.status===404&&s.actorCalls===0,'badUUIDbeforeactor');
+s.role='member';for(const fn of [workspace.PATCH,deadlines.POST]){reset();const result=await fn(request(),context);check(result.status===403&&privateResponse(result)&&s.calls.length===0,'readonlymemberdeniedbeforewritebodyservice')};const memberRead=await workspace.GET(new Request(url),context);check(memberRead.status===200&&privateResponse(memberRead),'memberreadallowed');s.role='agent';
+for(const query of ['?historyPage=0','?historyPage=1&historyPage=2','?q=Private','?historyPage=1000001']){reset();const result=await workspace.GET(new Request(url+query),context);check(result.status===400&&s.calls.length===0,'strictboundedhistoryquery')};
+reset();const read=await workspace.GET(new Request(url+'?historyPage=2'),context);check(read.status===200&&privateResponse(read)&&JSON.stringify(await read.json())===JSON.stringify(file)&&s.calls[0].args[2].historyPage===2,'bareworkspaceDTOandhistorypaging');
+for(const fn of [workspace.PATCH,deadlines.POST]){reset();const result=await fn(request({},'POST','?notes=Private'),context);check(result.status===400&&s.calls.length===0,'writesneveracceptprivateURLpayload')};
+reset();const edited=await workspace.PATCH(request({requestId:id,expectedUpdatedAt:file.updatedAt,details:file.details},'PATCH'),context);check(edited.status===200&&privateResponse(edited)&&(await edited.json()).transaction.id===id&&s.calls[0].name==='edit','editreturnsworkspace');
+reset();const milestone=await deadlines.POST(request({action:'complete',requestId:id,expectedUpdatedAt:file.updatedAt,deadlineId:id,expectedDeadlineUpdatedAt:file.updatedAt}),context);check(milestone.status===200&&(await milestone.json()).transaction.id===id&&s.calls[0].name==='deadline','deadlineactionthroughonescopedwriter');
+reset();const badBody=await deadlines.POST(request('{bad'),context);check(badBody.status===400&&s.calls.length===0,'malformedwritecannotreachservice');
+const createBody={requestId:id,transactionType:'residential_sale',side:'buyer',addressLine1:'Private address',city:'Private city'};
+reset();const missingCreate=await base.POST(request({...createBody,requestId:undefined}));check(missingCreate.status===400&&s.calls.length===0&&s.actorCalls===0,'createAPIrequiresstableUUID');
+const created=await base.POST(request(createBody));check(created.status===201&&privateResponse(created)&&(await created.json()).transaction.id===id&&s.calls[0].args[1].requestId===id,'createpassesUUIDandreturns201envelope');
+reset();const impossible=await base.POST(request({...createBody,closingDate:'2026-02-30'}));check(impossible.status===400&&s.calls.length===0,'invalidrealcalendardayrefusedbeforeSQL');
+const stageBody={stage:'offer',requestId:id,expectedUpdatedAt:file.updatedAt};reset();const missingStage=await stage.POST(request({stage:'offer'}),context);check(missingStage.status===400&&s.calls.length===0&&s.actorCalls===0,'DBstageAPIrequiresUUIDandrevision');
+const moved=await stage.POST(request(stageBody),context);check(moved.status===200&&privateResponse(moved)&&(await moved.json()).transaction.id===id&&s.calls[0].args[4].requestId===id&&s.calls[0].args[4].expectedUpdatedAt===file.updatedAt,'stagepassesreviewedrevisionintoatomicservice');
+s.source='sample';reset();const oldSample=await stage.POST(request({stage:'offer'}),context);check(oldSample.status===200&&s.calls.length===0&&s.actorCalls===0,'oldsamplelifecyclecontractstillworks');s.source='db';
+for(const code of ['conflict','request_conflict','closing_deadline_conflict','invalid_deadline_transition','invalid_transition']){const response=failure(code);check(response.status===409&&privateResponse(response)&&JSON.stringify(await response.json())===JSON.stringify({error:code}),'conflictresponsescontaincodesnotprivatevalues')};
+s.answers.edit={ok:false,reason:'not_found'};const revoked=await workspace.PATCH(request(),context);check(revoked.status===404&&privateResponse(revoked),'scopewithdrawalhasgeneric404');delete s.answers.edit;
+s.throwService=true;const failed=await workspace.PATCH(request(),context);check(failed.status===503&&privateResponse(failed)&&!JSON.stringify(await failed.json()).includes('Private'),'unexpectedfailureneverechesprivatetext');
+console.log(checks+'/'+checks+' transaction workspace HTTP checks passed (synthetic auth/service; no network)');
+})().catch(error=>{console.error(error);process.exitCode=1});
+`;
+try {
+  const result = await build({ stdin: { contents: entry, resolveDir: root, loader: "ts" }, bundle: true, platform: "node", format: "cjs", write: false, plugins: [{ name: "transaction-http-boundaries", setup(builder) {
+    builder.onResolve({ filter: /^\.\/service\.ts$/ }, args => args.importer.endsWith("/lib/transactions/http.ts") ? { path: "transactions/service", namespace: "synthetic-transaction" } : undefined);
+    builder.onResolve({ filter: /(?:^next\/server$|auth\/require-caller(?:\.ts)?$|(?:^|\/)flags(?:\.ts)?$|data\/sample-transactions(?:\.ts)?$|transactions\/service(?:\.ts)?$|transactions\/workspace-service(?:\.ts)?$)/ }, args => { const key = [...fixtures.keys()].find(name => args.path.replace(/\.ts$/, "").endsWith(name)); return key ? { path: key, namespace: "synthetic-transaction" } : undefined; });
+    builder.onLoad({ filter: /.*/, namespace: "synthetic-transaction" }, args => ({ contents: fixtures.get(args.path), loader: "ts" }));
+    builder.onResolve({ filter: /^server-only$/ }, () => ({ path: "server-only", namespace: "empty-server" }));builder.onLoad({ filter: /.*/, namespace: "empty-server" }, () => ({ contents: "", loader: "js" }));
+  } }] });
+  const output = join(folder, "transaction-http.cjs"); writeFileSync(output, result.outputFiles[0].contents); const run = spawnSync(process.execPath, [output], { encoding: "utf8", timeout: 30000 });process.stdout.write(run.stdout);process.stderr.write(run.stderr);if (run.status !== 0) throw Error("Transaction HTTP checks failed");
+} finally { rmSync(folder, { recursive: true, force: true }); }

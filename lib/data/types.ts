@@ -299,8 +299,10 @@ export interface Transaction {
   commissionRate: number;
   /** Projected gross commission in dollars, from the entered terms. */
   projectedCommission: number;
-  /** ISO — contract execution date, or the record's creation when none. */
-  contractDate: string;
+  /** Entered contract execution date. Absent until it is recorded. */
+  contractDate?: string;
+  /** Revision for explicit transaction updates. */
+  updatedAt?: string;
   /** ISO — scheduled (or actual) closing. Absent until one is entered. */
   closeDate?: string;
   /** The responsible agent: a sample roster id, or a dashboard user id. */

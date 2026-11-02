@@ -34,7 +34,8 @@ import {
   type Transaction,
   type TransactionStage,
 } from "@/lib/data/types";
-import { cn, daysBetween, formatCurrency, formatDateShort } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
+import { daysUntilTransactionDay, formatTransactionDay } from "@/lib/transactions/calendar-days";
 
 type StageChoice = "active" | TransactionStage;
 
@@ -306,7 +307,7 @@ function TransactionsBody({
         </TableHeader>
         <TableBody>
           {visible.map((t) => {
-            const days = t.closeDate ? daysBetween(now, t.closeDate) : null;
+            const days = daysUntilTransactionDay(t.closeDate, now);
             return (
               <TableRow
                 key={t.id}
@@ -335,7 +336,7 @@ function TransactionsBody({
                   {formatCurrency(t.contractPrice)}
                 </TableCell>
                 <TableCell className="tabular whitespace-nowrap">
-                  {t.closeDate ? formatDateShort(t.closeDate) : "—"}
+                  {t.closeDate ? formatTransactionDay(t.closeDate, true) : "—"}
                 </TableCell>
                 <TableCell className="tabular whitespace-nowrap text-right">
                   {t.stage === "closed" || days === null ? (

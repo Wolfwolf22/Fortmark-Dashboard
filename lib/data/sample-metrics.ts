@@ -11,6 +11,7 @@
  * produces is stamped `source: "sample"`, which the Home screen renders as a
  * visible label rather than a silent footnote.
  */
+import { daysUntilTransactionDay, transactionDay } from "../transactions/calendar-days.ts";
 import { listSampleTransactions } from "./sample-transactions.ts";
 import { listSampleLeads } from "./sample-leads.ts";
 import { now as sampleNow } from "./mock/db.ts";
@@ -82,13 +83,13 @@ export function sampleBrokerageMetrics(at: Date = sampleNow()): BrokerageMetrics
         .filter((m) => m.state !== "done")
         .map((m) => ({
           id: `deadline:${t.id}:${m.key}`,
-          kind: (daysUntil(m.date.slice(0, 10), at) < 0 ? "deadline_overdue" : "deadline_soon") as
+          kind: (daysUntilTransactionDay(m.date, at)! < 0 ? "deadline_overdue" : "deadline_soon") as
             | "deadline_overdue"
             | "deadline_soon",
           label: m.label,
           subject: `${t.address}, ${t.city}`,
-          dueDate: m.date.slice(0, 10),
-          daysAway: daysUntil(m.date.slice(0, 10), at),
+          dueDate: transactionDay(m.date)!,
+          daysAway: daysUntilTransactionDay(m.date, at)!,
           href: `/transactions?open=${encodeURIComponent(t.id)}`,
         }))
         .filter((item) => item.daysAway <= 7)

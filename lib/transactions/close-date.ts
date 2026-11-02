@@ -8,8 +8,10 @@
  *
  * Pure and dependency-free: safe in the client bundle and in tests.
  */
+import { isValidCalendarDay } from "./calendar-days.ts";
+
 export function closeDateFromInput(raw: string | null | undefined): string | undefined {
   const day = (raw ?? "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return undefined;
+  if (!isValidCalendarDay(day)) return undefined;
   return `${day}T12:00:00.000Z`;
 }

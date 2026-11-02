@@ -265,7 +265,7 @@ const deadline = (id: string, kind: string, label: string, dueDate: string, comp
   id, transactionId: "t1", kind, label, dueDate, completedAt, note: null, sortOrder, createdAt: NOW, updatedAt: NOW,
 });
 
-check("a date column becomes ISO at midnight UTC", dateToIso("2026-10-30") === "2026-10-30T00:00:00.000Z" && dateToIso(null) === undefined);
+check("a calendar date uses the stable noon compatibility projection", dateToIso("2026-10-30") === "2026-10-30T12:00:00.000Z" && dateToIso(null) === undefined);
 check("the client is the primary party for the side",
   primaryClient("buyer", [party("seller", "S"), party("buyer", "B1"), party("buyer", "B2", true)] as never)?.displayName === "B2");
 check("without a primary, the first party for the side is the client",
@@ -300,7 +300,7 @@ check("a deal with no client party has none", primaryClient("buyer", [party("sel
   }, NOW);
   check("money reaches the screen in dollars", t.contractPrice === 1_250_000 && t.commissionRate === 0.03 && t.projectedCommission === 37_500);
   check("the client is the primary buyer", t.clientName === "Alex Kaplan" && t.clientId === "p-1");
-  check("dates are ISO", t.contractDate === "2026-08-15T00:00:00.000Z" && t.closeDate === "2026-10-30T00:00:00.000Z");
+  check("dates are ISO", t.contractDate === "2026-08-15T12:00:00.000Z" && t.closeDate === "2026-10-30T12:00:00.000Z");
   check("milestones are in sort order", t.milestones.map((m) => m.key).join(",") === "inspection,financing,closing");
   check("the listing link is the MLS key", t.listingId === "key-1");
   check("the agent's name is carried and the id is the user id", t.agentName === "Dana Reyes" && t.agentId === "u-agent");
@@ -310,7 +310,7 @@ check("a deal with no client party has none", primaryClient("buyer", [party("sel
   const bare = toTransaction({ row: { ...ROW, contractPriceCents: null, commissionRateBps: null, contractExecutionDate: null, closingDate: null, listingKey: null } as never, parties: [], deadlines: [] }, NOW);
   check("no price is 0, not a guess", bare.contractPrice === 0 && bare.projectedCommission === 0);
   check("no close date is absent, not invented", bare.closeDate === undefined);
-  check("no contract date falls back to creation", bare.contractDate === "2026-08-15T15:00:00.000Z");
+  check("no contract date remains unknown rather than becoming creation", bare.contractDate === undefined);
   check("no client is a dash", bare.clientName === "—" && bare.clientId === "");
   check("no listing link when unlinked", bare.listingId === undefined);
 }
@@ -335,9 +335,8 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
   check("the brokerage is always the server's", service.includes("brokerageKey: ctx.actor.brokerageKey") && !/brokerageKey: input/.test(service));
   check("a named agent is honoured only for a privileged actor", /input\.agentUserId && isPrivileged\(ctx\.actor\)/.test(service));
   check("a stage change checks the lifecycle before writing", service.indexOf("canTransition(from, to)") < service.indexOf(".update(transactions)"));
-  // The other writers still record through the shared helper; the stage path
-  // builds its own writes so they can commit atomically with the update.
-  check("create and update still record history", (service.match(/recordEvent\(/g) ?? []).length >= 2);
+  // Creation and stage writes now retain their required history in the same batch.
+  check("create and stage both retain required history", (service.match(/insert\(transactionEvents\)/g) ?? []).length >= 2 && (service.match(/insert\(auditEvents\)/g) ?? []).length >= 2);
   check("a stage change records both a domain event and an audit event", (() => {
     const plan = service.slice(
       service.indexOf("export async function planStageChange"),
@@ -354,13 +353,13 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
   check("the adapter asks the server which source is live", adapter.includes('"/api/transactions/source"'));
   check("the adapter converts dollars to cents before they leave the browser", adapter.includes("Math.round(input.contractPrice * 100)"));
   const board = readFileSync("components/transactions/kanban-board.tsx", "utf8");
-  const refusedMove = board.slice(board.indexOf("updateTransactionStage(txn.id, target)"), board.indexOf("return (\n    <DndContext"));
-  check("a refused move refreshes the recorded data", refusedMove.includes(".catch(") && refusedMove.includes("bumpDataVersion()"));
-  check("a refused move gives the person visible feedback", refusedMove.includes("setMoveError(") && board.includes('role="alert"'));
-  check("the drawer labels sample rows", readFileSync("components/transactions/transaction-drawer.tsx", "utf8").includes('txn.source === "sample"'));
+  const refusedMove = readFileSync("components/transactions/stage-control.tsx", "utf8");
+  check("a refused move refreshes the recorded data", refusedMove.includes("catch(") && refusedMove.includes("onRefresh()"));
+  check("a refused move gives the person visible feedback", refusedMove.includes("setError(") && refusedMove.includes('role="alert"'));
+  check("the drawer labels sample rows", /txn.source\s*===\s*"sample"/.test(readFileSync("components/transactions/transaction-drawer.tsx", "utf8")));
   // A cancelled or on-hold deal is a real row that is not a pipeline column.
   check("the board tolerates a deal outside the pipeline columns",
-    /if \(column in map\) map\[column\]\.push\(t\);/.test(readFileSync("components/transactions/kanban-board.tsx", "utf8")));
+    /filter\(item\s*=>\s*item.stage\s*===\s*stage\)/.test(board));
 }
 
 // --- Search text never travels in a URL --------------------------------------
@@ -435,10 +434,8 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
     !/History must never break the write it describes/.test(
       svc.slice(svc.indexOf("export async function planStageChange"))));
   check("a failed stage change reports failure rather than partial success",
-    /catch \{[\s\S]{0,120}reason: "unavailable"/.test(manual));
-  check("recordEvent's swallow remains only on the create/update paths",
-    svc.indexOf("History must never break the write it describes") <
-      svc.indexOf("export async function planStageChange"));
+    /catch \(error\) \{[\s\S]*reason: isTransactionGuardConflict\(error\) \? "conflict" : "unavailable"/.test(manual));
+  check("no create or stage path swallows a required history write", !svc.includes("History must never break the write it describes"));
 
   check("closing still stamps the closed date",
     /closedDate: to === "closed" \? today : row\.closedDate/.test(plan));
@@ -452,7 +449,7 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
   check("a manual change records no mechanism",
     /mechanism === "manual" \? \{\} :/.test(plan));
   check("the human remains the actor",
-    (plan.match(/actorUserId: ctx\.actor\.userId/g) ?? []).length === 2 &&
+    (plan.match(/actorUserId: ctx\.actor\.userId/g) ?? []).length >= 2 &&
       /updatedByUserId: ctx\.actor\.userId/.test(plan));
   check("the caller cannot supply the actor or the current stage",
     !/options\.actor/.test(plan) && !/options\.from/.test(plan) &&

@@ -101,7 +101,7 @@ export interface TransactionDto extends TransactionSummaryDto {
   transactionType: string;
   commissionRatePercent?: number;
   projectedCommissionUsd?: number;
-  contractDate: string;
+  contractDate?: string;
   milestones: { label: string; dueDate: string; state: string }[];
 }
 

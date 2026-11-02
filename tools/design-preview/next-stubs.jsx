@@ -29,7 +29,7 @@ export function usePathname() { return useContext(NavigationContext)?.route.spli
 export function useParams() {
   const route = useContext(NavigationContext)?.route.split("?")[0] || "/";
   const segments = route.split("/").filter(Boolean);
-  return { id: segments[0] === "listings" ? segments[1] : undefined };
+  return { id: ["listings", "transactions"].includes(segments[0]) ? segments[1] : undefined };
 }
 export function useRouter() {
   const navigation = useContext(NavigationContext);

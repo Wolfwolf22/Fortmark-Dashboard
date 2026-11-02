@@ -520,6 +520,7 @@ export const transactionDeadlines = pgTable(
     label: text("label").notNull(),
     dueDate: date("due_date").notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
     note: text("note"),
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -555,6 +556,22 @@ export const transactionEvents = pgTable(
   },
   (t) => [index("transaction_events_transaction_created_idx").on(t.transactionId, t.createdAt)]
 );
+
+/** Safe receipts make explicit transaction retries recoverable without duplicate writes. */
+export const transactionWriteRequests = pgTable("transaction_write_requests", {
+  actorUserId: uuid("actor_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  requestId: uuid("request_id").notNull(),
+  transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "restrict" }),
+  action: text("action").notNull(), payloadHash: text("payload_hash").notNull(),
+  result: jsonb("result").$type<{ transactionId: string; updatedAt: string; deadlineId?: string }>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  primaryKey({ name: "transaction_write_requests_pkey", columns: [t.actorUserId, t.requestId] }),
+  index("transaction_write_requests_transaction_idx").on(t.transactionId),
+  check("transaction_write_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`),
+  check("transaction_write_requests_action_check", sql`${t.action} in ('create','edit','stage','add_deadline','edit_deadline','complete_deadline','reopen_deadline','remove_deadline')`),
+]);
+export type TransactionWriteRequestRow = typeof transactionWriteRequests.$inferSelect;
 
 // ===========================================================================
 // Release D — Contacts (the people layer)

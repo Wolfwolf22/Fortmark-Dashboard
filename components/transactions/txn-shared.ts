@@ -2,6 +2,7 @@
  * Small helpers shared by the transactions board, table, and drawer.
  * Lives here (not lib/) so the transactions feature stays self-contained.
  */
+import { daysUntilTransactionDay } from "@/lib/transactions/calendar-days";
 import type { Transaction, TransactionStage } from "@/lib/data/types";
 import { nextStage as lifecycleNext } from "@/lib/transactions/stages";
 
@@ -22,17 +23,10 @@ export const SIDE_SHORT: Record<Transaction["side"], string> = {
 };
 
 /**
- * Whole days from now to the scheduled close, or null when no close date has
- * been entered. Anchored to the top of the current hour (same anchoring as
- * the sample set) so the value is deterministic within the hour.
+ * Calendar days until scheduled close in New York; due today remains zero.
  */
 export function daysToClose(closeDateIso: string | undefined): number | null {
-  if (!closeDateIso) return null;
-  const anchor = new Date();
-  anchor.setMinutes(0, 0, 0);
-  return Math.round(
-    (new Date(closeDateIso).getTime() - anchor.getTime()) / 86400000
-  );
+  return daysUntilTransactionDay(closeDateIso);
 }
 
 /** "16d to close" / "closes today" / "3d past close" / "closed" / "no close date" */

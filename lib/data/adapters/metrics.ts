@@ -141,7 +141,7 @@ export async function getDashboardMetrics(
   await requireSubsystem("reports");
   await delay(220);
 
-  const enteredContract = transactions.filter((t) => inRange(t.contractDate, range));
+  const enteredContract = transactions.filter((t) => (t.contractDate ? inRange(t.contractDate, range) : false));
   const underContractCount = enteredContract.filter((t) => t.stage !== "closed").length;
 
   const closedInRange = transactions.filter(
@@ -155,7 +155,7 @@ export async function getDashboardMetrics(
   const pipeline = transactions.filter(
     (t) =>
       t.stage !== "closed" &&
-      (inRange(t.contractDate, range) || (t.closeDate ? inRange(t.closeDate, range) : false))
+      ((t.contractDate ? inRange(t.contractDate, range) : false) || (t.closeDate ? inRange(t.closeDate, range) : false))
   );
   const pipelineValue = pipeline.reduce((sum, t) => sum + t.contractPrice, 0);
   const projectedGci = pipeline.reduce(

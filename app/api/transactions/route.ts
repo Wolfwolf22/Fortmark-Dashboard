@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
 import { listSampleTransactions } from "@/lib/data/sample-transactions";
 import { createTransactionSchema } from "@/lib/transactions/domain";
-import { actorOrResponse, failure, NO_STORE, transactionsSource, unexpected } from "@/lib/transactions/http";
+import { actorOrResponse, failure, NO_STORE, transactionsSource, unexpected, readTransactionBody } from "@/lib/transactions/http";
 import { createTransaction, listTransactions } from "@/lib/transactions/service";
 import { parseTransactionFilters } from "@/lib/transactions/filters";
 
@@ -54,19 +54,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Malformed request" }, { status: 400, headers: NO_STORE });
-  }
-  const parsed = createTransactionSchema.safeParse(body);
+  if ([...new URL(request.url).searchParams.keys()].length) return failure("invalid_transaction");
+  const body = await readTransactionBody(request); if (!body.ok) return failure("invalid_transaction");
+  const parsed = createTransactionSchema.safeParse(body.body);
   if (!parsed.success) {
     // Field paths only — never the submitted values.
     const fields = Array.from(new Set(parsed.error.issues.map((i) => i.path.join("."))));
     return NextResponse.json({ error: "invalid", fields }, { status: 400, headers: NO_STORE });
   }
 
+  if (!parsed.data.requestId) return NextResponse.json({ error: "invalid", fields: ["requestId"] }, { status: 400, headers: NO_STORE });
   const actor = await actorOrResponse(caller.clerkUserId);
   if (!actor.ok) return actor.response;
   try {

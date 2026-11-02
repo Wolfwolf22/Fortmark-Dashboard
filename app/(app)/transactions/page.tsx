@@ -1,198 +1,41 @@
 "use client";
-
-/**
- * Transactions — pipeline board (drag to advance) with a table alternative.
- * Search and side filter drive the adapter query; ?open=<txnId> deep-links
- * straight into the shared detail drawer.
- *
- * This is a work list, not a report, so it is deliberately NOT windowed by the
- * global reporting period. That period is set on Home and Reports and has no
- * control here: applying it would filter this list by a setting the user
- * cannot see, and would drop every deal with no contract or closing date yet —
- * which is every deal at the opportunity stage.
- */
-import { Suspense, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Search, ServerCrash, Workflow } from "lucide-react";
+import { Suspense,useEffect,useState } from "react";
+import { useRouter,useSearchParams } from "next/navigation";
+import { Plus,RefreshCw,Search,Workflow } from "lucide-react";
 import { PageIntro } from "@/components/common/page-intro";
+import { useSessionUser } from "@/components/layout/session-user";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/empty-state";
-import { KanbanBoard } from "@/components/transactions/kanban-board";
-import { TransactionDrawer } from "@/components/transactions/transaction-drawer";
-import { TransactionsTable } from "@/components/transactions/transactions-table";
 import { Input } from "@/components/ui/input";
+import { Select,SelectContent,SelectItem,SelectTrigger,SelectValue } from "@/components/ui/select";
 import { Segmented } from "@/components/ui/segmented";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { KanbanBoard } from "@/components/transactions/kanban-board";
+import { TransactionsTable } from "@/components/transactions/transactions-table";
+import { TransactionDrawer } from "@/components/transactions/transaction-drawer";
+import { transactionFailure,transactionOpenTarget,transactionWorklistSummary } from "@/components/transactions/workspace-state";
+import { SIDE_LABELS } from "@/components/transactions/txn-shared";
 import { getTransactions } from "@/lib/data/adapters/transactions";
 import { useQuery } from "@/lib/data/hooks";
-import { TRANSACTION_STAGES } from "@/lib/data/types";
+import { useUiStore } from "@/lib/stores/ui";
+import { ACTIVE_STAGES,ALL_STAGES } from "@/lib/transactions/stages";
+import { type TransactionSide,type TransactionStage,TRANSACTION_STAGE_LABELS } from "@/lib/data/types";
+let privateSearch="";
+const WORKLISTS={active:"Active files",attention:"Needs attention",on_hold:"On hold",exited:"Closed & exited",all:"All files"} as const;
+type Worklist=keyof typeof WORKLISTS;
+export function transactionWorklistStages(worklist:Worklist):TransactionStage[]{return worklist==="active"||worklist==="attention"?[...ACTIVE_STAGES]:worklist==="on_hold"?["on_hold"]:worklist==="exited"?["closed","cancelled","withdrawn","fell_through"]:[...ALL_STAGES];}
+function TransactionsPageInner(){
+ const router=useRouter(),params=useSearchParams(),canWrite=useSessionUser().role!=="Member",setQuickCreate=useUiStore(state=>state.setQuickCreate);
+ const side=params.get("side")&&Object.keys(SIDE_LABELS).includes(params.get("side")!)?params.get("side") as TransactionSide:"all",worklist=params.get("worklist")&&params.get("worklist")! in WORKLISTS?params.get("worklist") as Worklist:"active",stage=ALL_STAGES.includes(params.get("stage") as TransactionStage)?params.get("stage") as TransactionStage:"all",view=params.get("view")==="board"?"board":"table",open=params.get("open");
+ const [search,setSearch]=useState(()=>privateSearch),[debounced,setDebounced]=useState(()=>privateSearch);
+ useEffect(()=>{privateSearch=search;const timer=window.setTimeout(()=>setDebounced(search.trim()),200);return()=>window.clearTimeout(timer);},[search]);
+ const key=JSON.stringify({debounced,side,worklist,stage}),query=useQuery(async()=>({key,items:await getTransactions({query:debounced||undefined,side:side==="all"?undefined:[side],stage:stage==="all"?transactionWorklistStages(worklist):[stage]})}),[key]);
+ const pendingSearch=search.trim()!==debounced,loading=query.loading||pendingSearch;
+ const rows=!pendingSearch&&query.data?.key===key?query.data.items.filter(txn=>worklist!=="attention"||txn.milestones.some(item=>item.state==="overdue")):undefined,summary=transactionWorklistSummary(rows??[]);
+ function navigate(changes:Record<string,string|null>){const next=new URLSearchParams(params.toString());for(const [key,value]of Object.entries(changes)){if(value===null)next.delete(key);else next.set(key,value);}router.replace(`/transactions${next.size?`?${next}`:""}`,{scroll:false});}
+ function openFile(id:string){const row=rows?.find(txn=>txn.id===id);if(row)router.push(transactionOpenTarget(row,new URLSearchParams(params.toString())),{scroll:false});}
 
-type SideFilter = "all" | "listing" | "buyer";
-type View = "board" | "table";
-
-function PageSkeleton() {
-  return (
-    <div className="space-y-5">
-      <PageIntro title="Transactions" description="Track each file’s stage, dates, and next milestone." icon={Workflow} />
-      <div className="flex flex-wrap items-center gap-3">
-        <Skeleton className="h-9 w-full sm:w-72" />
-        <Skeleton className="h-9 w-36" />
-        <Skeleton className="ml-auto h-9 w-40 rounded-full" />
-      </div>
-      <div className="flex gap-4 overflow-x-hidden pb-4">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="flex w-[280px] flex-none flex-col gap-2">
-            <Skeleton className="h-3 w-24" />
-            <div className="flex flex-col gap-2 rounded-panel bg-tint p-2">
-              {Array.from({ length: (i % 3) + 1 }).map((_, j) => (
-                <Skeleton key={j} className="h-28 w-full rounded-panel bg-card" />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+ const boardUnavailable=worklist==="on_hold"||worklist==="exited"||stage!=="all"&&![...ACTIVE_STAGES,"closed"].includes(stage),showBoard=view==="board"&&!boardUnavailable;
+ return <div className="min-w-0 space-y-4"><PageIntro title="Transactions" description="Manage each file’s deadlines, contract details and recorded progress." icon={Workflow} action={canWrite?<Button type="button" className="min-h-11" onClick={()=>setQuickCreate("transaction")}><Plus aria-hidden/>New transaction</Button>:undefined}/><div role="group" aria-label="Transaction worklist" className="flex max-w-full gap-1 overflow-x-auto pb-1">{Object.entries(WORKLISTS).map(([value,label])=><Button key={value} type="button" variant={worklist===value?"default":"ghost"} size="sm" className="min-h-10 shrink-0" aria-pressed={worklist===value} onClick={()=>navigate({worklist:value,stage:null})}>{label}</Button>)}</div><div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[{label:"Files in worklist",value:summary.total},{label:"Active",value:summary.active},{label:"Active overdue files",value:summary.attention},{label:"On hold",value:summary.paused}].map(item=><Card key={item.label} className="min-w-0 px-4 py-3"><p className="text-[11px] text-muted-foreground">{item.label}</p><p className="mt-1 text-2xl font-semibold tracking-tight tabular">{rows?item.value:"—"}</p></Card>)}</div><Card className="flex min-w-0 flex-wrap items-center gap-2 p-3"><div className="relative min-w-0 basis-full sm:flex-1 sm:basis-52"><Search aria-hidden className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"/><Input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Search address or client" aria-label="Search transactions" className="pl-9"/></div><Select value={side} onValueChange={value=>{if(value==="all"||value in SIDE_LABELS)navigate({side:value==="all"?null:value});}}><SelectTrigger aria-label="Filter by side" className="w-[142px] max-w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">All sides</SelectItem>{Object.entries(SIDE_LABELS).map(([value,label])=><SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Select value={stage} onValueChange={value=>{if(value==="all"||ALL_STAGES.includes(value as TransactionStage))navigate({stage:value==="all"?null:value,worklist:value==="all"?worklist:"all"});}}><SelectTrigger aria-label="Filter by stage" className="w-[162px] max-w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">All stages</SelectItem>{ALL_STAGES.map(value=><SelectItem key={value} value={value}>{TRANSACTION_STAGE_LABELS[value]}</SelectItem>)}</SelectContent></Select><div className="ml-auto flex items-center gap-2"><Segmented ariaLabel="Transactions view" value={view} onChange={value=>navigate({view:value})} options={[{value:"table",label:"List"},{value:"board",label:"Board"}]}/><Button type="button" size="icon" variant="ghost" aria-label="Refresh transactions" disabled={loading} onClick={query.refetch}><RefreshCw aria-hidden/></Button></div></Card>{query.error&&<div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-border bg-tint p-4"><p className="text-sm">{transactionFailure(query.error)}</p><Button type="button" size="sm" variant="outline" disabled={loading} onClick={query.refetch}>Retry</Button></div>}<p className="text-xs leading-relaxed text-muted-foreground">{rows?`${rows.length} ${rows.length===1?"file":"files"} in this worklist. `:""}Up to 200 matching files are loaded. Refine the search or filters to narrow a large worklist.{showBoard?" Drag a handle to review a stage move; open a property to manage its file.":""}</p>{view==="board"&&boardUnavailable&&<p className="text-xs text-muted-foreground">Paused and exited worklists use the list view so every matching file remains visible.</p>}{showBoard?<><KanbanBoard transactions={rows?.filter(txn=>txn.stage!=="on_hold"&&!(["cancelled","withdrawn","fell_through"] as string[]).includes(txn.stage))} loading={loading} onOpen={openFile} canWrite={canWrite&&!query.error}/>{rows&&rows.some(txn=>txn.stage==="on_hold"||["cancelled","withdrawn","fell_through"].includes(txn.stage))&&<div className="space-y-3"><h3 className="text-sm font-semibold">Paused & exited files</h3><TransactionsTable transactions={rows.filter(txn=>txn.stage==="on_hold"||["cancelled","withdrawn","fell_through"].includes(txn.stage))} loading={loading} onOpen={openFile} resetKey={key}/></div>}</>:<TransactionsTable transactions={rows} loading={loading} onOpen={openFile} resetKey={key}/>}<TransactionDrawer transactionId={open} open={Boolean(open)} onOpenChange={next=>{if(!next)navigate({open:null});}}/></div>;
 }
-
-function TransactionsPageInner() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [side, setSide] = useState<SideFilter>("all");
-  const [view, setView] = useState<View>("board");
-
-  const openParam = searchParams.get("open");
-  const [drawerId, setDrawerId] = useState<string | null>(openParam);
-  const [drawerOpen, setDrawerOpen] = useState(openParam !== null);
-
-  useEffect(() => {
-    const id = window.setTimeout(() => setDebouncedSearch(search), 200);
-    return () => window.clearTimeout(id);
-  }, [search]);
-
-  // Deep link: /transactions?open=<txnId> opens the drawer on load (and on
-  // any later navigation that sets the param).
-  useEffect(() => {
-    if (openParam) {
-      setDrawerId(openParam);
-      setDrawerOpen(true);
-    }
-  }, [openParam]);
-
-  const { data: transactions, loading, error, refetch } = useQuery(
-    () =>
-      getTransactions({
-        query: debouncedSearch || undefined,
-        side: side === "all" ? undefined : [side],
-      }),
-    [debouncedSearch, side]
-  );
-  const tableOnlyCount = transactions?.filter((txn) => !TRANSACTION_STAGES.includes(txn.stage)).length ?? 0;
-
-  function openTransaction(id: string) {
-    setDrawerId(id);
-    setDrawerOpen(true);
-  }
-
-  function handleDrawerOpenChange(nextOpen: boolean) {
-    setDrawerOpen(nextOpen);
-    // Drop the deep-link param on close so a refresh does not reopen it.
-    if (!nextOpen && searchParams.get("open")) {
-      router.replace("/transactions", { scroll: false });
-    }
-  }
-
-  return (
-    <div className="space-y-5">
-      <PageIntro title="Transactions" description="Track each file’s stage, dates, and next milestone." icon={Workflow} />
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative w-full sm:w-72">
-          <Search
-            aria-hidden
-            className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search address or client"
-            aria-label="Search transactions"
-            className="pl-9"
-          />
-        </div>
-        <Select value={side} onValueChange={(v) => setSide(v as SideFilter)}>
-          <SelectTrigger aria-label="Filter by side" className="w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All sides</SelectItem>
-            <SelectItem value="listing">Listing side</SelectItem>
-            <SelectItem value="buyer">Buyer side</SelectItem>
-          </SelectContent>
-        </Select>
-        <div className="ml-auto">
-          <Segmented
-            ariaLabel="Transactions view"
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "board", label: "Board" },
-              { value: "table", label: "Table" },
-            ]}
-          />
-        </div>
-      </div>
-      {view === "board" && !error && tableOnlyCount > 0 && (
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
-          <span>{tableOnlyCount} {tableOnlyCount === 1 ? "paused or exited file is" : "paused or exited files are"} shown in the table.</span>
-          <button type="button" className="min-h-10 rounded-md font-semibold text-foreground underline underline-offset-4" onClick={() => setView("table")}>View table</button>
-        </p>
-      )}
-      {error ? (
-        <Card>
-          <EmptyState
-            icon={ServerCrash}
-            title="Transactions could not be loaded"
-            description="Your files are temporarily unavailable. Retry to load them again."
-            action={<Button variant="outline" onClick={refetch} disabled={loading}>{loading ? "Retrying…" : "Retry"}</Button>}
-          />
-        </Card>
-      ) : view === "board" ? (
-        <KanbanBoard
-          transactions={transactions}
-          loading={loading}
-          onOpen={openTransaction}
-        />
-      ) : (
-        <TransactionsTable
-          transactions={transactions}
-          loading={loading}
-          onOpen={openTransaction}
-        />
-      )}
-      <TransactionDrawer
-        transactionId={drawerId}
-        open={drawerOpen}
-        onOpenChange={handleDrawerOpenChange}
-      />
-    </div>
-  );
-}
-
-export default function Page() {
-  return (
-    <Suspense fallback={<PageSkeleton />}>
-      <TransactionsPageInner />
-    </Suspense>
-  );
-}
+export default function Page(){return <Suspense fallback={<Skeleton className="h-80 w-full rounded-card"/>}><TransactionsPageInner/></Suspense>;}

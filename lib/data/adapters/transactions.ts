@@ -39,10 +39,12 @@ export class TransactionsError extends Error {
 type Source = "db" | "sample";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(apiPath(path), {
+  const send = () => fetch(apiPath(path), {
     ...init,
     headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
   });
+  let response: Response;
+  if (!init?.method || init.method === "GET") { let first: Response | null = null; try { first = await send(); } catch { /* One safe read retry. */ } response = !first || first.status === 502 || first.status === 504 ? await send() : first; } else response = await send();
   if (!response.ok) {
     let code = "unknown";
     try {
@@ -125,22 +127,25 @@ export async function getTransaction(id: string): Promise<Transaction | undefine
  */
 export async function updateTransactionStage(
   id: string,
-  stage: TransactionStage
+  stage: TransactionStage,
+  options?: { requestId: string; expectedUpdatedAt: string }
 ): Promise<Transaction | undefined> {
   if ((await getTransactionSource()) === "sample") {
     await delay(150);
     return updateSampleTransactionStage(id, stage);
   }
-  const { transaction } = await request<{ transaction: Transaction }>(
-    `/api/transactions/${encodeURIComponent(id)}/stage`,
-    { method: "POST", body: JSON.stringify({ stage }) }
-  );
-  // Every open list refetches, the same way a sample mutation triggers it.
-  bumpDataVersion();
-  return transaction;
+  if (!options) throw new TransactionsError("revision_required", 400);
+  try {
+    const { transaction } = await request<{ transaction: Transaction }>(
+      `/api/transactions/${encodeURIComponent(id)}/stage`,
+      { method: "POST", body: JSON.stringify({ stage, ...options }) }
+    );
+    return transaction;
+  } finally { bumpDataVersion(); }
 }
 
 export interface QuickCreateTransactionInput {
+  requestId?: string;
   address: string;
   city: string;
   clientName: string;
@@ -164,10 +169,12 @@ export async function createTransaction(input: QuickCreateTransactionInput): Pro
   const closingDate = input.closeDate ? input.closeDate.slice(0, 10) : undefined;
   const clientRole =
     input.side === "listing" ? "seller" : input.side === "landlord" ? "landlord" : input.side === "tenant" ? "tenant" : "buyer";
+  try {
   const { transaction } = await request<{ transaction: Transaction }>("/api/transactions", {
     method: "POST",
     body: JSON.stringify({
-      transactionType: "residential_sale",
+      requestId: input.requestId ?? crypto.randomUUID(),
+      transactionType: input.side === "landlord" || input.side === "tenant" ? "residential_lease" : "residential_sale",
       side: input.side,
       addressLine1: input.address,
       city: input.city,
@@ -180,6 +187,6 @@ export async function createTransaction(input: QuickCreateTransactionInput): Pro
           : [],
     }),
   });
-  bumpDataVersion();
   return transaction;
+  } finally { bumpDataVersion(); }
 }

@@ -30,6 +30,7 @@ import { isPrivileged } from "../auth/actor.ts";
 import { visibleTo } from "./service.ts";
 import { ACTIVE_STAGES, PAUSED_STAGE, STAGE_LABELS, type TransactionStage } from "./stages.ts";
 import { projectCommission } from "./money.ts";
+import { calendarDayDistance, calendarDayKey } from "./calendar-days.ts";
 import type {
   ActivityItem,
   AttentionItem,
@@ -37,7 +38,7 @@ import type {
   MonthPoint,
   TransactionMetrics,
 } from "../metrics/types.ts";
-import { daysUntil, dayKey, monthBucket, monthSeries, monthWindow, toInt } from "../metrics/window.ts";
+import { dayKey, monthBucket, monthSeries, monthWindow, toInt } from "../metrics/window.ts";
 
 export interface Ctx {
   actor: Actor;
@@ -200,7 +201,8 @@ export async function transactionAttention(
    */
   horizonDays: number = DEADLINE_SOON_DAYS
 ): Promise<AttentionItem[]> {
-  const horizon = dayKey(new Date(now.getTime() + horizonDays * 86_400_000));
+  const today = calendarDayKey(now);
+  const horizon = new Date(Date.parse(`${today}T12:00:00.000Z`) + horizonDays * 86_400_000).toISOString().slice(0, 10);
   const rows = await ctx.db
     .select({
       id: transactionDeadlines.id,
@@ -217,6 +219,7 @@ export async function transactionAttention(
         visibleTo(ctx.actor),
         inArray(transactions.stage, ACTIVE as TransactionStage[]),
         isNull(transactionDeadlines.completedAt),
+        isNull(transactionDeadlines.removedAt),
         sql`${transactionDeadlines.dueDate} <= ${horizon}`
       )
     )
@@ -224,7 +227,7 @@ export async function transactionAttention(
     .limit(50);
 
   return rows.map((row) => {
-    const daysAway = daysUntil(row.dueDate, now);
+    const daysAway = calendarDayDistance(row.dueDate, today);
     return {
       id: `deadline:${row.id}`,
       kind: daysAway < 0 ? "deadline_overdue" : "deadline_soon",
@@ -256,6 +259,7 @@ export async function transactionActivity(ctx: Ctx, limit: number): Promise<Acti
     .select({
       id: transactionEvents.id,
       eventType: transactionEvents.eventType,
+      safeMetadata: transactionEvents.safeMetadata,
       createdAt: transactionEvents.createdAt,
       stage: transactions.stage,
       transactionId: transactions.id,
@@ -273,7 +277,7 @@ export async function transactionActivity(ctx: Ctx, limit: number): Promise<Acti
     const address = addressOf(row);
     const described = describeEvent(row.eventType, address);
     if (!described) continue;
-    const closed = row.eventType === "transaction_stage_changed" && row.stage === "closed";
+    const closed = row.eventType === "transaction_stage_changed" && row.safeMetadata?.to === "closed";
     items.push({
       id: `txn:${row.id}`,
       kind: closed ? "transaction_closed" : described.kind,

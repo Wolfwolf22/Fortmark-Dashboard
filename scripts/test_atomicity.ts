@@ -57,7 +57,7 @@ function memoryDb(tableRow: { table: unknown; row: Record<string, unknown> }, fa
     let rows: unknown[] = [];
     const b = {
       from(t: unknown) { rows = t === tableRow.table ? [{ ...tableRow.row }] : []; return b; },
-      where() { return b; }, limit() { return b; }, orderBy() { return b; },
+      where() { return b; }, limit() { return b; }, orderBy() { return b; }, for() { return b; }, run() {},
       then(ok: (v: unknown[]) => unknown, fail?: (e: unknown) => unknown) { return Promise.resolve(rows).then(ok, fail); },
     };
     return b;

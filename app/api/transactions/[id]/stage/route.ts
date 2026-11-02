@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
 import { getSampleTransaction, updateSampleTransactionStage } from "@/lib/data/sample-transactions";
 import { stageChangeSchema } from "@/lib/transactions/domain";
-import { actorOrResponse, failure, NO_STORE, transactionsSource, unexpected } from "@/lib/transactions/http";
+import { actorOrResponse, failure, NO_STORE, transactionsSource, unexpected, readTransactionBody } from "@/lib/transactions/http";
 import { changeStage } from "@/lib/transactions/service";
 import { canTransition } from "@/lib/transactions/stages";
 
@@ -27,13 +27,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Malformed request" }, { status: 400, headers: NO_STORE });
-  }
-  const parsed = stageChangeSchema.safeParse(body);
+  if ([...new URL(request.url).searchParams.keys()].length) return failure("invalid_transaction");
+  const body = await readTransactionBody(request); if (!body.ok) return failure("invalid_transaction");
+  const parsed = stageChangeSchema.safeParse(body.body);
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid", fields: ["stage"] }, { status: 400, headers: NO_STORE });
   }
@@ -46,10 +42,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     return NextResponse.json({ transaction: updated }, { headers: NO_STORE });
   }
 
+  if (!parsed.data.requestId || !parsed.data.expectedUpdatedAt) return NextResponse.json({ error: "invalid", fields: ["requestId", "expectedUpdatedAt"] }, { status: 400, headers: NO_STORE });
   const actor = await actorOrResponse(caller.clerkUserId);
   if (!actor.ok) return actor.response;
   try {
-    const result = await changeStage(actor.ctx, id, parsed.data.stage);
+    const result = await changeStage(actor.ctx, id, parsed.data.stage, new Date(), { requestId: parsed.data.requestId, expectedUpdatedAt: parsed.data.expectedUpdatedAt });
     if (!result.ok) return failure(result.reason);
     return NextResponse.json({ transaction: result.value }, { headers: NO_STORE });
   } catch (error) {

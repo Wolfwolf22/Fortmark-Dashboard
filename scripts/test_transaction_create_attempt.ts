@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import { transactionCreateAttempt, transactionCreateUncertain } from "../lib/transactions/create-attempt.ts";
+let count = 0; const check = (name: string, value: unknown) => { assert.ok(value, name); count++; };
+const values = { address: "Synthetic file", city: "Sample City", clientName: "Sample Buyer", side: "buyer" as const, contractPrice: 500000 };
+let id = 0; const makeId = () => `request-${++id}`;
+const first = transactionCreateAttempt(null, values, false, makeId), same = transactionCreateAttempt(first, { ...values }, false, makeId);
+check("an unchanged create keeps the exact UUID and payload", same === first && id === 1);
+check("submitted primitive fields are frozen", Object.isFrozen(first.input));
+const changed = transactionCreateAttempt(first, { ...values, contractPrice: 600000 }, false, makeId);
+check("a deliberate edit before an uncertain result gets a new request", changed.input.requestId !== first.input.requestId && changed.input.contractPrice === 600000);
+const frozen = transactionCreateAttempt(first, { ...values, contractPrice: 700000, address: "Edited form after a lost response" }, true, makeId);
+check("an uncertain create cannot become a new transaction after edited form values", frozen === first && frozen.input.contractPrice === 500000 && frozen.input.address === values.address && id === 2);
+check("network and server failures require an exact receipt check", transactionCreateUncertain(new TypeError("Synthetic lost reply")) && transactionCreateUncertain({ status: 503 }));
+check("definite validation, conflict and permission refusals are distinguished", !transactionCreateUncertain({ status: 400 }) && !transactionCreateUncertain({ status: 409 }) && !transactionCreateUncertain({ status: 403 }));
+check("a refused receipt check cannot unlock another create after an unknown result", [403, 404, 409].every(status => transactionCreateUncertain({ status }, true)));
+check("after confirmed resolution a separate new file gets a fresh request", transactionCreateAttempt(null, values, false, makeId).input.requestId !== first.input.requestId);
+console.log(`${count}/${count} transaction create recovery checks passed`);

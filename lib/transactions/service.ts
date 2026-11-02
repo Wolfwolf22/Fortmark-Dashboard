@@ -14,10 +14,12 @@ import { isRecordId } from "../db/ids.ts";
  * further queries keyed by the page's ids — three round trips for a screen,
  * never one per row.
  */
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb, type Db } from "../db/client.ts";
 import {
   auditEvents,
+  contacts, dashboardUsers, transactionWriteRequests,
   professionalProfiles,
   transactionDeadlines,
   transactionEvents,
@@ -28,6 +30,10 @@ import {
 import { transactionsDatabaseEnabled, type EnvLike } from "../flags.ts";
 import type { DateRange, Transaction, TransactionFilters, TransactionStage } from "../data/types.ts";
 import { canOwnRecords, isBrokerageAdmin, isPrivileged, resolveActor as resolveBrokerageActor, type Actor } from "../auth/actor.ts";
+import { createPayloadHash, revisionMatches } from "../contacts/reliability.ts";
+import { visibleTo as visibleContacts } from "../contacts/visibility.ts";
+import { calendarDayKey } from "./calendar-days.ts";
+import { createTransactionSchema } from "./validation.ts";
 import { loadContact } from "../contacts/access.ts";
 import { displayName as contactDisplayName } from "../contacts/domain.ts";
 import { ELIGIBLE_STAGE } from "../contacts/eligible.ts";
@@ -39,7 +45,7 @@ import {
   toTransaction,
   type CreateTransactionInput,
 } from "./domain.ts";
-import { canTransition, isTerminalStage } from "./stages.ts";
+import { canTransition, isTerminalStage, isStage } from "./stages.ts";
 
 /** Keys that must never appear in event metadata. Same rule as audit. */
 const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
@@ -50,7 +56,7 @@ function scrub(meta: Record<string, unknown> | undefined) {
   for (const [k, v] of Object.entries(meta)) {
     if (FORBIDDEN_META.test(k)) continue;
     if (typeof v === "string" && /^user_[A-Za-z0-9]{8,}$/.test(v)) continue;
-    out[k] = v;
+    if ((k === "from" || k === "to") && typeof v === "string" || k === "mechanism" && v === "ai_assisted" || /Id$/.test(k) && typeof v === "string" && isRecordId(v)) out[k] = v;
   }
   return Object.keys(out).length > 0 ? out : null;
 }
@@ -63,7 +69,8 @@ export type ServiceFailure =
   | "forbidden"
   | "invalid_transition"
   | "invalid_assignee"
-  | "invalid_contact";
+  | "invalid_contact"
+  | "conflict" | "request_conflict" | "invalid_transaction" | "closing_deadline_conflict" | "invalid_deadline_transition";
 
 /** The role a contact takes on the deal, by which side FortMark represents. */
 const CLIENT_PARTY_ROLE: Record<TransactionSideKey, "seller" | "buyer" | "landlord" | "tenant"> = {
@@ -101,7 +108,7 @@ async function bundle(db: Db, rows: TransactionRow[], now: Date): Promise<Transa
   const agentIds = Array.from(new Set(rows.map((r) => r.agentUserId)));
   const [parties, deadlines, agents] = await Promise.all([
     db.select().from(transactionParties).where(inArray(transactionParties.transactionId, ids)),
-    db.select().from(transactionDeadlines).where(inArray(transactionDeadlines.transactionId, ids)),
+    db.select().from(transactionDeadlines).where(and(inArray(transactionDeadlines.transactionId, ids), isNull(transactionDeadlines.removedAt))),
     db
       .select({
         userId: professionalProfiles.userId,
@@ -193,160 +200,66 @@ export async function getTransaction(
   return (await bundle(ctx.db, [row], now))[0] ?? null;
 }
 
-async function recordEvent(
-  db: Db,
-  transactionId: string,
-  actorUserId: string,
-  eventType: "transaction_created" | "transaction_updated" | "transaction_stage_changed",
-  metadata?: Record<string, unknown>
-): Promise<void> {
-  const safe = scrub(metadata);
-  try {
-    await db.insert(transactionEvents).values({ transactionId, actorUserId, eventType, safeMetadata: safe });
-    await db.insert(auditEvents).values({
-      eventType,
-      actorUserId,
-      targetUserId: null,
-      safeMetadata: safe ? { transactionId, ...safe } : { transactionId },
-    });
-  } catch {
-    // History must never break the write it describes.
-  }
+export type TransactionContext = { actor: Actor; db: Db };
+type TransactionWrite = Parameters<Db["batch"]>[0][number];
+export function transactionRevisionGuard(ctx: TransactionContext, row: TransactionRow, expected: string) {
+  return and(eq(transactions.id, row.id), visibleTo(ctx.actor), eq(transactions.agentUserId, row.agentUserId), eq(transactions.brokerageKey, row.brokerageKey), eq(transactions.stage, row.stage), sql`date_trunc('milliseconds',${transactions.updatedAt})=${expected}::timestamptz`);
+}
+export function transactionWriteLocks(ctx: TransactionContext, id?: string): TransactionWrite[] {
+  const locks: TransactionWrite[] = [ctx.db.select({ id: dashboardUsers.id }).from(dashboardUsers).where(eq(dashboardUsers.id, ctx.actor.userId)).for("no key update")];
+  if (id) locks.push(ctx.db.select({ id: transactions.id }).from(transactions).where(and(eq(transactions.id, id), visibleTo(ctx.actor))).for("update"));
+  return locks;
+}
+export function nextTransactionRevision(row: TransactionRow, now: Date) { return new Date(Math.max(row.updatedAt.getTime() + 1, now.getTime())); }
+export async function transactionWriteReplay(ctx: TransactionContext, requestId: string, hash: string, action: string, now = new Date()): Promise<ServiceResult<Transaction> | null> {
+  const [receipt] = await ctx.db.select().from(transactionWriteRequests).where(and(eq(transactionWriteRequests.actorUserId, ctx.actor.userId), eq(transactionWriteRequests.requestId, requestId))).limit(1);
+  if (!receipt) return null;
+  const transaction = await getTransaction(ctx, receipt.transactionId, now); if (!transaction) return { ok: false, reason: "not_found" };
+  if (!canWrite(ctx.actor, { brokerageKey: ctx.actor.brokerageKey, agentUserId: transaction.agentId })) return { ok: false, reason: "forbidden" };
+  return receipt.payloadHash === hash && receipt.action === action ? { ok: true, value: transaction } : { ok: false, reason: "request_conflict" };
+}
+export function isTransactionGuardConflict(error: unknown): boolean {
+  let cause = error;
+  for (let i = 0; cause && typeof cause === "object" && i < 8; i++) { const value = cause as { code?: string; table?: string; column?: string; cause?: unknown }; if (value.code === "40P01" || value.code === "23502" && value.table === "transaction_write_requests" && value.column === "payload_hash") return true; cause = value.cause; }
+  return false;
 }
 
-export async function createTransaction(
-  ctx: { actor: Actor; db: Db },
-  input: CreateTransactionInput,
-  now: Date = new Date()
-): Promise<ServiceResult<Transaction>> {
-  // A contact named in the request is revalidated here, from the database, under
-  // the caller's own Contacts scope. Not visible, not at Representation, or not
-  // there at all are the same answer, so the id reveals nothing about a colleague's book.
+/** The parent, client link, deadlines, receipt and required history share one commit. */
+export async function createTransaction(ctx: TransactionContext, input: CreateTransactionInput, now = new Date()): Promise<ServiceResult<Transaction>> {
+  const parsed = createTransactionSchema.safeParse(input); if (!parsed.success) return { ok: false, reason: "invalid_transaction" };
+  input = parsed.data;
+  const requestId = input.requestId ?? randomUUID(), hash = createPayloadHash({ ...input }), replay = () => transactionWriteReplay(ctx, requestId, hash, "create", now);
+  const previous = await replay(); if (previous) return previous;
   let contact: Awaited<ReturnType<typeof loadContact>> & { ok: true } | undefined;
-  if (input.contactId) {
-    const access = await loadContact(ctx, input.contactId);
-    if (!access.ok || access.row.stage !== ELIGIBLE_STAGE) return { ok: false, reason: "invalid_contact" };
-    contact = access;
-  }
-
-  // Ownership: the actor, unless a privileged actor names someone else. A deal
-  // opened for a contact is the contact owner's deal, unless the admin says otherwise.
-  const agentUserId =
-    input.agentUserId && isPrivileged(ctx.actor)
-      ? input.agentUserId
-      : contact && isBrokerageAdmin(ctx.actor)
-        ? contact.row.assignedAgentUserId
-        : ctx.actor.userId;
+  if (input.contactId) { const access = await loadContact(ctx, input.contactId); if (!access.ok || access.row.stage !== ELIGIBLE_STAGE) return await replay() ?? { ok: false, reason: "invalid_contact" }; contact = access; }
+  const agentUserId = input.agentUserId && isPrivileged(ctx.actor) ? input.agentUserId : contact && isBrokerageAdmin(ctx.actor) ? contact.row.assignedAgentUserId : ctx.actor.userId;
   if (!canCreateFor(ctx.actor, agentUserId)) return { ok: false, reason: "forbidden" };
-  // Only an admin may open a deal for a contact whose owner is someone else's deal-agent.
-  if (contact && agentUserId !== contact.row.assignedAgentUserId && !isBrokerageAdmin(ctx.actor)) {
-    return { ok: false, reason: "invalid_contact" };
-  }
-  // A named owner is a request-supplied id: it must be someone who can own work.
-  if (agentUserId !== ctx.actor.userId && !(await canOwnRecords(ctx.db, agentUserId))) {
-    return { ok: false, reason: "invalid_assignee" };
-  }
-
-  const inserted = await ctx.db
-    .insert(transactions)
-    .values({
-      brokerageKey: ctx.actor.brokerageKey,
-      agentUserId,
-      createdByUserId: ctx.actor.userId,
-      updatedByUserId: ctx.actor.userId,
-      transactionType: input.transactionType,
-      side: input.side,
-      stage: input.contractExecutionDate ? "under_contract" : "opportunity",
-      addressLine1: input.addressLine1,
-      addressLine2: input.addressLine2 ?? null,
-      city: input.city,
-      state: input.state?.toUpperCase() ?? "FL",
-      postalCode: input.postalCode ?? null,
-      listingKey: input.listingKey ?? null,
-      mlsNumber: input.mlsNumber ?? null,
-      contractPriceCents: input.contractPriceCents ?? null,
-      listPriceCents: input.listPriceCents ?? null,
-      commissionRateBps: input.commissionRateBps ?? null,
-      commissionFlatCents: input.commissionFlatCents ?? null,
-      agentSplitBps: input.agentSplitBps ?? null,
-      contractExecutionDate: input.contractExecutionDate ?? null,
-      closingDate: input.closingDate ?? null,
-      notes: input.notes ?? null,
-    })
-    .returning();
-  const row = inserted[0];
-  if (!row) return { ok: false, reason: "unavailable" };
-
-  // The client party of a deal opened for a contact is built from the stored
-  // contact — its name, its email, its phone — and carries `contact_id`, the
-  // one existing link between a person and a deal. Any client-role party the
-  // request also sent is dropped rather than duplicated.
-  const clientRole = CLIENT_PARTY_ROLE[input.side];
-  const parties = [
-    ...(contact
-      ? [
-          {
-            role: clientRole,
-            displayName: contactDisplayName(contact.row),
-            company: null as string | null,
-            email: contact.row.email,
-            phone: contact.row.phoneE164,
-            isPrimary: true,
-            contactId: contact.row.id as string | null,
-          },
-        ]
-      : []),
-    ...(input.parties ?? [])
-      .filter((p) => !contact || p.role !== clientRole)
-      .map((p) => ({ ...p, company: p.company ?? null, email: p.email ?? null, phone: p.phone ?? null, isPrimary: p.isPrimary ?? false, contactId: null as string | null })),
+  if (contact && agentUserId !== contact.row.assignedAgentUserId && !isBrokerageAdmin(ctx.actor)) return { ok: false, reason: "invalid_contact" };
+  if (agentUserId !== ctx.actor.userId && !(await canOwnRecords(ctx.db, agentUserId))) return { ok: false, reason: "invalid_assignee" };
+  const id = randomUUID(), stage = input.contractExecutionDate ? "under_contract" : "opportunity", deadlines = initialDeadlines(input);
+  // A closing date and its entered Closing milestone cannot disagree from the first save.
+  if (deadlines.filter(d => d.kind === "closing").length > 1 || input.closingDate && deadlines.some(d => d.kind === "closing" && d.dueDate !== input.closingDate)) return { ok: false, reason: "closing_deadline_conflict" };
+  const selectedClosing = input.closingDate ?? deadlines.find(d => d.kind === "closing")?.dueDate ?? null;
+  const guard = sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${agentUserId}::uuid and ${dashboardUsers.status}='active' and ${dashboardUsers.role}<>'member') ${contact ? sql`and exists(select 1 from ${contacts} where ${contacts.id}=${contact.row.id}::uuid and ${visibleContacts(ctx.actor)} and ${contacts.stage}=${ELIGIBLE_STAGE} and ${contacts.assignedAgentUserId}=${contact.row.assignedAgentUserId}::uuid and date_trunc('milliseconds',${contacts.updatedAt})=${contact.row.updatedAt.toISOString()}::timestamptz)` : sql``}`;
+  const clientRole = CLIENT_PARTY_ROLE[input.side], parties = [
+    ...(contact ? [{ role: clientRole, displayName: contactDisplayName(contact.row), company: null, email: contact.row.email, phone: contact.row.phoneE164, isPrimary: true, contactId: contact.row.id }] : []),
+    ...(input.parties ?? []).filter(p => !contact || p.role !== clientRole).map(p => ({ ...p, company: p.company ?? null, email: p.email ?? null, phone: p.phone ?? null, isPrimary: p.isPrimary ?? false, contactId: null })),
   ];
-  if (parties.length) {
-    await ctx.db.insert(transactionParties).values(
-      parties.map((p) => ({
-        transactionId: row.id,
-        role: p.role,
-        displayName: p.displayName,
-        company: p.company,
-        email: p.email,
-        phoneE164: p.phone,
-        isPrimary: p.isPrimary,
-        contactId: p.contactId,
-      }))
-    );
-  }
-  const deadlines = initialDeadlines(input);
-  if (deadlines.length) {
-    await ctx.db.insert(transactionDeadlines).values(
-      deadlines.map((d, i) => ({
-        transactionId: row.id,
-        kind: d.kind,
-        label: d.label,
-        dueDate: d.dueDate,
-        note: d.note ?? null,
-        sortOrder: i,
-      }))
-    );
-  }
-  await recordEvent(ctx.db, row.id, ctx.actor.userId, "transaction_created", {
-    stage: row.stage,
-    side: row.side,
-    transactionType: row.transactionType,
-  });
-  if (contact) {
-    // Ids only. The link is history for the contact and for the deal.
-    try {
-      await ctx.db.insert(auditEvents).values({
-        eventType: "contact_transaction_linked",
-        actorUserId: ctx.actor.userId,
-        targetUserId: null,
-        safeMetadata: { contactId: contact.row.id, transactionId: row.id, mechanism: "create" },
-      });
-    } catch {
-      // History must never break the write it describes.
-    }
-  }
-  const created = await getTransaction(ctx, row.id, now);
-  return created ? { ok: true, value: created } : { ok: false, reason: "unavailable" };
+  const writes: TransactionWrite[] = transactionWriteLocks(ctx);
+  if (contact) writes.push(ctx.db.select({ id: contacts.id }).from(contacts).where(and(eq(contacts.id, contact.row.id), visibleContacts(ctx.actor))).orderBy(contacts.id).for("update"));
+  writes.push(ctx.db.insert(transactions).values({ id, brokerageKey: ctx.actor.brokerageKey, agentUserId: sql`case when ${guard} then ${agentUserId}::uuid else null end`, createdByUserId: ctx.actor.userId, updatedByUserId: ctx.actor.userId,
+    transactionType: input.transactionType, side: input.side, stage, addressLine1: input.addressLine1, addressLine2: input.addressLine2 ?? null, city: input.city, state: input.state?.toUpperCase() ?? "FL", postalCode: input.postalCode ?? null,
+    listingKey: input.listingKey ?? null, mlsNumber: input.mlsNumber ?? null, contractPriceCents: input.contractPriceCents ?? null, listPriceCents: input.listPriceCents ?? null, commissionRateBps: input.commissionRateBps ?? null, commissionFlatCents: input.commissionFlatCents ?? null, agentSplitBps: input.agentSplitBps ?? null,
+    contractExecutionDate: input.contractExecutionDate ?? null, closingDate: selectedClosing, notes: input.notes ?? null, createdAt: now, updatedAt: now }));
+  writes.push(ctx.db.insert(transactionWriteRequests).values({ actorUserId: ctx.actor.userId, requestId, transactionId: id, action: "create", payloadHash: hash, result: { transactionId: id, updatedAt: now.toISOString() }, createdAt: now }));
+  if (parties.length) writes.push(ctx.db.insert(transactionParties).values(parties.map(p => ({ transactionId: id, role: p.role, displayName: p.displayName, company: p.company, email: p.email, phoneE164: p.phone, isPrimary: p.isPrimary, contactId: p.contactId, createdAt: now }))));
+  if (deadlines.length) writes.push(ctx.db.insert(transactionDeadlines).values(deadlines.map((d, sortOrder) => ({ transactionId: id, kind: d.kind, label: d.label, dueDate: d.dueDate, note: d.note ?? null, sortOrder, createdAt: now, updatedAt: now }))));
+  const safe = { stage, side: input.side, transactionType: input.transactionType };
+  writes.push(ctx.db.insert(transactionEvents).values({ transactionId: id, actorUserId: ctx.actor.userId, eventType: "transaction_created", safeMetadata: safe, createdAt: now }), ctx.db.insert(auditEvents).values({ eventType: "transaction_created", actorUserId: ctx.actor.userId, safeMetadata: { transactionId: id, ...safe }, createdAt: now }));
+  if (contact) writes.push(ctx.db.insert(auditEvents).values({ eventType: "contact_transaction_linked", actorUserId: ctx.actor.userId, safeMetadata: { contactId: contact.row.id, transactionId: id, mechanism: "create" }, createdAt: now }));
+  try { await ctx.db.batch(writes as unknown as Parameters<Db["batch"]>[0]); }
+  catch { const recovered = await replay(); if (recovered) return recovered; if (contact) { const latest = await loadContact(ctx, contact.row.id); if (!latest.ok || latest.row.stage !== ELIGIBLE_STAGE || !revisionMatches(latest.row.updatedAt, contact.row.updatedAt.toISOString())) return { ok: false, reason: "invalid_contact" }; } return { ok: false, reason: "unavailable" }; }
+  return await replay() ?? { ok: false, reason: "unavailable" };
 }
 
 /**
@@ -394,7 +307,7 @@ export async function planStageChange(
   ctx: { actor: Actor; db: Db },
   id: string,
   to: TransactionStage,
-  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date } = {}
+  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date; requestId?: string; expectedUpdatedAt?: string } = {}
 ): Promise<ServiceResult<StageChangePlan>> {
   if (!isRecordId(id)) return { ok: false, reason: "not_found" };
   const now = options.now ?? new Date();
@@ -409,9 +322,15 @@ export async function planStageChange(
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
   const from = row.stage as TransactionStage;
+  if (!isStage(to)) return { ok: false, reason: "invalid_transition" };
   if (!canTransition(from, to)) return { ok: false, reason: "invalid_transition" };
 
-  const today = toDateOnly(now);
+  const expected = options.expectedUpdatedAt ?? row.updatedAt.toISOString();
+  if (!revisionMatches(row.updatedAt, expected)) return { ok: false, reason: "conflict" };
+  const requestId = options.requestId ?? randomUUID(), next = nextTransactionRevision(row, now);
+  const hash = createPayloadHash({ id, stage: to, expectedUpdatedAt: options.expectedUpdatedAt });
+  const guard = transactionRevisionGuard(ctx, row, expected);
+  const today = calendarDayKey(now);
   // A manual change records exactly what it always recorded, so existing
   // history stays comparable.
   const extra = mechanism === "manual" ? {} : { mechanism, ...(options.metadata ?? {}) };
@@ -424,16 +343,18 @@ export async function planStageChange(
       from,
       to,
       writes: [
+        ...transactionWriteLocks(ctx, id),
+        ctx.db.insert(transactionWriteRequests).values({ actorUserId: ctx.actor.userId, requestId, transactionId: id, action: "stage", payloadHash: sql`case when exists(select 1 from ${transactions} where ${guard}) then ${hash}::text else null end`, result: { transactionId: id, updatedAt: next.toISOString() }, createdAt: now }),
         ctx.db
           .update(transactions)
           .set({
             stage: to,
             updatedByUserId: ctx.actor.userId,
-            updatedAt: now,
+            updatedAt: next,
             closedDate: to === "closed" ? today : row.closedDate,
             cancelledDate: isTerminalStage(to) && to !== "closed" ? today : row.cancelledDate,
           })
-          .where(eq(transactions.id, row.id)),
+          .where(guard),
         ctx.db.insert(transactionEvents).values({
           transactionId: row.id,
           actorUserId: ctx.actor.userId,
@@ -477,15 +398,21 @@ export async function changeStage(
   ctx: { actor: Actor; db: Db },
   id: string,
   to: TransactionStage,
-  now: Date = new Date()
+  now: Date = new Date(),
+  options: { requestId?: string; expectedUpdatedAt?: string } = {}
 ): Promise<ServiceResult<Transaction>> {
-  const planned = await planStageChange(ctx, id, to, { mechanism: "manual", now });
+  const hash = createPayloadHash({ id, stage: to, expectedUpdatedAt: options.expectedUpdatedAt });
+  const replay = () => options.requestId ? transactionWriteReplay(ctx, options.requestId, hash, "stage", now) : Promise.resolve(null);
+  const previous = await replay(); if (previous) return previous;
+  const planned = await planStageChange(ctx, id, to, { mechanism: "manual", now, ...options });
   if (!planned.ok) return planned;
 
   try {
     await commitStageChange(ctx.db, planned.value.writes);
-  } catch {
-    return { ok: false, reason: "unavailable" };
+  } catch (error) {
+    const recovered = await replay(); if (recovered) return recovered;
+    const current = await getTransaction(ctx, id, now); if (!current) return { ok: false, reason: "not_found" };
+    return { ok: false, reason: isTransactionGuardConflict(error) ? "conflict" : "unavailable" };
   }
 
   const updated = await getTransaction(ctx, planned.value.row.id, now);

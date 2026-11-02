@@ -31,6 +31,7 @@ import { useQuery } from "@/lib/data/hooks";
 import { SUBSYSTEM_COPY, unavailableSubsystem } from "@/components/common/subsystem-state";
 import { EventType, Lead, LEAD_SOURCES_ORDER, LEAD_SOURCE_LABELS, PropertyType } from "@/lib/data/types";
 import { now } from "@/lib/dates";
+import { transactionCreateAttempt, transactionCreateUncertain, type TransactionCreateAttempt } from "@/lib/transactions/create-attempt";
 import { closeDateFromInput } from "@/lib/transactions/close-date";
 import { isValidBirthday, MONTH_NAMES } from "@/lib/contacts/birthday";
 import { ContactPicker } from "./contact-picker";
@@ -47,7 +48,7 @@ const TITLES: Record<QuickCreateKind, { title: string; description: string; cta:
   },
   transaction: {
     title: "New transaction",
-    description: "Opens a file at the offer stage.",
+    description: "Open an opportunity file, then enter its agreed terms and deadlines.",
     cta: "Open file",
     goto: "/transactions",
   },
@@ -71,8 +72,9 @@ const TITLES: Record<QuickCreateKind, { title: string; description: string; cta:
   },
 };
 
-export function QuickCreateDialog() {
-  const kind = useUiStore((s) => s.quickCreate);
+export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly QuickCreateKind[] } = {}) {
+  const requestedKind = useUiStore((s) => s.quickCreate);
+  const kind = requestedKind && (!allowedKinds || allowedKinds.includes(requestedKind)) ? requestedKind : null;
   const setKind = useUiStore((s) => s.setQuickCreate);
   const fromContact = useUiStore((s) => s.quickCreateContact);
   // A side is suggested only when the chosen contact's active need states one explicitly.
@@ -82,6 +84,8 @@ export function QuickCreateDialog() {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const contactRequest = React.useRef<string | null>(null);
+  const transactionRequest = React.useRef<TransactionCreateAttempt | null>(null);
+  const [transactionUncertain, setTransactionUncertain] = React.useState(false);
 
   const meta = kind ? TITLES[kind] : null;
 
@@ -89,11 +93,12 @@ export function QuickCreateDialog() {
     setKind(null);
     setError(null);
     contactRequest.current = null;
+    if (!transactionUncertain) transactionRequest.current = null;
   };
 
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!kind) return;
+    if (!kind || busy) return;
     let goto = meta!.goto;
     const form = new FormData(e.currentTarget);
     const get = (name: string) => String(form.get(name) ?? "").trim();
@@ -111,7 +116,7 @@ export function QuickCreateDialog() {
           sqft: Number(get("sqft")) || 0,
         });
       } else if (kind === "transaction") {
-        await createTransaction({
+        const input = {
           address: get("address"),
           city: get("city") || "Fort Lauderdale",
           clientName: get("client"),
@@ -121,7 +126,13 @@ export function QuickCreateDialog() {
           // Blank stays unset: no invented closing date, so no invented
           // "Closing" deadline. An entered day becomes the real one.
           closeDate: closeDateFromInput(get("closeDate")),
-        });
+        };
+        const attempt = transactionCreateAttempt(transactionRequest.current, input, transactionUncertain);
+        transactionRequest.current = attempt;
+        const created = await createTransaction(attempt.input);
+        transactionRequest.current = null;
+        setTransactionUncertain(false);
+        goto = created.source === "db" ? `/transactions/${encodeURIComponent(created.id)}` : `/transactions?open=${encodeURIComponent(created.id)}`;
       } else if (kind === "lead") {
         const month = Number(get("birthdayMonth") || 0);
         const day = Number(get("birthdayDay") || 0);
@@ -167,6 +178,14 @@ export function QuickCreateDialog() {
     } catch (e) {
       // "Check the fields" is wrong when there is nothing wrong with the
       // fields: an event or a document has nowhere to be saved to here.
+      if (kind === "transaction" && transactionRequest.current && transactionCreateUncertain(e, transactionUncertain)) {
+        setTransactionUncertain(true);
+        setError(transactionUncertain
+          ? "The original save is still unconfirmed. Check the same result again when access is available; the submitted file is kept here."
+          : "The new file may have been saved, but its result did not return. Check the same save result before creating another file.");
+        return;
+      }
+      if (kind === "transaction") setTransactionUncertain(false);
       const missing = unavailableSubsystem(e);
       setError(
         e instanceof BirthdayInputError
@@ -185,7 +204,7 @@ export function QuickCreateDialog() {
   };
 
   return (
-    <Dialog open={kind !== null} onOpenChange={(open) => !open && close()}>
+    <Dialog open={kind !== null} onOpenChange={(open) => !open && !busy && close()}>
       {/* Opened from the New menu, whose item is gone by the time this closes: focus goes back to the menu's button. */}
       <DialogContent focusFallback={() => document.querySelector<HTMLElement>("[data-new-trigger]")}>
         {meta && kind && (
@@ -222,8 +241,9 @@ export function QuickCreateDialog() {
               </div>
             )}
 
-            {kind === "transaction" && (
-              <div className="grid gap-3">
+            {kind === "transaction" && transactionUncertain && transactionRequest.current && <div role="status" className="space-y-2 rounded-panel border border-border bg-tint p-4"><p className="text-sm font-semibold">Check the submitted file</p><p className="break-words text-sm">{transactionRequest.current.input.address}, {transactionRequest.current.input.city}</p><p className="text-xs leading-relaxed text-muted-foreground">The submitted values are kept unchanged. Checking the result uses the same request and will not create a duplicate. If you close this popup, the pending check remains available when you reopen New transaction.</p></div>}
+            {kind === "transaction" && !transactionUncertain && (
+              <fieldset disabled={busy} className="grid gap-3">
                 <Field label="Property address" name="address" required placeholder="2416 NE 26th St" />
                 <Field label="City" name="city" placeholder="Fort Lauderdale" />
                 <ContactPicker preselected={fromContact} onSuggestSide={suggestSide} />
@@ -241,7 +261,7 @@ export function QuickCreateDialog() {
                     ["buyer", "Buyer side"],
                   ]}
                 />
-              </div>
+              </fieldset>
             )}
 
             {kind === "lead" && (
@@ -303,11 +323,11 @@ export function QuickCreateDialog() {
             {error && <p className="text-sm text-status-bad">{error}</p>}
 
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={close}>
+              <Button type="button" variant="ghost" onClick={close} disabled={busy}>
                 Cancel
               </Button>
               <Button type="submit" disabled={busy}>
-                {busy ? "Saving…" : meta.cta}
+                {busy ? "Saving…" : kind === "transaction" && transactionUncertain ? "Check save result" : meta.cta}
               </Button>
             </DialogFooter>
           </form>

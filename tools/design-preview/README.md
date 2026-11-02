@@ -477,3 +477,37 @@ node --experimental-strip-types --no-warnings tools/design-preview/test-saved-to
 
 See [saved tour behavior](../../docs/SAVED_SHOWING_TOURS.md) for persistence and
 review semantics.
+
+## Transactions
+
+The actual worklist opens at `/preview?view=%2Ftransactions`. Full files use
+`/transactions/:id`, for example
+`/preview?view=%2Ftransactions%2Fsample-financing&scenario=interactive`.
+Readable aliases include `sample-offer` (missing contract/closing dates and no
+deadlines), `sample-financing` (a deadline due today in New York),
+`sample-on-hold` and `sample-closed`. The responsive wrapper accepts these same
+file routes through its `view` parameter.
+
+Records is read-only. Interactive samples permits transaction creation, details,
+stage and deadline changes in memory; reload resets everything. Worklist, file,
+Home totals/attention and linked contact transactions share one synthetic book.
+The real transaction and workspace adapters are used without an adapter alias;
+their requests terminate in the closed preview transport, with no live fallback.
+Raw cents, calendar days, revisions, scoped parties and paged history follow the
+production contracts. Stage changes never invent completed deadlines or contact
+touches, and missing entered dates remain missing.
+
+Choose **Remote file change (409)**, or use `scenario=conflict`, to refuse the
+first save and reveal a newer revision for explicit review. The draft is kept
+and further writes remain blocked in that rehearsal. New transaction uses the
+real dialog only in Interactive samples. An uncertain save retains its frozen
+payload and request ID across closing, reopening or other New menu selections;
+checking the same save recovers its result without creating another file.
+
+The 20 transaction groups exercise the real adapters, revision/receipt guards,
+atomic refusals, closing/deadline consistency, lifecycle, recovery, privacy and
+Home/contact agreement:
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-transaction-session.mjs
+```

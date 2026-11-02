@@ -1,308 +1,38 @@
 "use client";
-
-/**
- * Transactions kanban — one column per stage in pipeline order. Drag a card
- * into another column to move its stage (optimistic, then persisted through
- * the adapter). Click a card — or focus it and press Enter — to open the
- * detail drawer; Space picks a card up for keyboard dragging.
- */
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  PointerSensor,
-  closestCorners,
-  useDraggable,
-  useDroppable,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from "@dnd-kit/core";
-import { Building2, CalendarDays, Inbox } from "lucide-react";
+import { useMemo, useState } from "react";
+import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCorners, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { CalendarDays, GripVertical, Inbox } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { IconWell } from "@/components/ui/icon-well";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatusPill } from "@/components/ui/status-pill";
-import { updateTransactionStage } from "@/lib/data/adapters/transactions";
+import { TransactionStageReview } from "./stage-control";
+import { type Transaction,type TransactionStage,TRANSACTION_STAGES,TRANSACTION_STAGE_LABELS } from "@/lib/data/types";
+import { canTransition,isTerminalStage } from "@/lib/transactions/stages";
+import { formatTransactionDay, transactionDay } from "@/lib/transactions/calendar-days";
 import { bumpDataVersion } from "@/lib/data/store";
-import {
-  Transaction,
-  TransactionStage,
-  TRANSACTION_STAGES,
-  TRANSACTION_STAGE_LABELS,
-} from "@/lib/data/types";
-import {
-  cn,
-  formatCurrency,
-  formatCurrencyCompact,
-  formatDateShort,
-} from "@/lib/utils";
-import { closeCountdown, SIDE_SHORT } from "./txn-shared";
-import { TransactionProgress } from "./transaction-progress";
-import { isActiveStage } from "@/lib/transactions/stages";
-
-interface KanbanBoardProps {
-  transactions: Transaction[] | undefined;
-  loading: boolean;
-  onOpen: (id: string) => void;
+import { cn,formatCurrencyCompact } from "@/lib/utils";
+import { closeCountdown,SIDE_SHORT } from "./txn-shared";
+import { dueDescription, transactionCanEdit } from "./workspace-state";
+export function TransactionBoardCard({txn,onOpen,handle}:{txn:Transaction;onOpen:(id:string)=>void;handle?:React.ReactNode}){
+ const next=[...txn.milestones].filter(item=>item.state!=="done").sort((a,b)=>a.date.localeCompare(b.date))[0];
+ return <div className="min-w-0 rounded-panel border border-border bg-card p-4 shadow-card"><div className="mb-2 flex items-center justify-between gap-2"><Badge variant="muted">{SIDE_SHORT[txn.side]}</Badge>{handle}</div><button type="button" className="min-h-11 w-full break-words text-left text-[14px] font-semibold leading-snug hover:underline" onClick={()=>onOpen(txn.id)}>{txn.address}</button><p className="mt-1 break-words text-xs text-muted-foreground">{txn.city}</p><p className="mt-2 break-words text-xs text-muted-foreground">{txn.clientName}</p><div className="my-3 border-t border-border pt-3"><p className="text-[11px] text-muted-foreground">Next deadline</p><p className="mt-1 break-words text-xs font-semibold">{next?.label??"No outstanding deadline"}</p>{next&&<p className="mt-1 text-xs text-muted-foreground tabular">{formatTransactionDay(next.date,true)} · {dueDescription(transactionDay(next.date)??next.date)}</p>}</div><p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground tabular"><CalendarDays className="h-3.5 w-3.5 shrink-0" aria-hidden/>{closeCountdown(txn)}</p><p className="mt-2 text-xs text-muted-foreground tabular">{txn.contractPrice>0?formatCurrencyCompact(txn.contractPrice):"Price not recorded"} {txn.contractPrice>0?"contract":""}</p></div>;
 }
-
-function CardBody({ txn }: { txn: Transaction }) {
-  return (
-    <>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <IconWell icon={Building2} />
-        <Badge variant="muted">{SIDE_SHORT[txn.side]}</Badge>
-      </div>
-      <p className="break-words text-[14px] font-semibold leading-snug">{txn.address}</p>
-      <p className="mt-1 break-words text-xs text-muted-foreground">{txn.city}</p>
-      <p className="mt-3 break-words text-xs text-muted-foreground">Client <span className="ml-1 font-medium text-foreground">{txn.clientName}</span></p>
-      <p className="tabular mt-3 text-xl font-bold tracking-tight">
-        {formatCurrency(txn.contractPrice)}
-      </p>
-      <p className="mt-0.5 text-[11px] text-muted-foreground">Contract price</p>
-      <div className="my-3 border-t border-border pt-3">
-        <TransactionProgress stage={txn.stage} compact />
-      </div>
-      <p className="tabular flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
-        <CalendarDays className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        {txn.closeDate ? `${formatDateShort(txn.closeDate)} · ` : ""}{closeCountdown(txn)}
-      </p>
-      <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <StatusPill tone={isActiveStage(txn.stage) ? txn.status : "neutral"}>{isActiveStage(txn.stage) ? txn.statusLabel : TRANSACTION_STAGE_LABELS[txn.stage]}</StatusPill>
-      </div>
-    </>
-  );
+function DraggableCard({txn,onOpen,canWrite,disabled}:{txn:Transaction;onOpen:(id:string)=>void;canWrite:boolean;disabled:boolean}){
+ const editable=transactionCanEdit(txn,canWrite)&&!disabled,{attributes,listeners,setNodeRef,setActivatorNodeRef,isDragging}=useDraggable({id:txn.id,disabled:!editable});
+ return <div ref={setNodeRef} className={cn(isDragging&&"opacity-40")}><TransactionBoardCard txn={txn} onOpen={onOpen} handle={editable?<Button ref={setActivatorNodeRef} type="button" variant="ghost" size="icon" className="h-10 w-10 cursor-grab touch-none active:cursor-grabbing" {...attributes} {...listeners} aria-label={`Move ${txn.address} to another stage`}><GripVertical aria-hidden className="h-4 w-4"/></Button>:undefined}/></div>;
 }
-
-function DraggableCard({
-  txn,
-  onOpen,
-  dragHappened,
-}: {
-  txn: Transaction;
-  onOpen: (id: string) => void;
-  dragHappened: MutableRefObject<boolean>;
-}) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: txn.id,
-  });
-  return (
-    <button
-      ref={setNodeRef}
-      type="button"
-      {...attributes}
-      {...listeners}
-      aria-label={`Open transaction ${txn.address}. Current stage: ${TRANSACTION_STAGE_LABELS[txn.stage]}.`}
-      onClick={() => {
-        // Suppress the click the browser fires right after a drag ends.
-        if (!dragHappened.current) onOpen(txn.id);
-      }}
-      className={cn(
-        "w-full cursor-grab touch-none rounded-panel border border-border bg-card p-4 text-left shadow-card transition-shadow duration-150 hover:shadow-card-hover active:cursor-grabbing",
-        isDragging && "opacity-40"
-      )}
-    >
-      <CardBody txn={txn} />
-    </button>
-  );
+function Column({stage,items,onOpen,canWrite,active,disabled}:{stage:TransactionStage;items:Transaction[];onOpen:(id:string)=>void;canWrite:boolean;active:Transaction|undefined;disabled:boolean}){
+ const allowed=Boolean(active&&canTransition(active.stage,stage)),{setNodeRef,isOver}=useDroppable({id:stage,disabled:!allowed});
+ return <section aria-label={`${TRANSACTION_STAGE_LABELS[stage]} column`} className="flex w-[264px] shrink-0 flex-col gap-3 sm:w-[280px]"><div className="flex items-center justify-between gap-2 px-1"><h3 className="text-xs font-semibold">{TRANSACTION_STAGE_LABELS[stage]}</h3><span className="text-xs text-muted-foreground tabular">{items.length}</span></div><div ref={setNodeRef} className={cn("flex min-h-[180px] flex-1 flex-col gap-3 rounded-card border border-border bg-tint p-2",isOver&&allowed&&"ring-1 ring-ring",active&&!allowed&&"opacity-60")}>{items.map(txn=><DraggableCard key={txn.id} txn={txn} onOpen={onOpen} canWrite={canWrite} disabled={disabled}/>)}{!items.length&&<p className="py-8 text-center text-xs text-muted-foreground">No files</p>}</div></section>;
 }
-
-function Column({
-  stage,
-  items,
-  onOpen,
-  dragHappened,
-}: {
-  stage: TransactionStage;
-  items: Transaction[];
-  onOpen: (id: string) => void;
-  dragHappened: MutableRefObject<boolean>;
-}) {
-  const { setNodeRef, isOver } = useDroppable({ id: stage });
-  const sum = items.reduce((acc, t) => acc + t.contractPrice, 0);
-  return (
-    <section
-      aria-label={`${TRANSACTION_STAGE_LABELS[stage]} column`}
-      className="flex w-[264px] flex-none flex-col gap-3 sm:w-[288px]"
-    >
-      <div className="flex items-baseline justify-between px-1">
-        <p className="flex items-baseline gap-1.5">
-          <span className="text-micro">{TRANSACTION_STAGE_LABELS[stage]}</span>
-          <span className="tabular inline-flex h-5 min-w-5 items-center justify-center rounded-md bg-tint px-1 text-[11px] font-semibold text-muted-foreground">
-            {items.length}
-          </span>
-        </p>
-        <span className="tabular text-xs text-muted-foreground">
-          {items.length ? formatCurrencyCompact(sum) : "—"}
-        </span>
-      </div>
-      <div
-        ref={setNodeRef}
-        className={cn(
-          "flex min-h-[220px] flex-1 flex-col gap-3 rounded-card border border-border bg-tint p-2",
-          isOver && "ring-1 ring-ring"
-        )}
-      >
-        {items.map((t) => (
-          <DraggableCard
-            key={t.id}
-            txn={t}
-            onOpen={onOpen}
-            dragHappened={dragHappened}
-          />
-        ))}
-        {items.length === 0 && (
-          <p className="py-6 text-center text-xs text-muted-foreground">
-            No deals in this stage
-          </p>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function BoardSkeleton() {
-  return (
-    <div className="flex items-stretch gap-4 overflow-x-auto pb-4">
-      {TRANSACTION_STAGES.map((stage, i) => (
-        <div key={stage} className="flex w-[280px] flex-none flex-col gap-2">
-          <div className="flex items-center justify-between px-1">
-            <Skeleton className="h-3 w-24" />
-            <Skeleton className="h-3 w-10" />
-          </div>
-          <div className="flex flex-col gap-2 rounded-panel bg-tint p-2">
-            {Array.from({ length: (i % 3) + 1 }).map((_, j) => (
-              <Skeleton key={j} className="h-28 w-full rounded-panel bg-card" />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export function KanbanBoard({ transactions, loading, onOpen }: KanbanBoardProps) {
-  // Optimistic stage overrides so a dropped card lands instantly; cleared
-  // whenever fresh adapter data arrives (the refetch carries the truth).
-  const [overrides, setOverrides] = useState<Record<string, TransactionStage>>({});
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [moveError, setMoveError] = useState<string | null>(null);
-  const dragHappened = useRef(false);
-
-  useEffect(() => {
-    setOverrides({});
-  }, [transactions]);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, {
-      // Space starts a keyboard drag so Enter stays free to open the drawer.
-      keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter"] },
-    })
-  );
-
-  const byStage = useMemo(() => {
-    const map = Object.fromEntries(
-      TRANSACTION_STAGES.map((s) => [s, [] as Transaction[]])
-    ) as Record<TransactionStage, Transaction[]>;
-    for (const t of transactions ?? []) {
-      // Exited and on-hold deals are not pipeline columns; the table shows
-      // them. Bucketing them here would index a column that does not exist.
-      const column = overrides[t.id] ?? t.stage;
-      if (column in map) map[column].push(t);
-    }
-    return map;
-  }, [transactions, overrides]);
-
-  if (!transactions) return loading ? <BoardSkeleton /> : (
-    <EmptyState icon={Inbox} title="Transactions could not be loaded" description="Refresh the page to try again." />
-  );
-
-  if (transactions.length === 0) {
-    return (
-      <EmptyState
-        icon={Inbox}
-        title="No transactions found"
-        description="Clear the search or the side filter to see every file, or add a transaction from Create."
-      />
-    );
-  }
-
-  const activeTxn = activeId
-    ? transactions.find((t) => t.id === activeId)
-    : undefined;
-
-  function handleDragStart(event: DragStartEvent) {
-    setMoveError(null);
-    dragHappened.current = true;
-    setActiveId(String(event.active.id));
-  }
-
-  function endDrag() {
-    setActiveId(null);
-    // Clear after the post-drop click has already been dispatched.
-    window.setTimeout(() => {
-      dragHappened.current = false;
-    }, 0);
-  }
-
-  function handleDragEnd(event: DragEndEvent) {
-    endDrag();
-    const { active, over } = event;
-    if (!over || !transactions) return;
-    const target = over.id as TransactionStage;
-    const txn = transactions.find((t) => t.id === active.id);
-    if (!txn) return;
-    const current = overrides[txn.id] ?? txn.stage;
-    if (target === current) return;
-    setOverrides((prev) => ({ ...prev, [txn.id]: target }));
-    // A move the lifecycle refuses throws; a refetch drops the optimistic
-    // override and the card returns to where the deal actually is.
-    void updateTransactionStage(txn.id, target).catch(() => {
-      setOverrides((prev) => {
-        const next = { ...prev };
-        delete next[txn.id];
-        return next;
-      });
-      setMoveError("The stage change could not be confirmed. Reloading the recorded stage. Open the file to check before trying again.");
-      bumpDataVersion();
-    });
-  }
-
-  return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCorners}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onDragCancel={endDrag}
-    >
-      {moveError && <p role="alert" className="mb-3 rounded-panel border border-border bg-tint px-4 py-3 text-sm">{moveError}</p>}
-      <div
-        aria-busy={loading}
-        className="flex items-stretch gap-4 overflow-x-auto pb-4"
-      >
-        {TRANSACTION_STAGES.map((stage) => (
-          <Column
-            key={stage}
-            stage={stage}
-            items={byStage[stage]}
-            onOpen={onOpen}
-            dragHappened={dragHappened}
-          />
-        ))}
-      </div>
-      <DragOverlay dropAnimation={null}>
-        {activeTxn ? (
-          <div className="w-[248px] rounded-panel border border-border bg-card p-4 shadow-pop sm:w-[272px]">
-            <CardBody txn={activeTxn} />
-          </div>
-        ) : null}
-      </DragOverlay>
-    </DndContext>
-  );
+export function KanbanBoard({transactions,loading,onOpen,canWrite=false}:{transactions:Transaction[]|undefined;loading:boolean;onOpen:(id:string)=>void;canWrite?:boolean}){
+ const [activeId,setActiveId]=useState<string|null>(null),[proposal,setProposal]=useState<{opening:Transaction;target:TransactionStage}|null>(null),[notice,setNotice]=useState<string|null>(null);
+ const sensors=useSensors(useSensor(PointerSensor,{activationConstraint:{distance:8}}),useSensor(KeyboardSensor));
+ const byStage=useMemo(()=>Object.fromEntries(TRANSACTION_STAGES.map(stage=>[stage,(transactions??[]).filter(item=>item.stage===stage)])) as Record<TransactionStage,Transaction[]>,[transactions]);
+ const active=transactions?.find(item=>item.id===activeId);
+ function drop(event:DragEndEvent){setActiveId(null);const txn=transactions?.find(item=>item.id===event.active.id),target=event.over?.id as TransactionStage|undefined;if(!txn||!target||target===txn.stage)return;if(!canWrite||!canTransition(txn.stage,target)){setNotice("That move is not available from the current stage. Open the file to review available stages.");return;}setProposal({opening:txn,target});}
+ if(!transactions)return <div className="flex max-w-full gap-4 overflow-hidden">{[1,2,3].map(n=><Skeleton key={n} className="h-72 w-[264px] shrink-0 rounded-card"/>)}</div>;
+ if(!transactions.length)return <EmptyState icon={Inbox} title="No transactions match" description="Adjust the worklist filters or search to find a file."/>;
+ return <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={event=>{setActiveId(String(event.active.id));setNotice(null);}} onDragCancel={()=>setActiveId(null)} onDragEnd={drop}>{notice&&<p role="status" className="mb-3 text-sm">{notice}</p>}<div aria-busy={loading} className="flex w-full min-w-0 max-w-full items-stretch gap-4 overflow-x-auto pb-4">{TRANSACTION_STAGES.map(stage=><Column key={stage} stage={stage} items={byStage[stage]} onOpen={onOpen} canWrite={canWrite} active={active} disabled={Boolean(proposal)}/>)}</div><DragOverlay dropAnimation={null}>{active?<div className="w-[248px] shadow-pop"><TransactionBoardCard txn={active} onOpen={()=>undefined}/></div>:null}</DragOverlay>{proposal&&<TransactionStageReview opening={proposal.opening} current={transactions.find(item=>item.id===proposal.opening.id)??proposal.opening} target={proposal.target} canEdit={canWrite&&!isTerminalStage(proposal.opening.stage)} onClose={()=>setProposal(null)} onRefresh={bumpDataVersion}/>}</DndContext>;
 }

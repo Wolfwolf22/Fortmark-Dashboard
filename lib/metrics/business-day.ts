@@ -14,9 +14,9 @@
  * brokerage outside Eastern time joins, this constant is the one thing that
  * becomes a per-brokerage setting.
  *
- * Only the follow-up path uses it. Metric windows and transaction deadlines
- * still reason in UTC days (`window.ts`); moving those is a separate,
- * deliberate change with its own tests.
+ * Follow-ups, showings and transaction deadline attention use this business
+ * day. Reporting month windows retain their explicit UTC-day definition
+ * (`window.ts`), separate from operational due-today decisions.
  *
  * Pure and dependency-free (`Intl` only), so tests can pin instants on either
  * side of a day boundary and of a daylight-saving change.

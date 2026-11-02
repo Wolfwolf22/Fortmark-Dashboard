@@ -32,6 +32,10 @@ export function failure(reason: ServiceFailure): NextResponse {
       return NextResponse.json({ error: "no_identity" }, { status: 403, headers: NO_STORE });
     case "invalid_transition":
       return NextResponse.json({ error: "invalid_transition" }, { status: 409, headers: NO_STORE });
+    case "conflict": case "request_conflict": case "closing_deadline_conflict": case "invalid_deadline_transition":
+      return NextResponse.json({ error: reason }, { status: 409, headers: NO_STORE });
+    case "invalid_transaction":
+      return NextResponse.json({ error: "invalid", fields: ["transaction"] }, { status: 400, headers: NO_STORE });
     case "invalid_contact":
       return NextResponse.json({ error: "invalid", fields: ["contactId"] }, { status: 400, headers: NO_STORE });
     case "invalid_assignee":
@@ -56,5 +60,15 @@ export async function actorOrResponse(clerkUserId: string) {
 export function unexpected(error: unknown): NextResponse {
   console.error(`[transactions] unexpected failure${error instanceof Error ? `: ${error.name}` : ""}`);
   return NextResponse.json({ error: "Service unavailable" }, { status: 503, headers: NO_STORE });
+}
+
+/** Count actual UTF-8 bytes; request length is only an early refusal. */
+export async function readTransactionBody(request: Request): Promise<{ ok: true; body: unknown } | { ok: false }> {
+  if (!request.body || Number(request.headers.get("content-length")) > 65536) return { ok: false };
+  const reader = request.body.getReader(), chunks: Uint8Array[] = []; let bytes = 0;
+  try { while (true) { const chunk = await reader.read(); if (chunk.done) break; bytes += chunk.value.byteLength; if (bytes > 65536) { await reader.cancel(); return { ok: false }; } chunks.push(chunk.value); }
+    const data = new Uint8Array(bytes); let offset = 0; for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.byteLength; }
+    return { ok: true, body: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(data)) };
+  } catch { return { ok: false }; } finally { reader.releaseLock(); }
 }
 

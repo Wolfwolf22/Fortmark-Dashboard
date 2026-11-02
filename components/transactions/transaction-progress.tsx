@@ -58,7 +58,7 @@ export function TransactionProgress({ stage, compact = false }: { stage: Transac
           );
         })}
       </ol>
-      {!compact && <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Workflow position. Recorded milestones are shown below.</p>}
+      {!compact && <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Milestones are tracked separately from stage.</p>}
     </div>
   );
 }

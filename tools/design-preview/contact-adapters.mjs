@@ -1,7 +1,7 @@
 import { applyQuery, snapshotOf } from "../../lib/contacts/windows.ts";
 import { contactAgents } from "./contact-fixtures.mjs";
 import { allPreviewContacts, previewPublicRecordId, previewRecordId } from "./import-merge-fixtures.mjs";
-import { visualTransactions } from "./visual-fixtures.mjs";
+import { previewLinkedTransactions } from "./transaction-model.mjs";
 import { announceReadOnly } from "./read-only.mjs";
 import { HISTORY_PAGE_SIZE, decodeHistoryCursor, historyPage } from "../../lib/contacts/history.ts";
 import { NEED_STATUS_RANK, decodeNeedCursor, needHistoryPage } from "../../lib/contacts/needs-pagination.ts";
@@ -229,7 +229,7 @@ export async function getLeadsPage(query) {
 export async function getLeadSnapshot() { return copy(snapshotOf(rows(), new Date(), SAMPLE_ACTOR.userId)); }
 export async function getTimeline(id) { return copy(rows().some(contact => contact.id === id) ? readSampleTimeline(id) : []); }
 export async function getNotes(id) { return copy(rows().some(contact => contact.id === id) ? readSampleNotes(id) : []); }
-export async function getNeeds(id) { return copy(rows().some(contact => contact.id === id) ? readSampleNeeds(id) : []); }
+export async function getNeeds(id) { id = previewRecordId(id); return copy(rows().some(contact => contact.id === id) ? readSampleNeeds(id) : []); }
 function historyCursor(cursor) {
   if (!cursor) return undefined;
   const parsed = decodeHistoryCursor(cursor);
@@ -248,10 +248,10 @@ export async function getNeedsPage(id, cursor) {
   return copy(needHistoryPage(await getNeeds(id), HISTORY_PAGE_SIZE, item => ({ rank: NEED_STATUS_RANK[item.status], at: item.updatedAt, id: item.id }), parsed));
 }
 export async function getEligibleContacts(query) {
-  return copy(rows().filter(contact => contact.stage === "representation" && (!query || contact.name.toLowerCase().includes(query.toLowerCase()))).map(({ id, name }) => ({ id, name })));
+  return copy(rows().filter(contact => contact.stage === "representation" && contact.recordSource === "db" && (SAMPLE_ACTOR.role === "admin" || contact.assignedAgentId === SAMPLE_ACTOR.userId) && (!query || contact.name.toLowerCase().includes(query.toLowerCase()))).map(({ id, name }) => ({ id: previewPublicRecordId(id), name })));
 }
 export async function getLinkedTransactions(id) {
   if (scenario() === "empty") return [];
   const ids = readSampleTransactionIds(id);
-  return copy(visualTransactions.filter(deal => ids.includes(deal.id)).map(({ id, address, city, stage }) => ({ id, address, city, stage })));
+  return copy(previewLinkedTransactions(ids));
 }

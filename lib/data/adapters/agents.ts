@@ -38,9 +38,9 @@ export async function getLeaderboard(range: DateRange): Promise<AgentProduction[
     .filter((a) => a.role !== "coordinator")
     .map((agent) => {
       const mine = transactions.filter((t) => t.agentId === agent.id);
-      const offersMade = mine.filter((t) => inRange(t.contractDate, range)).length;
+      const offersMade = mine.filter((t) => (t.contractDate ? inRange(t.contractDate, range) : false)).length;
       const active = mine.filter(
-        (t) => t.stage !== "closed" && (inRange(t.contractDate, range) || (t.closeDate ? inRange(t.closeDate, range) : false))
+        (t) => t.stage !== "closed" && ((t.contractDate ? inRange(t.contractDate, range) : false) || (t.closeDate ? inRange(t.closeDate, range) : false))
       );
       const closed = mine.filter((t) => t.stage === "closed" && (t.closeDate ? inRange(t.closeDate, range) : false));
       return {
