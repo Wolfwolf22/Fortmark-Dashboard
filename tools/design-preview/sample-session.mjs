@@ -4,6 +4,7 @@ import { contactNeeds, contactNotes, timelineFor, SAMPLE_AGENT_ID } from "./cont
 import { allPreviewContacts, duplicateNeeds, duplicateNotes, duplicateTimeline, duplicateOpportunities, contactTransactionIds, previewRecordId } from "./import-merge-fixtures.mjs";
 import { projectContactNeedSummary } from "../../lib/contacts/needs-summary.ts";
 import { samplePropertyLists, samplePropertyListRows } from "./property-fixtures.mjs";
+import { sampleShowingVisitTimeline } from "./showing-fixtures.mjs";
 
 const copy = value => value === undefined ? undefined : structuredClone(value);
 const sessionContacts = new Map(allPreviewContacts.map(contact => [contact.id, copy(contact)]));
@@ -80,7 +81,7 @@ export function readSampleContact(id) {
   return contact && !contact.mergedIntoContactId ? project(contact) : undefined;
 }
 export function readSampleTimeline(id) {
-  const base = duplicateTimeline[id] || timelineFor(id);
+  const base = [...(sampleShowingVisitTimeline[id] || []), ...(duplicateTimeline[id] || timelineFor(id))];
   return copy([...(interactiveSamples() ? sessionTimeline.get(id) || [] : []), ...(interactiveSamples() && sessionHistory.has(id) ? sessionHistory.get(id) : base)]);
 }
 export function readSampleActivities(id) { return readSampleTimeline(id).filter(item => !auditHistoryIds.has(item.id)); }

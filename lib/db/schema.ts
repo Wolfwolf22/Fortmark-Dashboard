@@ -290,6 +290,7 @@ export const RELEASE_1_AUDIT_EVENTS = [
   "contact_need_status_changed",
   "contact_transaction_linked",
   "property_list_updated",
+  "showing_updated",
   // Core V1 — brokerage identity. Field NAMES only in metadata, never values.
   "brokerage_identity_created",
   "brokerage_identity_updated",
@@ -1183,3 +1184,59 @@ export const propertyTransferRequests = pgTable("property_transfer_requests", {
   check("property_transfer_requests_lists_check", sql`${t.sourceListId} <> ${t.targetListId}`),
 ]);
 export type PropertyTransferRequestRow = typeof propertyTransferRequests.$inferSelect;
+
+/** Owner-private appointments keep only a durable MLS reference and user-entered details. */
+export const showings = pgTable("showings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerUserId: uuid("owner_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  brokerageKey: text("brokerage_key").notNull(),
+  contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "restrict" }),
+  sourcePropertyId: uuid("source_property_id").notNull().references(() => contactProperties.id, { onDelete: "restrict" }),
+  dataset: text("dataset").notNull(),
+  listingId: text("listing_id").notNull(),
+  mlsNumber: text("mls_number").notNull(),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+  meetingDetails: text("meeting_details").notNull().default(""),
+  notes: text("notes").notNull().default(""),
+  status: text("status").notNull().default("scheduled"),
+  feedbackLikes: text("feedback_likes").notNull().default(""),
+  feedbackConcerns: text("feedback_concerns").notNull().default(""),
+  feedbackSummary: text("feedback_summary").notNull().default(""),
+  visitedAt: timestamp("visited_at", { withTimezone: true }),
+  cancelReason: text("cancel_reason").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createRequestId: uuid("create_request_id").notNull(),
+  createPayloadHash: text("create_payload_hash").notNull(),
+}, t => [
+  index("showings_owner_starts_idx").on(t.ownerUserId, t.startsAt, t.id),
+  index("showings_contact_idx").on(t.contactId),
+  index("showings_source_property_idx").on(t.sourcePropertyId),
+  uniqueIndex("showings_owner_request_idx").on(t.ownerUserId, t.createRequestId),
+  check("showings_dataset_check", sql`${t.dataset} ~ '^[A-Za-z0-9_-]{1,80}$'`),
+  check("showings_listing_id_check", sql`char_length(${t.listingId}) between 1 and 256 and btrim(${t.listingId}) = ${t.listingId} and ${t.listingId} !~ '[[:cntrl:]]'`),
+  check("showings_mls_number_check", sql`${t.mlsNumber} ~ '^[A-Z0-9][A-Z0-9-]{0,39}$' and ${t.mlsNumber} ~ '[0-9]'`),
+  check("showings_duration_check", sql`${t.endsAt} - ${t.startsAt} between interval '15 minutes' and interval '240 minutes'`),
+  check("showings_status_check", sql`${t.status} in ('scheduled','completed','cancelled')`),
+  check("showings_text_bounds_check", sql`char_length(${t.meetingDetails}) <= 1000 and char_length(${t.notes}) <= 2000 and char_length(${t.feedbackLikes}) <= 2000 and char_length(${t.feedbackConcerns}) <= 2000 and char_length(${t.feedbackSummary}) <= 2000 and char_length(${t.cancelReason}) <= 1000`),
+  check("showings_completion_check", sql`(${t.status} = 'completed' and ${t.visitedAt} is not null) or (${t.status} <> 'completed' and ${t.visitedAt} is null)`),
+  check("showings_cancellation_check", sql`(${t.status} = 'cancelled' and ${t.cancelReason} ~ '[^[:space:]]') or (${t.status} <> 'cancelled' and ${t.cancelReason} = '')`),
+  check("showings_create_hash_check", sql`${t.createPayloadHash} ~ '^[0-9a-f]{64}$'`),
+]);
+export type ShowingRow = typeof showings.$inferSelect;
+
+/** Appointment mutation receipts retain safe IDs/revisions, never meeting details or feedback. */
+export const showingMutationRequests = pgTable("showing_mutation_requests", {
+  actorUserId: uuid("actor_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  requestId: uuid("request_id").notNull(),
+  showingId: uuid("showing_id").notNull().references(() => showings.id, { onDelete: "restrict" }),
+  payloadHash: text("payload_hash").notNull(),
+  result: jsonb("result").$type<{ showingId: string; updatedAt: string }>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  primaryKey({ name: "showing_mutation_requests_pkey", columns: [t.actorUserId, t.requestId] }),
+  index("showing_mutation_requests_showing_idx").on(t.showingId),
+  check("showing_mutation_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`),
+]);
+export type ShowingMutationRequestRow = typeof showingMutationRequests.$inferSelect;

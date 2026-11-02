@@ -1,6 +1,7 @@
 import {
   Building2,
   CalendarDays,
+  CalendarClock,
   FileText,
   FolderOpen,
   Home,
@@ -42,6 +43,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/transactions", label: "Transactions", icon: Workflow, tier: "primary" },
   { href: "/tools", label: "Tools", icon: LayoutGrid, tier: "primary" },
   { href: "/property-lists", label: "Property lists", icon: FolderOpen, tier: "secondary" },
+  { href: "/showings", label: "Showings", icon: CalendarClock, tier: "secondary" },
   { href: "/reports", label: "Reports", icon: LineChart, tier: "secondary" },
   { href: "/calendar", label: "Calendar", icon: CalendarDays, tier: "secondary" },
   { href: "/documents", label: "Documents", icon: FileText, tier: "secondary" },

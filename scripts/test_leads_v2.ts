@@ -633,7 +633,7 @@ const edit = async (actor: Actor, patch: Record<string, unknown>, opts: { failOn
     const names = adapter.split("export async function ").slice(1).filter(section => /read:\s*true/.test(section)).map(section => section.match(/^(\w+)/)?.[1]).sort();
     return names.join() === ["getContactMergeReview", "getEligibleContacts", "getLeadsPage", "previewContactImport", "lookupContactProperty", "lookupPropertyListProperty"].sort().join() && (adapter.match(/read:\s*true/g) ?? []).length === 6;
   })());
-  check("later migrations are the approved additive contact and personal workspace tables", (() => { const j = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] }; return j.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces,0015_contact_create_requests,0016_contact_details_and_need_other,0017_contact_next_action,0018_contact_import_merge,0019_contact_properties,0020_property_lists,0021_property_research_transfer"; })());
+  check("later migrations are the approved additive contact and personal workspace tables", (() => { const j = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] }; return j.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces,0015_contact_create_requests,0016_contact_details_and_need_other,0017_contact_next_action,0018_contact_import_merge,0019_contact_properties,0020_property_lists,0021_property_research_transfer,0022_showings"; })());
 }
 
 console.log(`\n${passed}/${passed + failures.length} Leads V2 checks passed`);

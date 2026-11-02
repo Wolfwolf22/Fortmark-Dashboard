@@ -5,9 +5,9 @@ Branch: `claude/dashboard-status-yir55p` · Production baseline: `74ff9d4` (Lead
 Schema record: [`CONTACTS_V3_SCHEMA_PROPOSAL.md`](./CONTACTS_V3_SCHEMA_PROPOSAL.md) (APPROVED / APPLIED TO PREVIEW).
 
 **Current local release — 2026-11-02:** the reliability, client-context, Next Action,
-CSV import, reviewed merges and named MLS property lists and private property research below are implemented and verified locally.
+CSV import, reviewed merges, named MLS property lists, private property research and the showing planner below are implemented locally.
 The historical Preview certification above does not certify these additions on a
-deployment. Migrations **0015–0021 remain unapplied to live databases**; Production
+deployment. Migrations **0015–0022 remain unapplied to live databases**; Production
 was not changed by this work.
 
 ## What changed
@@ -618,3 +618,8 @@ required explicit comparison with newer saved research. At 320×568, the edit
 and transfer popups fit without horizontal overflow and kept actions visible;
 an offline MLS entry remained editable and copyable. All browser records were
 synthetic, isolated and reset on reload.
+
+
+## Showing planner — current local update (2026-11-02)
+
+The internal [Showing Planner](./SHOWINGS.md) connects privately saved MLS properties to contact appointments, a full-page agenda and an upcoming-showings card on Home. Confirmed visits support private feedback and an optional original-list review update. The separate follow-up step uses the contact’s existing Next Action editor. See the dedicated document for scope, concurrency and local verification details.

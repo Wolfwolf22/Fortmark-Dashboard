@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { createLocalContactDb } from "./helpers/contact-test-db.ts";
-import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, propertyLists, contacts, dashboardUsers, professionalProfiles, transactionParties, transactions } from "../lib/db/schema.ts";
+import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, propertyLists, showings, contacts, dashboardUsers, professionalProfiles, transactionParties, transactions, type ShowingRow } from "../lib/db/schema.ts";
 import { createContact, getContact, contactSnapshot, listContactsPage, changeStage, type Ctx } from "../lib/contacts/service.ts";
 import { createContactSchema } from "../lib/contacts/domain.ts";
 import { addNote, listNotes } from "../lib/contacts/notes-service.ts";
@@ -224,5 +224,70 @@ try {
   const researchRaceResult = await mergeContacts(ctx, researchRace, NOW); db.batch = baseBatch;
   check("research edited after merge preflight invalidates its atomic snapshot", !researchRaceResult.ok && researchRaceResult.reason === "conflict");
   check("refused merge retains the newer private note and review status", (await db.select().from(contactProperties).where(eq(contactProperties.id, propertyIds[0])))[0]?.notes === "Research updated while merging" && !(await db.select().from(contacts).where(eq(contacts.id, propertyC)))[0]?.mergedIntoContactId);
+
+  const showingA = await make("Showing primary"), showingB = await make("Showing source");
+  async function showing(contactId: string, values: Partial<typeof showings.$inferInsert> = {}) {
+    const id = randomUUID();
+    await db.insert(showings).values({ id, ownerUserId: OWNER, brokerageKey: "fortmark", contactId,
+      sourcePropertyId: propertyIds[0], dataset: "synthetic", listingId: "common-key", mlsNumber: "A12345678",
+      startsAt: new Date("2026-11-05T15:00:00.000Z"), endsAt: new Date("2026-11-05T16:00:00.000Z"),
+      meetingDetails: "Private showing meeting point", notes: "Private showing notes", createdAt: originalAdded, updatedAt: originalAdded,
+      createRequestId: randomUUID(), createPayloadHash: "a".repeat(64), ...values });
+    return id;
+  }
+  const primaryShowing = await showing(showingA);
+  const completedShowing = await showing(showingB, { status: "completed", visitedAt: new Date("2026-11-05T15:30:00.000Z"),
+    feedbackLikes: "Private showing likes", feedbackConcerns: "Private showing concerns", feedbackSummary: "Private showing summary" });
+  const cancelledShowing = await showing(showingB, { status: "cancelled", cancelReason: "Private showing cancellation", sourcePropertyId: propertyIds[3], listingId: "removed-key", mlsNumber: "RX-12345678" });
+  const privateShowing = await showing(showingB, { ownerUserId: ADMIN, notes: "Another owner's private showing" });
+  const showingIds = [primaryShowing, completedShowing, cancelledShowing, privateShowing];
+  const beforeShowingRows = await db.select().from(showings).where(inArray(showings.id, showingIds));
+  const showingReview = await review(showingA, showingB);
+  check("showing counts include only the caller's own appointments across all statuses", showingReview.primary.counts.showings === 1 && showingReview.duplicate.counts.showings === 2 && showingReview.preservedCounts.showings === 3);
+  const adminShowingReview = await review(showingA, showingB, adminCtx);
+  check("admin contact visibility does not expose another owner's private showing count", adminShowingReview.primary.counts.showings === 0 && adminShowingReview.duplicate.counts.showings === 1 && adminShowingReview.preservedCounts.showings === 1);
+  check("merge review exposes no appointment details, notes or feedback", !/Private showing|Another owner's private/.test(JSON.stringify(showingReview)) && !/Private showing|Another owner's private/.test(JSON.stringify(adminShowingReview)));
+  const showingMergeInput = input(showingReview), showingMerged = await mergeContacts(ctx, showingMergeInput, NOW);
+  check("reviewed contact merge reports its visible retained showing count", showingMerged.ok && showingMerged.value.preservedCounts.showings === 3);
+  const afterShowingRows = await db.select().from(showings).where(inArray(showings.id, showingIds));
+  check("all showing identities, including another owner's private appointment, move to the primary", afterShowingRows.length === showingIds.length && afterShowingRows.every(row => row.contactId === showingA));
+  const showingContent = ({ contactId: _contact, updatedAt: _revision, ...rest }: ShowingRow) => JSON.stringify(rest);
+  check("merge preserves every original appointment field, feedback and creation receipt", afterShowingRows.every(row => showingContent(row) === showingContent(beforeShowingRows.find(original => original.id === row.id)!)));
+  check("reparented appointments advance revision while unchanged primary appointments keep theirs", afterShowingRows.every(row => row.id === primaryShowing ? row.updatedAt.getTime() === originalAdded.getTime() : row.updatedAt.getTime() > originalAdded.getTime()));
+  check("removed source-property reference remains intact on historical showing", afterShowingRows.find(row => row.id === cancelledShowing)?.sourcePropertyId === propertyIds[3]);
+  const showingReceipt = (await db.select().from(contactMergeRequests).where(eq(contactMergeRequests.requestId, showingMergeInput.requestId)))[0];
+  check("merge receipt includes safe visible showing count without appointment content", showingReceipt.result.preservedCounts && (showingReceipt.result.preservedCounts as { showings: number }).showings === 3 && !/Private showing|Another owner's private/.test(JSON.stringify(showingReceipt.result)));
+  check("showing merge retry returns the original safe receipt", (await mergeContacts(ctx, showingMergeInput, NOW)).ok);
+  check("showing merge retry does not duplicate or rewrite appointments", (await db.select().from(showings).where(inArray(showings.id, showingIds))).every(row => JSON.stringify(row) === JSON.stringify(afterShowingRows.find(original => original.id === row.id))));
+  const lateShowing = await showing(showingB);
+  check("a late showing using the old contact ID routes to the canonical contact", (await db.select().from(showings).where(eq(showings.id, lateShowing)))[0]?.contactId === showingA);
+
+  const showingC = await make("Stale showing source");
+  let mutableShowing = "";
+  for (const change of ["created", "edited", "feedback", "cancelled"] as const) {
+    const opening = input(await review(showingA, showingC));
+    if (change === "created") mutableShowing = await showing(showingC);
+    else if (change === "edited") await db.update(showings).set({ meetingDetails: "Changed showing meeting point" }).where(eq(showings.id, mutableShowing));
+    else if (change === "feedback") await db.update(showings).set({ status: "completed", visitedAt: new Date("2026-11-05T15:30:00.000Z"), feedbackSummary: "Newest private showing feedback" }).where(eq(showings.id, mutableShowing));
+    else await db.update(showings).set({ status: "cancelled", visitedAt: null, cancelReason: "New private cancellation" }).where(eq(showings.id, mutableShowing));
+    const result = await mergeContacts(ctx, opening, NOW);
+    check(`showing ${change} invalidates a review even without a parent or showing revision bump`, !result.ok && result.reason === "conflict");
+    check(`stale ${change} review leaves showing and merge receipt untouched`, (await db.select().from(showings).where(eq(showings.id, mutableShowing)))[0]?.contactId === showingC && (await db.select().from(contactMergeRequests).where(eq(contactMergeRequests.requestId, opening.requestId))).length === 0);
+  }
+  const showingRace = input(await review(showingA, showingC)); let showingInjected = false;
+  db.batch = (async statements => {
+    if (!showingInjected) { showingInjected = true; await db.update(showings).set({ feedbackConcerns: "Feedback changed after merge preflight" }).where(eq(showings.id, mutableShowing)); }
+    return baseBatch(statements);
+  }) as typeof db.batch;
+  const showingRaceResult = await mergeContacts(ctx, showingRace, NOW); db.batch = baseBatch;
+  check("showing feedback changed after preflight is rejected by the atomic receipt guard", !showingRaceResult.ok && showingRaceResult.reason === "conflict");
+  check("atomic showing refusal retains the latest feedback on its original contact", (await db.select().from(showings).where(eq(showings.id, mutableShowing)))[0]?.feedbackConcerns === "Feedback changed after merge preflight" && !(await db.select().from(contacts).where(eq(contacts.id, showingC)))[0]?.mergedIntoContactId);
+  const showingRollback = input(await review(showingA, showingC));
+  const beforeShowingRollback = (await db.select().from(showings).where(eq(showings.id, mutableShowing)))[0];
+  await pg.exec("create function reject_showing_merge_test() returns trigger language plpgsql as $$begin if new.safe_metadata->>'event'='contact_merged' then raise exception 'Synthetic showing merge audit failure'; end if; return new; end$$; create trigger reject_showing_merge_test before insert on audit_events for each row execute function reject_showing_merge_test()");
+  const showingRollbackResult = await mergeContacts(ctx, showingRollback, NOW);
+  await pg.exec("drop trigger reject_showing_merge_test on audit_events; drop function reject_showing_merge_test()");
+  check("failed merge audit rolls back showing reparent and revision together", !showingRollbackResult.ok && showingRollbackResult.reason === "unavailable" && JSON.stringify((await db.select().from(showings).where(eq(showings.id, mutableShowing)))[0]) === JSON.stringify(beforeShowingRollback));
+  check("failed showing transfer leaves no merge receipt or archived alias", (await db.select().from(contactMergeRequests).where(eq(contactMergeRequests.requestId, showingRollback.requestId))).length === 0 && !(await db.select().from(contacts).where(eq(contacts.id, showingC)))[0]?.mergedIntoContactId);
   console.log(`\n${passed}/${passed} contact merge checks passed (ephemeral PostgreSQL; no live access)`);
 } finally { await pg.close(); }

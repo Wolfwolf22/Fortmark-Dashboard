@@ -350,3 +350,41 @@ resets the rehearsal. All interactive research and transfer data remains in memo
 ```sh
 node --experimental-strip-types --no-warnings tools/design-preview/test-property-research-session.mjs
 ```
+
+## Showing planner and confirmed visits
+
+The actual `/showings` agenda, saved-property Plan showing dialog, showing
+details and subsequent contact Next action view render in this harness. The
+production showing client adapter is used; its source check and requests are
+answered by a closed, memory-only transport. No request falls through to a live
+service. Interactive samples can create, edit, reschedule, cancel or complete a
+synthetic plan. Records remains read-only, and reload resets every session change.
+
+Open `/preview?view=%2Fshowings&scenario=interactive`, or use the responsive
+wrapper at `/responsive?width=320&height=568&view=%2Fshowings&scenario=interactive`.
+Sample Showing `84000000-0000-4000-8000-000000000001` is scheduled tomorrow at
+10:00 New York time. The past unrecorded plan ending `0005` retains its offline
+MLS reference and can be completed with an explicit actual visit time. A separate
+completed visit and cancelled plan demonstrate their distinct states. Another
+owner's showing is seeded but never appears in this actor's private agenda.
+
+Contact pickers and linked defaults project stable synthetic UUID aliases in
+property-list/showing routes to satisfy the unchanged production input schema.
+The same underlying records retain their readable Contacts links. Schedule
+windows, overlap rules, request receipts and revision checks use production pure
+contracts. Agenda next actions cover the actor's own contacts regardless of the
+action assignee, with independent counts and pagination from showing plans.
+
+Only confirmed completion records one generic Showing completed activity at the
+explicit visit time and advances the contact's latest actual interaction. Private
+feedback, planning notes, MLS identifiers and meeting instructions never enter
+that contact/Home event. Existing next actions and reminders stay unchanged until
+the separate follow-up form is saved. Optional source-property status updates
+require the reviewed active membership revision and preserve its notes. Missing
+or removed property details do not erase a showing or prevent visit recording
+without an optional research update. Showing children participate in contact
+merge fingerprints and move to the canonical contact while retaining their IDs.
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-showing-session.mjs
+```

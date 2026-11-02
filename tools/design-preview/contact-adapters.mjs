@@ -1,6 +1,6 @@
 import { applyQuery, snapshotOf } from "../../lib/contacts/windows.ts";
 import { contactAgents } from "./contact-fixtures.mjs";
-import { allPreviewContacts } from "./import-merge-fixtures.mjs";
+import { allPreviewContacts, previewPublicRecordId, previewRecordId } from "./import-merge-fixtures.mjs";
 import { visualTransactions } from "./visual-fixtures.mjs";
 import { announceReadOnly } from "./read-only.mjs";
 import { HISTORY_PAGE_SIZE, decodeHistoryCursor, historyPage } from "../../lib/contacts/history.ts";
@@ -92,7 +92,7 @@ function actionAssignees(contact) {
   const eligible = new Set([contact.assignedAgentId, SAMPLE_ACTOR.userId]);
   return copy(contactAgents.filter(agent => eligible.has(agent.id)));
 }
-export async function getNextActionAssignees(id) { return actionAssignees(rows().find(item => item.id === id)); }
+export async function getNextActionAssignees(id) { return actionAssignees(readSampleContact(id)); }
 function actionEvent(id, eventName, action, at, summary = "") {
   const safeMetadata = { event: eventName, actionId: action.id, kind: action.kind, purpose: action.purpose, dueAt: action.dueAt, assigneeId: action.assigneeId,
     ...(eventName === "next_action_completed" ? { outcome: summary } : {}),
@@ -101,6 +101,7 @@ function actionEvent(id, eventName, action, at, summary = "") {
   items.forEach(item => appendSampleTimeline(id, item));
 }
 export async function updateNextAction(id, input) {
+  id = previewRecordId(id);
   const fixture = allPreviewContacts.find(item => item.id === id);
   if (scenario() === "conflict" && fixture?.recordSource === "db" && !remoteActionReads.has(id)) {
     remoteActionReads.add(id);
@@ -187,7 +188,12 @@ export async function updateNeed(id, needId, patch) {
   return { need: copy(need), changed: plan.changed };
 }
 export async function getLeadSource() { return "db"; }
-export async function getLead(id) { const contact = readSampleContact(id); return copy(contact ? { ...remoteProjection(contact), ...(contact.id !== id ? { requestedContactId: id } : {}) } : undefined); }
+export async function getLead(id) {
+  const contact = readSampleContact(id);
+  const route = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("view") || "";
+  const pickerAlias = contact && previewRecordId(id) !== id && /^\/(showings|property-lists)(\?|$)/.test(route);
+  return copy(contact ? { ...remoteProjection(contact), ...(pickerAlias ? { id: previewPublicRecordId(contact.id) } : contact.id !== id ? { requestedContactId: id } : {}) } : undefined);
+}
 export async function getLeads(filters = {}, range) {
   const result = rows().filter(contact => {
     if (filters.stage?.length && !filters.stage.includes(contact.stage)) return false;
@@ -212,7 +218,13 @@ export async function getLeadsPage(query) {
     failedOnce = true;
     throw new LeadsError("preview_first_read_unavailable", 503);
   }
-  return copy(applyQuery(rows(), query, new Date(), SAMPLE_ACTOR.userId));
+  // Production showing forms validate UUIDs before their adapter is called.
+  // Project the existing stable aliases only in these isolated picker routes;
+  // contact pages and old readable sample links keep their original identity.
+  const route = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("view") || "";
+  const picker = /^\/(showings|property-lists)(\?|$)/.test(route);
+  const contacts = picker ? rows().filter(person => person.recordSource === "db").map(person => ({ ...person, id: previewPublicRecordId(person.id) })) : rows();
+  return copy(applyQuery(contacts, query, new Date(), SAMPLE_ACTOR.userId));
 }
 export async function getLeadSnapshot() { return copy(snapshotOf(rows(), new Date(), SAMPLE_ACTOR.userId)); }
 export async function getTimeline(id) { return copy(rows().some(contact => contact.id === id) ? readSampleTimeline(id) : []); }

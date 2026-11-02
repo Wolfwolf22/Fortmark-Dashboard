@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils";
 import { WIDGETS } from "./widget-registry";
 import { useHomeMetrics } from "./metrics-provider";
 import { DailyBrief } from "./daily-brief";
+import { UpcomingShowings } from "./upcoming-showings";
 import { spanFor, visibleWidgets } from "./widget-visibility";
 
 // `grid-flow-row-dense` lets a later, narrower module fill a gap a reordered
@@ -129,6 +130,7 @@ export function BentoGrid() {
   return (
     <>
       <DailyBrief />
+      <UpcomingShowings />
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-base font-semibold tracking-[-0.02em]">Your workspace</h2>
         <p className="hidden text-xs text-muted-foreground sm:block">Priorities, activity and production</p>

@@ -6,6 +6,8 @@ import { ACTIVE_CLIENT_STAGES, LIFECYCLE_STAGES, OPEN_PIPELINE_STAGES } from "..
 import { effectiveFollowUpStatus } from "../../lib/contacts/follow-up.ts";
 import { nextActionAttentionFields, attentionIsOverdue, compareAttention } from "../../lib/metrics/attention.ts";
 import { businessDayKey, dayDiff } from "../../lib/metrics/business-day.ts";
+import { showingTransport } from "./showing-transport.mjs";
+import { getSampleShowingActivity } from "./showing-model.mjs";
 const previewNow = contactFixtureNow;
 const monthStart = new Date(Date.UTC(previewNow.getUTCFullYear(), previewNow.getUTCMonth(), 1)).toISOString().slice(0, 10);
 const monthly = Array.from({ length: 12 }, (_, index) => {
@@ -90,6 +92,7 @@ function setContactGroups(target, contacts, at) {
   target.attention.data = { items: attention, overdueCount: attention.filter(attentionIsOverdue).length, soonCount: attention.filter(item => !attentionIsOverdue(item) && item.daysAway <= 7).length };
 }
 setContactGroups(metrics, readSampleContacts(), previewNow);
+metrics.activity.data = [...getSampleShowingActivity(), ...metrics.activity.data].sort((a, b) => b.at.localeCompare(a.at));
 
 /** A fresh view of the same ephemeral session used by all contact reads. */
 export function getPreviewMetrics(at = new Date()) {
@@ -97,7 +100,7 @@ export function getPreviewMetrics(at = new Date()) {
   result.generatedAt = at.toISOString();
   setContactGroups(result, readSampleContacts(), at);
   // Match the production Home feed's eight most recent business events.
-  result.activity.data = [...readSampleActionActivity(), ...result.activity.data]
+  result.activity.data = [...new Map([...readSampleActionActivity(), ...getSampleShowingActivity(), ...result.activity.data].map(item => [item.id, item])).values()]
     .sort((a, b) => b.at.localeCompare(a.at))
     .slice(0, 8);
   return result;
@@ -109,10 +112,12 @@ const json = (body, status = 200) => Promise.resolve(new Response(JSON.stringify
 
 export function installPreviewTransport() {
   // No fallback to the browser's real fetch. This preview cannot reach APIs.
-  window.fetch = (input, init = {}) => {
+  window.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === "string" ? input : input.url, window.location.origin);
     if (url.origin !== window.location.origin) return json({ error: "External requests are disabled in the design preview." }, 403);
     const path = url.pathname.replace(/^\/dashboard/, "");
+    const showingResponse = await showingTransport(path, url, input, init);
+    if (showingResponse) return showingResponse;
     if ((init.method || "GET").toUpperCase() !== "GET") {
       if (path === "/api/search") return json({ query: "", hits: [], providers: { contact: "available", transaction: "available", listing: "not_configured", agent: "available" }, truncated: false });
       return json({ error: "Design preview: changes are disabled." }, 403);

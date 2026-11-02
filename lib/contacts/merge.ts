@@ -18,7 +18,7 @@ export interface MergeValues {
   email: string; phone: string; company: string; source: LeadSource; stage: LeadStage;
   birthday: Birthday | null; about: string; personalDetails: { label: string; value: string }[]; legacyNotes: string;
 }
-export interface MergeCounts { notes: number; needs: number; activities: number; opportunities: number; transactions: number; properties?: number; propertyLists?: number }
+export interface MergeCounts { notes: number; needs: number; activities: number; opportunities: number; transactions: number; properties?: number; propertyLists?: number; showings?: number }
 export interface MergeReviewContact {
   id: string; name: string; updatedAt: string; historyFingerprint: string;
   values: MergeValues; nextAction: NextAction | null; nextFollowUpDate?: string;
