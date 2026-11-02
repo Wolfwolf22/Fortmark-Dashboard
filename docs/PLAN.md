@@ -167,3 +167,15 @@ Walked the brief line by line; issues caught at plan time and their resolutions:
    Documents, Reports, Settings+Login+middleware, AI, Messages.
 3. Verification: `tsc --noEmit`, `next build`, brand/interaction critics against the
    Definition of done, fixes, README, commit, push.
+
+## 7. Deferred product ideas
+
+### Client presentations — pinned for later (2026-11-02)
+
+Deferred at the user's request. Revisit presentation generation through an AI
+tool or MCP integration when the user is ready; it is outside the current build.
+
+The saved concept is a branded presentation from selected properties in a curated
+list, with a preview and controlled sharing. Private research notes and review
+statuses stay internal. Client feedback and viewing requests are possible later
+extensions. Tool selection and the integration approach remain open.
