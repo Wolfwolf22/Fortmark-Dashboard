@@ -44,22 +44,33 @@ export function createTourRoutingProvider(env: Environment = process.env, depend
       const checkedAt = now();
       if (stops.length < 2 || stops.length > 8 || stops.some(stop => !validTourCoordinates(stop.coordinates)) || !Number.isFinite(Date.parse(options.startsAt))
         || Date.parse(options.startsAt) < checkedAt.getTime() || Date.parse(options.startsAt) > checkedAt.getTime() + 730 * 86_400_000) return { ok: false, reason: "invalid_route" };
+      const originAddress = options.originAddress?.trim() ?? "", endAddress = options.endAddress?.trim() ?? "";
+      const endMode = options.endMode ?? (options.returnToStart ? "return_to_start" : "last_property");
+      if (!["last_property", "return_to_start", "address"].includes(endMode) || originAddress.length > 500 || endAddress.length > 500
+        || originAddress.includes("\u0000") || endAddress.includes("\u0000") || endMode === "address" && !endAddress) return { ok: false, reason: "invalid_route" };
+      const hasOrigin = Boolean(originAddress), hasDestination = endMode === "address" || endMode === "return_to_start" && hasOrigin;
+      const returnsToFirst = endMode === "return_to_start" && !hasOrigin;
       // Validate all local preferences before making a billable request.
       const dummy = stops.map(() => stops.map(() => ({ durationSeconds: 0, distanceMeters: 0 })));
-      if (!optimizeTour(stops, dummy, { ...options, respectAppointments: false }).ok) return { ok: false, reason: "invalid_route" };
+      if (!optimizeTour(stops, dummy, { ...options, returnToStart: returnsToFirst, respectAppointments: false }).ok) return { ok: false, reason: "invalid_route" };
       const waypoint = (stop: TourRoutingStop) => ({ location: { latLng: { latitude: stop.coordinates.lat, longitude: stop.coordinates.lng } } });
+      type Waypoint = ReturnType<typeof waypoint> | { address: string };
+      const points: Waypoint[] = stops.map(waypoint);
+      const originIndex = hasOrigin ? points.push({ address: originAddress }) - 1 : -1;
+      const destinationIndex = endMode === "address" ? points.push({ address: endAddress }) - 1 : endMode === "return_to_start" && hasOrigin ? originIndex : -1;
+      const pointCount = points.length;
       const departureTime = new Date(options.startsAt).toISOString();
       try {
-        // IDs, client names, MLS identifiers and private text never leave this adapter.
-        const data = await post(MATRIX_URL, { origins: stops.map(stop => ({ waypoint: waypoint(stop) })), destinations: stops.map(stop => ({ waypoint: waypoint(stop) })), travelMode: "DRIVE", routingPreference: "TRAFFIC_AWARE", departureTime }, "originIndex,destinationIndex,status,condition,distanceMeters,duration");
-        if (!Array.isArray(data) || data.length > stops.length * stops.length) return { ok: false, reason: "unavailable" };
-        const matrix: TourMatrixCell[][] = stops.map(() => stops.map(() => ({ durationSeconds: null, distanceMeters: null })));
+        // Only coordinates and user-entered routing addresses leave this adapter; no contact, MLS or note data.
+        const data = await post(MATRIX_URL, { origins: points.map(point => ({ waypoint: point })), destinations: points.map(point => ({ waypoint: point })), travelMode: "DRIVE", routingPreference: "TRAFFIC_AWARE", departureTime }, "originIndex,destinationIndex,status,condition,distanceMeters,duration");
+        if (!Array.isArray(data) || data.length > pointCount * pointCount) return { ok: false, reason: "unavailable" };
+        const matrix: TourMatrixCell[][] = points.map(() => points.map(() => ({ durationSeconds: null, distanceMeters: null })));
         const seen = new Set<string>();
         for (const element of data) {
           if (!object(element)) return { ok: false, reason: "unavailable" };
           // Protocol-buffer JSON may omit zero-valued indexes and distances.
           const from = element.originIndex ?? 0, to = element.destinationIndex ?? 0;
-          if (typeof from !== "number" || typeof to !== "number" || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from >= stops.length || to >= stops.length || seen.has(`${from}:${to}`)) return { ok: false, reason: "unavailable" };
+          if (typeof from !== "number" || typeof to !== "number" || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from >= pointCount || to >= pointCount || seen.has(`${from}:${to}`)) return { ok: false, reason: "unavailable" };
           seen.add(`${from}:${to}`);
           if (element.status !== undefined && (!object(element.status) || element.status.code !== undefined && element.status.code !== 0)) continue;
           if (element.condition !== "ROUTE_EXISTS") continue;
@@ -67,20 +78,39 @@ export function createTourRoutingProvider(env: Environment = process.env, depend
           if (seconds === null || typeof meters !== "number" || !Number.isFinite(meters) || meters < 0 || meters > 40_000_000 || from !== to && seconds > 0 && meters === 0) return { ok: false, reason: "unavailable" };
           matrix[from][to] = { durationSeconds: seconds, distanceMeters: meters };
         }
-        if (seen.size !== stops.length * stops.length) return { ok: false, reason: "unavailable" };
-        const optimized = optimizeTour(stops, matrix, options); if (!optimized.ok) return optimized;
+        if (seen.size !== pointCount * pointCount) return { ok: false, reason: "unavailable" };
+        const optimized = optimizeTour(stops, matrix.slice(0, stops.length).map(row => row.slice(0, stops.length)), {
+          ...options, returnToStart: returnsToFirst,
+          ...(hasOrigin ? { originTravel: matrix[originIndex].slice(0, stops.length) } : {}),
+          ...(hasDestination ? { endTravel: stops.map((_, index) => matrix[index][destinationIndex]) } : {}),
+        }); if (!optimized.ok) return optimized;
         const ordered = optimized.value.orderedPropertyIds.map(id => stops.find(stop => stop.propertyId === id)!);
-        const routeStops = options.returnToStart ? [...ordered, ordered[0]] : ordered;
+        const routePoints: Waypoint[] = [...(hasOrigin ? [points[originIndex]] : []), ...ordered.map(waypoint), ...(hasDestination ? [points[destinationIndex]] : returnsToFirst ? [waypoint(ordered[0])] : [])];
+        let originPoint: { lat: number; lng: number } | undefined, destinationPoint: { lat: number; lng: number } | undefined;
         let mapPolyline: string | undefined;
         const warnings = [...optimized.value.warnings];
         try {
-          const route = await post(ROUTE_URL, { origin: waypoint(routeStops[0]), destination: waypoint(routeStops[routeStops.length - 1]), intermediates: routeStops.slice(1, -1).map(waypoint), travelMode: "DRIVE", routingPreference: "TRAFFIC_AWARE", departureTime, polylineQuality: "OVERVIEW", polylineEncoding: "ENCODED_POLYLINE" }, "routes.polyline.encodedPolyline");
+          const route = await post(ROUTE_URL, { origin: routePoints[0], destination: routePoints[routePoints.length - 1], intermediates: routePoints.slice(1, -1), travelMode: "DRIVE", routingPreference: "TRAFFIC_AWARE", departureTime, polylineQuality: "OVERVIEW", polylineEncoding: "ENCODED_POLYLINE" }, "routes.polyline.encodedPolyline,routes.legs.startLocation,routes.legs.endLocation,geocodingResults");
           const routes = object(route) && Array.isArray(route.routes) ? route.routes : [];
           const first = routes[0], polyline = object(first) && object(first.polyline) ? first.polyline.encodedPolyline : undefined;
+          if (hasOrigin || hasDestination) {
+            const geo = object(route) && object(route.geocodingResults) ? route.geocodingResults : null;
+            const exact = (value: unknown) => object(value) && value.partialMatch !== true && (value.partialMatch === undefined || value.partialMatch === false)
+              && (value.geocoderStatus === undefined || object(value.geocoderStatus) && (value.geocoderStatus.code === undefined || value.geocoderStatus.code === 0));
+            const legs = object(first) && Array.isArray(first.legs) ? first.legs : [];
+            const coordinate = (leg: unknown, field: string) => {
+              const location = object(leg) && object(leg[field]) ? leg[field] : null;
+              const point = object(location) && object(location.latLng) ? { lat: location.latLng.latitude ?? 0, lng: location.latLng.longitude ?? 0 } : null;
+              return validTourCoordinates(point) ? point : undefined;
+            };
+            if (hasOrigin) originPoint = coordinate(legs[0], "startLocation");
+            if (hasDestination) destinationPoint = coordinate(legs[legs.length - 1], "endLocation");
+            if (!geo || hasOrigin && (!exact(geo.origin) || !originPoint) || hasDestination && (!exact(geo.destination) || !destinationPoint)) return { ok: false, reason: "unresolved_endpoint" };
+          }
           if (typeof polyline === "string" && polyline.length > 0 && polyline.length <= 100_000 && /^[\x3f-\x7e]+$/.test(polyline)) mapPolyline = polyline;
           else warnings.push("The road line is unavailable. Driving estimates are still shown.");
-        } catch { warnings.push("The road line could not be refreshed. Driving estimates are still shown."); }
-        return { ok: true, value: { ...optimized.value, warnings, ...(mapPolyline ? { mapPolyline } : {}), source: "google", computedAt: checkedAt.toISOString(), trafficAsOf: checkedAt.toISOString(), trafficLabel: "Road travel estimates for the selected first-visit time. Later traffic can change; refresh before leaving." } };
+        } catch { if (hasOrigin || hasDestination) return { ok: false, reason: "unavailable" }; warnings.push("The road line could not be refreshed. Driving estimates are still shown."); }
+        return { ok: true, value: { ...optimized.value, warnings, ...(originPoint ? { originPoint } : {}), ...(destinationPoint ? { destinationPoint } : {}), ...(mapPolyline ? { mapPolyline } : {}), source: "google", computedAt: checkedAt.toISOString(), trafficAsOf: checkedAt.toISOString(), trafficLabel: "Road travel estimates for the selected departure time. Later traffic can change; refresh before leaving." } };
       } catch { return { ok: false, reason: "unavailable" }; }
     },
   };

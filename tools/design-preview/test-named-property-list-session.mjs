@@ -18,8 +18,8 @@ function mergeInput(review) { return { requestId: crypto.randomUUID(), primaryId
 let groups = 0;
 
 let index = await api.getPropertyLists();
-assert.equal(index.total, 8); assert.equal(index.pageSize, 12);
-assert.equal(index.items.filter(list => list.contactId === null).length, 2);
+assert.equal(index.total, 9); assert.equal(index.pageSize, 12);
+assert.equal(index.items.filter(list => list.contactId === null).length, 3);
 assert(!JSON.stringify(index).includes("Sample colleague private research"));
 const dueLists = await api.getPropertyLists({ contactId: dueId });
 assert.equal(dueLists.total, 3);
@@ -49,7 +49,7 @@ const [personal, replay] = await Promise.all([api.createPropertyList(create), ap
 assert.equal(personal.id, replay.id); assert.equal(personal.name, "Synthetic personal research");
 assert.equal(personal.contactId, null); assert.equal(personal.propertyCount, 0);
 assert.equal(useDataVersion.getState().version, version + 1);
-assert.equal((await api.getPropertyLists()).total, 9);
+assert.equal((await api.getPropertyLists()).total, 10);
 assert.equal((await api.createPropertyList({ ...create, name: "Synthetic personal research" })).id, personal.id);
 await denied(() => api.createPropertyList({ ...create, name: "Changed receipt payload" }), 409, "request_conflict"); groups++;
 
@@ -107,8 +107,9 @@ assert.equal((await api.getPropertyListProperties(investmentId)).total, 1); grou
 for (let index = 0; index < 13; index++) await api.createPropertyList({ requestId: crypto.randomUUID(), name: `Synthetic paging list ${index + 1}` });
 const firstPage = await api.getPropertyLists({ page: 1 }), secondPage = await api.getPropertyLists({ page: 2 });
 assert.equal(firstPage.items.length, 12); assert(firstPage.total > 12);
-assert.equal(new Set([...firstPage.items, ...secondPage.items].map(list => list.id)).size, firstPage.total);
-assert.equal((await api.getPropertyLists({ page: 99 })).page, 2);
+const pageCount = Math.ceil(firstPage.total / firstPage.pageSize), remainingPages = await Promise.all(Array.from({ length: pageCount - 2 }, (_, index) => api.getPropertyLists({ page: index + 3 })));
+assert.equal(new Set([...firstPage.items, ...secondPage.items, ...remainingPages.flatMap(page => page.items)].map(list => list.id)).size, firstPage.total);
+assert.equal((await api.getPropertyLists({ page: 99 })).page, pageCount);
 const historyList = readSampleDefaultPropertyList("sample-long-history");
 assert.equal((await api.getPropertyListProperties(historyList.id, 1)).items.length, 12);
 assert.equal((await api.getPropertyListProperties(historyList.id, 2)).items.length, 1); groups++;
@@ -149,7 +150,7 @@ assert.equal((await window.fetch("/api/property-lists", { method: "POST" })).sta
 assert.equal((await window.fetch("https://example.invalid/property-lists")).status, 403);
 assert.equal(immutable(), original);
 mode("records");
-assert.equal((await api.getPropertyLists()).total, 8);
+assert.equal((await api.getPropertyLists()).total, 9);
 assert.equal((await api.getPropertyLists({ contactId: dueId })).total, 3);
 await denied(() => api.getPropertyList(personal.id), 404);
 mode("interactive");

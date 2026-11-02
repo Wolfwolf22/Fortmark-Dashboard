@@ -2,7 +2,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, propertyLists, showings, contacts, transactionParties, transactions, type ContactRow } from "../db/schema.ts";
+import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, propertyLists, savedShowingTours, savedTourStops, showings, contacts, transactionParties, transactions, type ContactRow } from "../db/schema.ts";
 import { visibleTo as visibleTransactions } from "../transactions/service.ts";
 import { canWrite, displayName } from "./domain.ts";
 import { agentNames, getContact, type Ctx, type ServiceFailure, type ServiceResult } from "./service.ts";
@@ -31,6 +31,8 @@ function fingerprintSql(ctx: Ctx, id: string): SQL<string> {
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from contact_opportunities n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from property_lists n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from contact_properties n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
+    coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from saved_showing_tours n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
+    coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from saved_tour_stops n inner join saved_showing_tours t on t.id=n.tour_id where t.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from showings n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from transaction_parties n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from audit_events n where n.safe_metadata->>'contactId' in (${contactFamilyIds(ctx.actor, id)})),'[]'::jsonb)::text
@@ -38,7 +40,7 @@ function fingerprintSql(ctx: Ctx, id: string): SQL<string> {
 }
 
 async function facts(ctx: Ctx, id: string) {
-  const result = await ctx.db.execute<{ notes: number; needs: number; activities: number; opportunities: number; showings: number; fingerprint: string }>(sql`select
+  const result = await ctx.db.execute<{ notes: number; needs: number; activities: number; opportunities: number; showings: number; savedTours: number; fingerprint: string }>(sql`select
     (select count(*)::int from ${contactNotes} where ${contactNotes.contactId}=${id}::uuid) as notes,
     (select count(*)::int from ${contactNeeds} where ${contactNeeds.contactId}=${id}::uuid) as needs,
     (select count(*)::int from ${contactActivities} where ${contactActivities.contactId}=${id}::uuid) as activities,
@@ -46,6 +48,9 @@ async function facts(ctx: Ctx, id: string) {
     (select count(*)::int from ${showings} inner join ${contacts} on ${contacts.id}=${showings.contactId}
       where ${showings.contactId}=${id}::uuid and ${showings.ownerUserId}=${ctx.actor.userId}::uuid
         and ${showings.brokerageKey}=${ctx.actor.brokerageKey} and ${visibleTo(ctx.actor)}) as showings,
+    (select count(*)::int from ${savedShowingTours} inner join ${contacts} on ${contacts.id}=${savedShowingTours.contactId}
+      where ${savedShowingTours.contactId}=${id}::uuid and ${savedShowingTours.ownerUserId}=${ctx.actor.userId}::uuid
+        and ${savedShowingTours.brokerageKey}=${ctx.actor.brokerageKey} and ${visibleTo(ctx.actor)}) as "savedTours",
     ${fingerprintSql(ctx, id)} as fingerprint`);
   const linked = await ctx.db.select({ id: transactions.id }).from(transactionParties).innerJoin(transactions, eq(transactionParties.transactionId, transactions.id))
     .where(and(eq(transactionParties.contactId, id), visibleTransactions(ctx.actor)));
@@ -59,7 +64,7 @@ async function facts(ctx: Ctx, id: string) {
   const propertyKeys = saved.map(row => JSON.stringify([row.listId, row.dataset, row.listingId]));
   const row = result.rows[0];
   return { historyFingerprint: row.fingerprint, transactionIds, propertyKeys,
-    counts: { notes: Number(row.notes), needs: Number(row.needs), activities: Number(row.activities), opportunities: Number(row.opportunities), transactions: transactionIds.length, properties: propertyKeys.length, propertyLists: lists.length, showings: Number(row.showings) } as MergeCounts };
+    counts: { notes: Number(row.notes), needs: Number(row.needs), activities: Number(row.activities), opportunities: Number(row.opportunities), transactions: transactionIds.length, properties: propertyKeys.length, propertyLists: lists.length, showings: Number(row.showings), savedTours: Number(row.savedTours) } as MergeCounts };
 }
 
 async function rowsForMerge(ctx: Ctx, primaryId: string, duplicateId: string): Promise<ServiceResult<{ primary: ContactRow; duplicate: ContactRow }>> {
@@ -138,6 +143,8 @@ export async function mergeContacts(ctx: Ctx, input: unknown, now = new Date()):
     ctx.db.select({ id: contactOpportunities.id }).from(contactOpportunities).where(inArray(contactOpportunities.contactId, ids)).orderBy(contactOpportunities.id).for("update"),
     ctx.db.select({ id: transactionParties.id }).from(transactionParties).where(inArray(transactionParties.contactId, ids)).orderBy(transactionParties.id).for("update"),
     ctx.db.select({ id: contactProperties.id }).from(contactProperties).where(inArray(contactProperties.contactId, ids)).orderBy(contactProperties.id).for("update"),
+    ctx.db.select({ id: savedShowingTours.id }).from(savedShowingTours).where(inArray(savedShowingTours.contactId, ids)).orderBy(savedShowingTours.id).for("update"),
+    ctx.db.select({ id: savedTourStops.id }).from(savedTourStops).where(sql`${savedTourStops.tourId} in (select id from ${savedShowingTours} where ${inArray(savedShowingTours.contactId, ids)})`).orderBy(savedTourStops.id).for("update"),
     ctx.db.select({ id: showings.id }).from(showings).where(inArray(showings.contactId, ids)).orderBy(showings.id).for("update"),
     // A refused snapshot violates this receipt's NOT NULL guard and aborts all writes.
     ctx.db.insert(contactMergeRequests).values({ id: receiptId, actorUserId: ctx.actor.userId, requestId: d.requestId, payloadHash,
@@ -152,6 +159,9 @@ export async function mergeContacts(ctx: Ctx, input: unknown, now = new Date()):
     // saved to two different lists must remain a member of both after a contact merge.
     ctx.db.update(propertyLists).set({ contactId: d.primaryId }).where(eq(propertyLists.contactId, d.duplicateId)),
     ctx.db.update(contactProperties).set({ contactId: d.primaryId }).where(eq(contactProperties.contactId, d.duplicateId)),
+    // Preserve private tour ownership, preferences, stop IDs and receipts. A revised
+    // association invalidates any outstanding signed scheduling review.
+    ctx.db.update(savedShowingTours).set({ contactId: d.primaryId, updatedAt: sql`greatest(date_trunc('milliseconds',${savedShowingTours.updatedAt}) + interval '1 millisecond',${now.toISOString()}::timestamptz)` }).where(eq(savedShowingTours.contactId, d.duplicateId)),
     // Keep all private appointments, regardless of who owns them. Association
     // changes advance the revision so an older appointment editor must review.
     ctx.db.update(showings).set({ contactId: d.primaryId, updatedAt: sql`greatest(date_trunc('milliseconds',${showings.updatedAt}) + interval '1 millisecond',${now.toISOString()}::timestamptz)` }).where(eq(showings.contactId, d.duplicateId)),

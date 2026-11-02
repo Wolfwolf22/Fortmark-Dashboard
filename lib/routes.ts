@@ -23,6 +23,7 @@ export const ROUTES = {
   listing: (id: string) => `/listings/${id}`,
   contacts: "/contacts",
   showings: "/showings",
+  showingTours: "/showing-tours",
   tools: "/tools",
   calendar: "/calendar",
   documents: "/documents",

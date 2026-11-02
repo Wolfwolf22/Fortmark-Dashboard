@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { createLocalContactDb } from "./helpers/contact-test-db.ts";
-import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, propertyLists, showings, contacts, dashboardUsers, professionalProfiles, transactionParties, transactions, type ShowingRow } from "../lib/db/schema.ts";
+import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, propertyLists, savedShowingTours, savedTourStops, showings, contacts, dashboardUsers, professionalProfiles, transactionParties, transactions, type ShowingRow } from "../lib/db/schema.ts";
 import { createContact, getContact, contactSnapshot, listContactsPage, changeStage, type Ctx } from "../lib/contacts/service.ts";
 import { createContactSchema } from "../lib/contacts/domain.ts";
 import { addNote, listNotes } from "../lib/contacts/notes-service.ts";
@@ -289,5 +289,47 @@ try {
   await pg.exec("drop trigger reject_showing_merge_test on audit_events; drop function reject_showing_merge_test()");
   check("failed merge audit rolls back showing reparent and revision together", !showingRollbackResult.ok && showingRollbackResult.reason === "unavailable" && JSON.stringify((await db.select().from(showings).where(eq(showings.id, mutableShowing)))[0]) === JSON.stringify(beforeShowingRollback));
   check("failed showing transfer leaves no merge receipt or archived alias", (await db.select().from(contactMergeRequests).where(eq(contactMergeRequests.requestId, showingRollback.requestId))).length === 0 && !(await db.select().from(contacts).where(eq(contacts.id, showingC)))[0]?.mergedIntoContactId);
+
+  const tourA = await make("Tour primary"), tourB = await make("Tour duplicate"), tourC = await make("Tour racing source");
+  async function savedTour(contactId: string, ownerUserId = OWNER) {
+    const listId = randomUUID(), id = randomUUID(), propertyIds = [randomUUID(), randomUUID()];
+    await db.insert(propertyLists).values({ id: listId, ownerUserId, brokerageKey: "fortmark", contactId, name: "Private tour source" });
+    await db.insert(contactProperties).values(propertyIds.map((id, index) => ({ id, listId, contactId, dataset: "synthetic", listingId: `tour-source-${id}`, mlsNumber: `A1234567${index}`, createdByUserId: ownerUserId })));
+    await db.insert(savedShowingTours).values({ id, ownerUserId, brokerageKey: "fortmark", contactId, sourceListId: listId, name: "Private saved tour", notes: "Private tour notes", originAddress: "Private office address", startsAt: new Date("2026-11-07T14:00:00Z"), createdAt: originalAdded, updatedAt: originalAdded, createRequestId: randomUUID(), createPayloadHash: "b".repeat(64) });
+    await db.insert(savedTourStops).values(propertyIds.map((propertyId, position) => ({ tourId: id, propertyId, position, visitMinutes: 30 })));
+    return id;
+  }
+  const primaryTour = await savedTour(tourA), duplicateTour = await savedTour(tourB), hiddenTour = await savedTour(tourB, ADMIN);
+  const beforeTours = await db.select().from(savedShowingTours).where(inArray(savedShowingTours.id, [primaryTour, duplicateTour, hiddenTour]));
+  const beforeTourStops = await db.select().from(savedTourStops).where(inArray(savedTourStops.tourId, [primaryTour, duplicateTour, hiddenTour]));
+  const tourReview = await review(tourA, tourB), adminTourReview = await review(tourA, tourB, adminCtx);
+  check("merge counts only the caller's saved tours even for an administrator", tourReview.preservedCounts.savedTours === 2 && adminTourReview.preservedCounts.savedTours === 1);
+  check("merge review hides tour names, notes, private endpoints and signing material", !/Private saved tour|Private tour notes|Private office address|reviewKey/.test(JSON.stringify(tourReview)));
+  const tourInput = input(tourReview), tourMerged = await mergeContacts(ctx, tourInput, NOW);
+  check("saved tours survive a reviewed contact merge", tourMerged.ok && tourMerged.value.preservedCounts.savedTours === 2);
+  const afterTours = await db.select().from(savedShowingTours).where(inArray(savedShowingTours.id, [primaryTour, duplicateTour, hiddenTour]));
+  const tourContent = (row: typeof savedShowingTours.$inferSelect) => { const { contactId: _contact, updatedAt: _rev, ...rest } = row; return JSON.stringify(rest); };
+  check("all owned and hidden tours retain content, ownership, source IDs and receipt anchors", afterTours.length === 3 && afterTours.every(row => row.contactId === tourA && tourContent(row) === tourContent(beforeTours.find(before => before.id === row.id)!)));
+  check("reparented tours advance revision while the keeper tour keeps its revision", afterTours.every(row => row.id === primaryTour ? row.updatedAt.getTime() === originalAdded.getTime() : row.updatedAt.getTime() > originalAdded.getTime()));
+  const afterTourStops = await db.select().from(savedTourStops).where(inArray(savedTourStops.tourId, [primaryTour, duplicateTour, hiddenTour]));
+  check("merge preserves exact saved stop rows and order", JSON.stringify(beforeTourStops) === JSON.stringify(afterTourStops));
+  check("tour merge replay returns original receipt without rewriting tours", (await mergeContacts(ctx, tourInput, NOW)).ok && JSON.stringify(afterTours) === JSON.stringify(await db.select().from(savedShowingTours).where(inArray(savedShowingTours.id, [primaryTour, duplicateTour, hiddenTour]))));
+  const lateTour = await savedTour(tourB);
+  check("a saved tour written using a merged contact alias routes to the keeper", (await db.select().from(savedShowingTours).where(eq(savedShowingTours.id, lateTour)))[0]?.contactId === tourA);
+  const racingTour = await savedTour(tourC);
+  const stopRace = input(await review(tourA, tourC)); let stopInjected = false;
+  db.batch = (async statements => { if (!stopInjected) { stopInjected = true; await db.update(savedTourStops).set({ visitMinutes: 45 }).where(eq(savedTourStops.tourId, racingTour)); } return baseBatch(statements); }) as typeof db.batch;
+  const stopRaceResult = await mergeContacts(ctx, stopRace, NOW); db.batch = baseBatch;
+  check("a stop changed after preflight invalidates the atomic merge even without a revision bump", !stopRaceResult.ok && stopRaceResult.reason === "conflict");
+  const privateTourRace = input(await review(tourA, tourC));
+  await db.update(savedShowingTours).set({ notes: "New private research" }).where(eq(savedShowingTours.id, hiddenTour));
+  const privateTourRefused = await mergeContacts(ctx, privateTourRace, NOW);
+  check("hidden private tour edits invalidate a merge without revealing their content", !privateTourRefused.ok && privateTourRefused.reason === "conflict");
+  const tourRollbackInput = input(await review(tourA, tourC));
+  const beforeTourRollback = (await db.select().from(savedShowingTours).where(eq(savedShowingTours.id, racingTour)))[0];
+  await pg.exec("create function reject_tour_merge_test() returns trigger language plpgsql as $$begin if new.safe_metadata->>'event'='contact_merged' then raise exception 'Synthetic tour merge failure'; end if; return new; end$$; create trigger reject_tour_merge_test before insert on audit_events for each row execute function reject_tour_merge_test()");
+  const tourRollback = await mergeContacts(ctx, tourRollbackInput, NOW);
+  await pg.exec("drop trigger reject_tour_merge_test on audit_events; drop function reject_tour_merge_test()");
+  check("audit failure rolls back tour association and revision together", !tourRollback.ok && tourRollback.reason === "unavailable" && JSON.stringify(beforeTourRollback) === JSON.stringify((await db.select().from(savedShowingTours).where(eq(savedShowingTours.id, racingTour)))[0]));
   console.log(`\n${passed}/${passed} contact merge checks passed (ephemeral PostgreSQL; no live access)`);
 } finally { await pg.close(); }

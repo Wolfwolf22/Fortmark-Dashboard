@@ -6,7 +6,7 @@ import { businessDayKey } from "../../lib/metrics/business-day.ts";
 import { getSampleShowing, readSampleContactShowings, PreviewShowingError } from "./showing-model.mjs";
 import { SAMPLE_ACTOR, readSampleContact, readSampleRawPropertyLists, readSampleListPropertyRows } from "./sample-session.mjs";
 import { samplePropertyCatalog, samplePropertyProviderStates, SAMPLE_PROPERTY_DATASET } from "./property-fixtures.mjs";
-import { sampleRoadMatrix, sampleTourPoints } from "./tour-fixtures.mjs";
+import { sampleRoadMatrix, sampleTourPoints, sampleEndpointOptions } from "./tour-fixtures.mjs";
 
 const fail = (code, status = 400) => { throw new PreviewShowingError(code, status); };
 const copy = value => structuredClone(value);
@@ -102,7 +102,8 @@ export async function recommendSampleTour(id, input, now = new Date()) {
   if (selected.some(item => !item)) fail("invalid_tour_plan");
   if (selected.some(item => !item.selectable || !item.coordinates)) fail("unresolved_stops", 409);
   const matrix = sampleRoadMatrix(selected.map(item => item.listingId));
-  const result = optimizeTour(selected.map(item => ({ propertyId: item.propertyId, visitMinutes: item.visitMinutes, ...(item.appointment ? { fixedStartsAt: item.appointment.startsAt } : {}) })), matrix, value);
+  const endpoints = sampleEndpointOptions(value, selected.map(item => item.listingId));
+  const result = optimizeTour(selected.map(item => ({ propertyId: item.propertyId, visitMinutes: item.visitMinutes, ...(item.appointment ? { fixedStartsAt: item.appointment.startsAt } : {}) })), matrix, { ...value, ...endpoints.options });
   if (!result.ok) fail(result.reason, result.reason === "infeasible" || result.reason === "unreachable" ? 422 : 400);
   // Match the production provider's asynchronous return boundary, then check
   // current scope again before exposing a calculated result.
@@ -110,5 +111,5 @@ export async function recommendSampleTour(id, input, now = new Date()) {
   currentScope(context, id);
   // The UI draws a local illustrative path from authorized stop coordinates.
   // It receives no fabricated road geometry or live traffic claim.
-  return { ...result.value, computedAt: now.toISOString(), trafficAsOf: null, trafficLabel: "Sample drive times · no live traffic", source: "sample", resolvedStops: copy(selected) };
+  return { ...result.value, ...(endpoints.originPoint ? { originPoint: endpoints.originPoint } : {}), ...(endpoints.destinationPoint ? { destinationPoint: endpoints.destinationPoint } : {}), computedAt: now.toISOString(), trafficAsOf: null, trafficLabel: "Sample drive times · no live traffic", source: "sample", resolvedStops: copy(selected) };
 }

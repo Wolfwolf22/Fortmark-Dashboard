@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { IconWell } from "@/components/ui/icon-well";
 import { validTourCoordinates, type TourCoordinates, type TourMap } from "@/lib/showings/tour-domain";
 
-export interface TourMapPoint { id: string; label: string; number: number; coordinates: TourCoordinates | null }
+export interface TourMapPoint { id: string; label: string; number: number | "A" | "B"; coordinates: TourCoordinates | null }
 interface Props { config: TourMap; points: TourMapPoint[]; selectedId: string | null; onSelect: (id: string) => void; encodedPolyline?: string }
 export function decodeTourPolyline(value: string): TourCoordinates[] | null {
   if (value.length > 200000) return null;

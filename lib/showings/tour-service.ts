@@ -15,7 +15,7 @@ import { canonicalTourFingerprint, tourPlanInputSchema, validTourCoordinates, TO
   type TourContext, type TourStop, type TourRoutingProvider, type TourRecommendation, type TourRoutingStop,
 } from "./tour-domain.ts";
 
-export type TourFailure = ServiceFailure | "invalid_tour_query" | "invalid_tour_plan" | "stale_context" | "source_unavailable" | "unresolved_stops" | "not_configured" | "invalid_route" | "unreachable" | "infeasible";
+export type TourFailure = ServiceFailure | "invalid_tour_query" | "invalid_tour_plan" | "stale_context" | "source_unavailable" | "unresolved_stops" | "not_configured" | "invalid_route" | "unreachable" | "infeasible" | "unresolved_endpoint";
 export type TourResult<T> = { ok: true; value: T } | { ok: false; reason: TourFailure };
 type Reference = { id: string; listId: string; dataset: string; listingId: string; mlsNumber: string; removedAt: Date | null; updatedAt: Date };
 const referenceFields = { id: contactProperties.id, listId: contactProperties.listId, dataset: contactProperties.dataset, listingId: contactProperties.listingId, mlsNumber: contactProperties.mlsNumber, removedAt: contactProperties.removedAt, updatedAt: contactProperties.updatedAt };

@@ -12,6 +12,7 @@ import { previewRecordId, previewPublicRecordId } from "./import-merge-fixtures.
 import { LeadsError } from "./contact-errors.mjs";
 import { announceReadOnly } from "./read-only.mjs";
 import { readSampleContactShowings, reparentSampleShowings } from "./showing-model.mjs";
+import { readSampleContactSavedTours, reparentSampleSavedTours } from "./saved-tour-model.mjs";
 import { SAMPLE_ACTOR, interactiveSamples, getPreviewScenario, readSampleRawContacts, readSampleContact, readSampleNotes, readSampleNeeds, readSampleTimeline, readSampleActivities, readSampleTransactionIds, readSampleOpportunities, readSampleContactListRows, readSampleContactPropertyLists, readSampleListPropertyRows, readSamplePropertyAudits, replaceSampleContact, replaceSampleNotes, replaceSampleNeeds, replaceSampleTimeline, replaceSampleTransactionIds, replaceSampleOpportunities, replaceSamplePropertyList, replaceSampleListPropertyRows, appendSampleTimeline, nextSampleRevision, readSampleReceipt, replaceSampleReceipt } from "./sample-session.mjs";
 
 const copy = value => structuredClone(value);
@@ -118,7 +119,7 @@ function pairRecords(primaryId, duplicateId) {
   if (!primary || !duplicate) throw error("not_found", 404);
   return [primary, duplicate];
 }
-function children(id) { return { notes: readSampleNotes(id), needs: readSampleNeeds(id), activities: readSampleActivities(id), opportunities: readSampleOpportunities(id), transactions: readSampleTransactionIds(id), timeline: readSampleTimeline(id), properties: readSampleContactListRows(id), propertyLists: readSampleContactPropertyLists(id), propertyAudits: readSamplePropertyAudits(id), showings: readSampleContactShowings(id) }; }
+function children(id) { return { notes: readSampleNotes(id), needs: readSampleNeeds(id), activities: readSampleActivities(id), opportunities: readSampleOpportunities(id), transactions: readSampleTransactionIds(id), timeline: readSampleTimeline(id), properties: readSampleContactListRows(id), propertyLists: readSampleContactPropertyLists(id), propertyAudits: readSamplePropertyAudits(id), showings: readSampleContactShowings(id), savedTours: readSampleContactSavedTours(id) }; }
 const propertyIdentity = item => `${item.listId}\u0000${item.dataset}\u0000${item.listingId}`;
 const pairStamp = records => JSON.stringify(records.map(contact => ({ contact, children: children(contact.id) })));
 async function reviewContact(contact) {
@@ -128,6 +129,7 @@ async function reviewContact(contact) {
   counts.properties = new Set(child.properties.filter(item => !item.removedAt && visibleLists.has(item.listId)).map(propertyIdentity)).size;
   counts.propertyLists = visibleLists.size;
   counts.showings = child.showings.filter(item => item.ownerUserId === SAMPLE_ACTOR.userId).length;
+  counts.savedTours = child.savedTours.filter(item => item.ownerUserId === SAMPLE_ACTOR.userId).length;
   return { id: previewPublicRecordId(contact.id), name: contact.name, updatedAt: contact.updatedAt, historyFingerprint: await payloadHash(child),
     values: { name: { firstName: contact.editable?.firstName || "", lastName: contact.editable?.lastName || "", preferredName: contact.editable?.preferredName || "" }, email: contact.email || "", phone: contact.phone || "", company: contact.editable?.company || "", source: contact.source, stage: contact.stage, birthday: contact.birthday || null, about: contact.about || "", personalDetails: contact.personalDetails || [], legacyNotes: contact.notes || "" }, nextAction: contact.nextAction || null, nextFollowUpDate: contact.nextFollowUpDate, counts };
 }
@@ -170,6 +172,7 @@ export async function mergeContacts(input) {
     replaceSampleOpportunities(primary.id, unique([...p.opportunities, ...d.opportunities])); replaceSampleOpportunities(duplicate.id, []);
     replaceSampleTransactionIds(primary.id, unique([...p.transactions, ...d.transactions])); replaceSampleTransactionIds(duplicate.id, []);
     reparentSampleShowings(duplicate.id, primary.id);
+    reparentSampleSavedTours(duplicate.id, primary.id);
     // Named lists remain separate collections. The same property may be saved
     // in both; only their optional contact association moves to the keeper.
     for (const list of d.propertyLists) {

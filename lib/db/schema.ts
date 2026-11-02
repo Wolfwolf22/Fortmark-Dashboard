@@ -25,6 +25,7 @@ import {
   smallint,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -291,6 +292,7 @@ export const RELEASE_1_AUDIT_EVENTS = [
   "contact_transaction_linked",
   "property_list_updated",
   "showing_updated",
+  "showing_tour_updated",
   // Core V1 — brokerage identity. Field NAMES only in metadata, never values.
   "brokerage_identity_created",
   "brokerage_identity_updated",
@@ -1240,3 +1242,71 @@ export const showingMutationRequests = pgTable("showing_mutation_requests", {
   check("showing_mutation_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`),
 ]);
 export type ShowingMutationRequestRow = typeof showingMutationRequests.$inferSelect;
+
+/** Private tour drafts retain user input and IDs only. Routing responses stay transient. */
+export const savedShowingTours = pgTable("saved_showing_tours", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerUserId: uuid("owner_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  brokerageKey: text("brokerage_key").notNull(),
+  contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "restrict" }),
+  sourceListId: uuid("source_list_id").notNull().references(() => propertyLists.id, { onDelete: "restrict" }),
+  name: text("name").notNull(), notes: text("notes").notNull().default(""),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  bufferMinutes: integer("buffer_minutes").notNull().default(10),
+  firstPropertyId: text("first_property_id").notNull().default("auto"),
+  originAddress: text("origin_address").notNull().default(""),
+  endMode: text("end_mode").notNull().default("last_property"),
+  endAddress: text("end_address").notNull().default(""),
+  /** Server-only signing material. Never project into DTOs, audit metadata or review tokens. */
+  reviewKey: text("review_key").notNull().default(sql`replace(gen_random_uuid()::text,'-','') || replace(gen_random_uuid()::text,'-','')`),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  lastScheduledAt: timestamp("last_scheduled_at", { withTimezone: true }),
+  createRequestId: uuid("create_request_id").notNull(), createPayloadHash: text("create_payload_hash").notNull(),
+}, t => [
+  index("saved_showing_tours_owner_idx").on(t.ownerUserId, t.updatedAt, t.id),
+  index("saved_showing_tours_contact_idx").on(t.contactId),
+  index("saved_showing_tours_list_idx").on(t.sourceListId),
+  uniqueIndex("saved_showing_tours_owner_request_idx").on(t.ownerUserId, t.createRequestId),
+  check("saved_showing_tours_name_check", sql`char_length(btrim(${t.name})) between 1 and 120`),
+  check("saved_showing_tours_text_check", sql`char_length(${t.notes}) <= 4000 and char_length(${t.originAddress}) <= 500 and char_length(${t.endAddress}) <= 500`),
+  check("saved_showing_tours_buffer_check", sql`${t.bufferMinutes} between 0 and 60`),
+  check("saved_showing_tours_first_check", sql`${t.firstPropertyId} = 'auto' or ${t.firstPropertyId} ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`),
+  check("saved_showing_tours_end_check", sql`${t.endMode} in ('last_property','return_to_start','address') and (${t.endMode} <> 'address' or char_length(btrim(${t.endAddress})) > 0)`),
+  check("saved_showing_tours_hash_check", sql`${t.reviewKey} ~ '^[0-9a-f]{64}$' and ${t.createPayloadHash} ~ '^[0-9a-f]{64}$'`),
+]);
+export type SavedShowingTourRow = typeof savedShowingTours.$inferSelect;
+
+export const savedTourStops = pgTable("saved_tour_stops", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tourId: uuid("tour_id").notNull().references(() => savedShowingTours.id, { onDelete: "restrict" }),
+  propertyId: uuid("property_id").notNull().references(() => contactProperties.id, { onDelete: "restrict" }),
+  position: integer("position").notNull(), visitMinutes: integer("visit_minutes").notNull(),
+  lockTime: boolean("lock_time").notNull().default(false),
+  linkedShowingId: uuid("linked_showing_id").references(() => showings.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  // SQL migration makes the position constraint deferred for atomic reorder operations.
+  unique("saved_tour_stops_position_key").on(t.tourId, t.position),
+  uniqueIndex("saved_tour_stops_property_idx").on(t.tourId, t.propertyId),
+  index("saved_tour_stops_showing_idx").on(t.linkedShowingId),
+  check("saved_tour_stops_position_check", sql`${t.position} between 0 and 7`),
+  check("saved_tour_stops_duration_check", sql`${t.visitMinutes} between 15 and 240`),
+  check("saved_tour_stops_lock_check", sql`not ${t.lockTime} or ${t.linkedShowingId} is not null`),
+]);
+export type SavedTourStopRow = typeof savedTourStops.$inferSelect;
+
+export const savedTourRequests = pgTable("saved_tour_requests", {
+  actorUserId: uuid("actor_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  requestId: uuid("request_id").notNull(),
+  tourId: uuid("tour_id").notNull().references(() => savedShowingTours.id, { onDelete: "restrict" }),
+  action: text("action").notNull(), payloadHash: text("payload_hash").notNull(),
+  result: jsonb("result").$type<{ tourId: string; showingIds?: string[] }>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  primaryKey({ name: "saved_tour_requests_pkey", columns: [t.actorUserId, t.requestId] }),
+  check("saved_tour_requests_action_check", sql`${t.action} in ('edit','archive','schedule')`),
+  check("saved_tour_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`),
+]);

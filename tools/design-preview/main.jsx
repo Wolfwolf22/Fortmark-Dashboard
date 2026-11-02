@@ -22,6 +22,7 @@ import TransactionsPage from "@/app/(app)/transactions/page";
 import ContactsPage from "@/app/(app)/contacts/page";
 import PropertyListsPage from "@/app/(app)/property-lists/page";
 import ShowingsPage from "@/app/(app)/showings/page";
+import ShowingToursPage from "@/app/(app)/showing-tours/page";
 import { PREVIEW_WRITE_EVENT } from "./read-only.mjs";
 import { sampleImportCsv } from "./import-merge-fixtures.mjs";
 
@@ -53,6 +54,7 @@ function Content() {
   if (route === "/contacts") return <ContactsPage />;
   if (route === "/property-lists") return <PropertyListsPage />;
   if (route === "/showings") return <ShowingsPage />;
+  if (route === "/showing-tours") return <ShowingToursPage />;
   if (route === "/settings") return <DesignSystem />;
   return <Card className="p-8"><p className="text-micro">Design preview</p><h2 className="mt-3 text-3xl font-semibold tracking-tight">{pageTitleFor(route)}</h2><p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">This preview covers the shared identity and Home layout. This destination is shown to verify navigation, active states and shared styling. Production workflows and records are not connected.</p><Button className="mt-6" onClick={() => window.history.back()}>Go back</Button></Card>;
 }
@@ -74,10 +76,11 @@ function PreviewControls() {
       <PreviewLink href="/settings" className="ml-1 font-semibold text-foreground underline underline-offset-4">View foundations</PreviewLink>
       {route === "/contacts" && <PreviewLink href="/contacts?open=sample-long-history" className="font-semibold text-foreground underline underline-offset-4">Long history case</PreviewLink>}
       {route === "/showings" && <PreviewLink href="/showings?showing=84000000-0000-4000-8000-000000000101" className="font-semibold text-foreground underline underline-offset-4">Six-stop sample tour</PreviewLink>}
+      {route === "/showing-tours" && <PreviewLink href="/showing-tours?tour=86000000-0000-4000-8000-000000000001" className="font-semibold text-foreground underline underline-offset-4">Saturday buyer tour</PreviewLink>}
       {route === "/contacts" && <a href={`data:text/csv;charset=utf-8,${encodeURIComponent(sampleImportCsv)}`} download="fortmark-synthetic-contacts.csv" className="font-semibold text-foreground underline underline-offset-4">Sample CSV</a>}
       {interactive && <button type="button" className="font-semibold text-foreground underline underline-offset-4" onClick={() => window.location.reload()}>Reset samples</button>}
-      {["/transactions", "/contacts", "/property-lists", "/showings"].includes(route) && <label className="ml-2 flex items-center gap-2">Preview data
-        <select aria-label={route === "/contacts" ? "Preview contact data" : route === "/property-lists" ? "Preview property-list data" : route === "/showings" ? "Preview showing data" : "Preview transaction data"} value={scenario} className="rounded border border-input bg-card px-2 py-1 text-foreground" onChange={event => {
+      {["/transactions", "/contacts", "/property-lists", "/showings", "/showing-tours"].includes(route) && <label className="ml-2 flex items-center gap-2">Preview data
+        <select aria-label={route === "/contacts" ? "Preview contact data" : route === "/property-lists" ? "Preview property-list data" : route === "/showing-tours" ? "Preview saved-tour data" : route === "/showings" ? "Preview showing data" : "Preview transaction data"} value={scenario} className="rounded border border-input bg-card px-2 py-1 text-foreground" onChange={event => {
           const url = new URL(window.location.href);
           url.searchParams.set("scenario", event.target.value);
           window.location.assign(url);
@@ -87,12 +90,13 @@ function PreviewControls() {
           {(route === "/transactions" || route === "/contacts") && <option value="unavailable">First request unavailable</option>}
           {route === "/contacts" && <option value="conflict">Remote change on save (409)</option>}
           {route === "/property-lists" && <option value="conflict">Remote research change (409)</option>}
-          {(route === "/contacts" || route === "/property-lists" || route === "/showings" || interactive) && <option value="interactive">Interactive samples</option>}
+          {(route === "/contacts" || route === "/property-lists" || route === "/showings" || route === "/showing-tours" || interactive) && <option value="interactive">Interactive samples</option>}
         </select>
       </label>}
     </div>
     {interactive && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
-      Contact stages, next actions, needs, client information, property lists, showings, CSV import and duplicate merges can save these synthetic samples. Other writes remain blocked. Reload or Reset samples discards every change.
+      Contact stages, next actions, needs, client information, property lists, showings, saved tours, CSV import and duplicate merges can save these synthetic samples. Other writes remain blocked. Reload or Reset samples discards every change.
+      {route === "/showing-tours" && <span className="ml-1">Sample addresses: Sample FortMark office, Sample client meeting point, Sample coastal meeting point.</span>}
       {(route === "/contacts" || route === "/property-lists") && <span className="ml-1">Property list examples: SAMPLE-002 and SAMPLE-003. Fictional MLS references only.</span>}
     </p>}
     {route === "/contacts" && scenario === "conflict" && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
@@ -102,7 +106,7 @@ function PreviewControls() {
       Research conflict rehearsal: edit a saved property's notes or status, then save. The first refused save reveals a predefined newer sample version. Review it explicitly while keeping your draft. This scenario remains read-only.
     </p>}
     {writeBlocked && <div role="alert" className="flex items-center justify-center gap-3 border-b border-border bg-card px-4 py-2 text-xs">
-      <span>{interactive ? "This write is disabled in interactive samples. Only stages, next actions, needs, client information, property lists, showings, import and duplicate merge can save." : "Design preview is read-only. No records were changed."}</span>
+      <span>{interactive ? "This write is disabled in interactive samples. Only stages, next actions, needs, client information, property lists, showings, saved tours, import and duplicate merge can save." : "Design preview is read-only. No records were changed."}</span>
       <button type="button" className="font-semibold underline underline-offset-4" onClick={() => setWriteBlocked(false)}>Dismiss</button>
     </div>}
   </>;

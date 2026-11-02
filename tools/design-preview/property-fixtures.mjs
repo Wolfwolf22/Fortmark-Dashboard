@@ -40,6 +40,7 @@ export const SAMPLE_PERSONAL_RESEARCH_LIST_ID = "83000000-0000-4000-8000-0000000
 export const SAMPLE_PERSONAL_EMPTY_LIST_ID = "83000000-0000-4000-8000-000000000004";
 export const SAMPLE_PRIVATE_LIST_ID = "83000000-0000-4000-8000-000000000005";
 export const SAMPLE_TOUR_LIST_ID = "83000000-0000-4000-8000-000000000009";
+export const SAMPLE_PERSONAL_TOUR_LIST_ID = "83000000-0000-4000-8000-000000000010";
 const defaultIds = {
   "sample-due-today": SAMPLE_WATERFRONT_LIST_ID,
   "sample-long-history": "83000000-0000-4000-8000-000000000006",
@@ -57,6 +58,7 @@ export const samplePropertyLists = [
   list(defaultIds[DUPLICATE_PRIMARY_ID], "Primary shortlist", DUPLICATE_PRIMARY_ID, SAMPLE_AGENT_ID, DUPLICATE_PRIMARY_ID),
   list(defaultIds[DUPLICATE_SOURCE_ID], "Duplicate shortlist", DUPLICATE_SOURCE_ID, SAMPLE_AGENT_ID, DUPLICATE_SOURCE_ID),
   list(SAMPLE_TOUR_LIST_ID, "Saturday tour", "sample-due-today"),
+  list(SAMPLE_PERSONAL_TOUR_LIST_ID, "Personal tour research", null),
 ];
 for (const [contactId, properties] of Object.entries(sampleContactProperties)) for (const property of properties) property.listId = defaultIds[contactId];
 export const samplePropertyListRows = Object.fromEntries(Object.entries(sampleContactProperties).map(([contactId, rows]) => [defaultIds[contactId], rows]));
@@ -65,6 +67,8 @@ samplePropertyListRows[SAMPLE_PERSONAL_RESEARCH_LIST_ID] = [{ ...saved(302, null
 samplePropertyListRows[SAMPLE_PERSONAL_EMPTY_LIST_ID] = [];
 samplePropertyListRows[SAMPLE_PRIVATE_LIST_ID] = [{ ...saved(303, null, "SAMPLE-002", "sample-courtyard"), listId: SAMPLE_PRIVATE_LIST_ID }];
 samplePropertyListRows[SAMPLE_TOUR_LIST_ID] = sampleTourListings.map((listing, index) => ({ ...saved(401 + index, "sample-due-today", listing.mlsNumber, listing.id), listId: SAMPLE_TOUR_LIST_ID, reviewStatus: "shortlisted", notes: "Compare the layout and parking during the planned tour." }));
+samplePropertyListRows[SAMPLE_PERSONAL_TOUR_LIST_ID] = sampleTourListings.slice(0, 2).map((listing, index) => ({ ...saved(501 + index, null, listing.mlsNumber, listing.id), listId: SAMPLE_PERSONAL_TOUR_LIST_ID }));
+samplePropertyListRows[SAMPLE_PRIVATE_LIST_ID].push({ ...saved(304, null, "SAMPLE-003", "sample-condo"), listId: SAMPLE_PRIVATE_LIST_ID });
 Object.assign(samplePropertyListRows[SAMPLE_WATERFRONT_LIST_ID][0], { notes: "Review the floor plan and confirm parking before arranging a visit.", reviewStatus: "shortlisted" });
 Object.assign(samplePropertyListRows[SAMPLE_WATERFRONT_LIST_ID][1], { notes: "Layout does not fit the current search.", reviewStatus: "ruled_out" });
 samplePropertyListRows[SAMPLE_WATERFRONT_LIST_ID][2].notes = "Confirm availability with the listing agent.";

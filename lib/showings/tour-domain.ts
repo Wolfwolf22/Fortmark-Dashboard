@@ -30,14 +30,15 @@ export const tourPlanInputSchema = z.object({
   bufferMinutes: z.number().int().min(0).max(60), returnToStart: z.boolean(), contextToken: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict().refine(value => value.startPropertyId === "auto" || value.selectedPropertyIds.includes(value.startPropertyId), { path: ["startPropertyId"], message: "Start must be a selected property or automatic." });
 export type TourPlanInput = z.infer<typeof tourPlanInputSchema>;
-export interface TourPlanOptions { startPropertyId: string; startsAt: string; respectAppointments: boolean; bufferMinutes: number; returnToStart: boolean }
+export interface TourPlanOptions { startPropertyId: string; startsAt: string; respectAppointments: boolean; bufferMinutes: number; returnToStart: boolean; originAddress?: string; endMode?: "last_property" | "return_to_start" | "address"; endAddress?: string }
 export interface TourRoutingStop { propertyId: string; coordinates: TourCoordinates; visitMinutes: number; fixedStartsAt?: string }
 export interface TourRecommendation extends TourOptimization {
+  originPoint?: TourCoordinates; destinationPoint?: TourCoordinates;
   computedAt: string; trafficAsOf: string | null; trafficLabel: string; mapPolyline?: string; source: "google" | "sample";
   /** The API adds the freshly authorized MLS projection used for this route. Providers may omit it. */
   resolvedStops?: TourStop[];
 }
-export type TourRoutingResult = { ok: true; value: TourRecommendation } | { ok: false; reason: "invalid_route" | "unreachable" | "infeasible" | "not_configured" | "unavailable" };
+export type TourRoutingResult = { ok: true; value: TourRecommendation } | { ok: false; reason: "invalid_route" | "unreachable" | "infeasible" | "not_configured" | "unavailable" | "unresolved_endpoint" };
 export interface TourRoutingProvider {
   map: TourMap;
   recommend(stops: TourRoutingStop[], options: TourPlanOptions): Promise<TourRoutingResult>;

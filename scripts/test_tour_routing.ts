@@ -102,4 +102,52 @@ mode = "success";
 const beforeInvalid = calls.length;
 for (const invalid of [{ ...options, startsAt: "2020-01-01T00:00:00Z" }, { ...options, startsAt: "2030-01-01T00:00:00Z" }, { ...options, bufferMinutes: -1 }, { ...options, startPropertyId: "not-a-stop" }]) check("invalid local requests do not spend provider calls", !(await provider.recommend(routeStops, invalid)).ok && calls.length === beforeInvalid);
 check("withheld or missing coordinates cannot become routing locations", !(await provider.recommend([{ ...routeStops[0], coordinates: { lat: NaN, lng: -80 } }, ...routeStops.slice(1)], options)).ok && calls.length === beforeInvalid);
+
+const originTravel = [3600, 60, 1800].map(durationSeconds => ({ durationSeconds, distanceMeters: durationSeconds * 10 }));
+const endTravel = [60, 3600, 1800].map(durationSeconds => ({ durationSeconds, distanceMeters: durationSeconds * 10 }));
+const endpointRoute = optimizeTour(three, tied, { ...options, startPropertyId: "auto", bufferMinutes: 10, originTravel, endTravel });
+check("custom departure and destination influence the optimal first and last home", endpointRoute.ok && endpointRoute.value.orderedPropertyIds.join() === "B,C,A" && endpointRoute.value.totalDriveSeconds === 240 && endpointRoute.value.legs.length === 2);
+check("origin and end travel retain separate endpoint legs and property-only visits", endpointRoute.ok && endpointRoute.value.originLeg?.fromPropertyId === "__origin" && endpointRoute.value.destinationLeg?.toPropertyId === "__destination" && endpointRoute.value.visits.length === 3 && endpointRoute.value.visits[0].startsAt === "2026-11-07T14:11:00.000Z" && endpointRoute.value.endsAt === "2026-11-07T15:29:00.000Z");
+const missingOrigin = optimizeTour(three, tied, { ...options, originTravel: originTravel.map(() => ({ durationSeconds: null, distanceMeters: null })) });
+check("an unresolved departure edge cannot be silently omitted", !missingOrigin.ok && missingOrigin.reason === "unreachable");
+const lateDeparture = optimizeTour([{ ...three[0], fixedStartsAt: at }, ...three.slice(1)], tied, { ...options, originTravel, respectAppointments: true });
+check("departure travel can make a fixed first appointment infeasible", !lateDeparture.ok && lateDeparture.reason === "infeasible");
+check("malformed endpoint vectors are refused", !optimizeTour(three, tied, { ...options, originTravel: originTravel.slice(1) }).ok);
+// An independent permutation oracle verifies endpoint-inclusive costs across all first stops.
+function endpointOracle(matrix: TourMatrixCell[][], origins: TourMatrixCell[], ends: TourMatrixCell[]): number {
+  const all = (ids: number[]): number[][] => ids.length ? ids.flatMap(id => all(ids.filter(next => next !== id)).map(tail => [id, ...tail])) : [[]];
+  return Math.min(...all(matrix.map((_, index) => index)).map(order => origins[order[0]].durationSeconds! + ends[order[order.length - 1]].durationSeconds! + order.slice(1).reduce((sum, to, index) => sum + matrix[order[index]][to].durationSeconds!, 0)));
+}
+for (let seed = 1; seed <= 6; seed++) {
+  const road = matrixOf(three.map((_, from) => three.map((_, to) => from === to ? 0 : (from * 31 + to * 47 + seed * 13) % 97 + 1)));
+  const result = optimizeTour(three, road, { ...options, startPropertyId: "auto", originTravel, endTravel });
+  check("endpoint optimization agrees with an independent complete search", result.ok && result.value.totalDriveSeconds === endpointOracle(road, originTravel, endTravel));
+}
+let endpointMode = "success";
+const endpointCalls: { url: string; body: Record<string, unknown> }[] = [];
+const endpointFetch: typeof fetch = async (input, init) => {
+  const url = String(input), body = JSON.parse(String(init?.body)); endpointCalls.push({ url, body });
+  if (url.includes("distanceMatrix")) {
+    const count = body.origins.length;
+    return json(Array.from({ length: count }, (_, from) => Array.from({ length: count }, (_, to) => ({ originIndex: from, destinationIndex: to, condition: "ROUTE_EXISTS", duration: from === to ? "0s" : "120s", distanceMeters: from === to ? 0 : 1200 }))).flat());
+  }
+  if (endpointMode === "offline") return json({},503);
+  return json({ geocodingResults: { origin: { geocoderStatus: {}, ...(endpointMode === "partial" ? { partialMatch: true } : {}) }, destination: { geocoderStatus: endpointMode === "unresolved" ? { code: 5 } : {} } }, routes: [{ polyline: { encodedPolyline: "_p~iF~ps|U_ulLnnqC_mqNvxq`@" }, ...(endpointMode === "no-location" ? {} : { legs: [{ startLocation: { latLng: { latitude: 26.12, longitude: -80.14 } }, endLocation: { latLng: { latitude: 26.15, longitude: -80.12 } } }] }) }] });
+};
+const endpointProvider = createTourRoutingProvider(enabled, { fetch: endpointFetch, now: () => now });
+const endpointOptions = { ...options, originAddress: "Sample private office", endMode: "address" as const, endAddress: "Sample private meeting point" };
+const withEndpoints = await endpointProvider.recommend(routeStops, endpointOptions);
+check("Google address waypoints include both endpoint legs and resolved map points", withEndpoints.ok && withEndpoints.value.originLeg?.driveSeconds === 120 && withEndpoints.value.destinationLeg?.driveSeconds === 120 && withEndpoints.value.originPoint?.lat === 26.12 && withEndpoints.value.destinationPoint?.lng === -80.12 && withEndpoints.value.visits.length === 3);
+check("raw addresses go only in private JSON bodies to fixed Google URLs", endpointCalls.length === 2 && endpointCalls.every(call => !call.url.includes("Sample")) && JSON.stringify(endpointCalls[0].body).includes("Sample private office") && !/propertyId|contactId|notes/.test(JSON.stringify(endpointCalls)));
+check("route endpoints include every property as an intermediate when origin and destination are custom", Array.isArray(endpointCalls[1].body.intermediates) && endpointCalls[1].body.intermediates.length === 3);
+for (const failure of ["partial", "unresolved", "no-location", "offline"]) {
+  endpointMode = failure;
+  const result = await endpointProvider.recommend(routeStops, endpointOptions);
+  check("ambiguous or unresolved endpoint locations cannot produce a schedulable plan", !result.ok && (result.reason === "unresolved_endpoint" || result.reason === "unavailable"));
+}
+endpointMode = "success"; endpointCalls.length = 0;
+const roundTripOrigin = await endpointProvider.recommend(routeStops, { ...options, originAddress: "Sample private office", endMode: "return_to_start", returnToStart: true });
+check("return to start means the departure address rather than the first property", roundTripOrigin.ok && roundTripOrigin.value.destinationLeg?.toPropertyId === "__destination" && JSON.stringify(endpointCalls[1].body.origin) === JSON.stringify(endpointCalls[1].body.destination));
+const countBeforeInvalid = endpointCalls.length;
+check("an empty custom endpoint is rejected before provider calls", !(await endpointProvider.recommend(routeStops, { ...options, endMode: "address", endAddress: "" })).ok && endpointCalls.length === countBeforeInvalid);
 console.log(`${checks}/${checks} showing tour routing checks passed (synthetic matrices and fetch only; no live requests)`);

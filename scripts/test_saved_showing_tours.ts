@@ -1,0 +1,126 @@
+/** Saved drafts and atomic scheduling on isolated PostgreSQL; no env, MLS or road requests. */
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { createLocalContactDb } from "./helpers/contact-test-db.ts";
+import { auditEvents, contacts, contactProperties, dashboardUsers, propertyLists, showings, savedShowingTours, savedTourStops, savedTourRequests } from "../lib/db/schema.ts";
+import type { Ctx } from "../lib/contacts/service.ts";
+import type { PropertyMlsProvider } from "../lib/contacts/properties.ts";
+import type { Listing } from "../lib/data/types.ts";
+import { optimizeTour } from "../lib/showings/tour-optimizer.ts";
+import type { TourRoutingProvider, TourPlanOptions } from "../lib/showings/tour-domain.ts";
+import { createSavedShowingTourInputSchema, type CreateSavedShowingTourInput, type SavedShowingTourView, type SavedTourReview } from "../lib/showings/saved-tour-domain.ts";
+import { createSavedShowingTour, updateSavedShowingTour, archiveSavedShowingTour, getSavedShowingTour, getSavedShowingTours, reviewSavedShowingTour, scheduleSavedShowingTour } from "../lib/showings/saved-tour-service.ts";
+
+let passed = 0; function check(name: string, value: unknown): asserts value { assert.ok(value, name); passed++; }
+const now = new Date("2026-11-02T15:00:00Z"), startsAt = "2026-11-04T15:00:00.000Z";
+const { pg, db } = await createLocalContactDb();
+const actor = { userId: randomUUID(), role: "agent" as const, brokerageKey: "fortmark" }, other = { userId: randomUUID(), role: "agent" as const, brokerageKey: "fortmark" }, admin = { userId: randomUUID(), role: "admin" as const, brokerageKey: "fortmark" };
+const ctx: Ctx = { actor, db }, member: Ctx = { actor: { ...actor, role: "member" }, db };
+const contactId = randomUUID(), secondContactId = randomUUID(), listId = randomUUID(), otherListId = randomUUID();
+const properties = Array.from({ length: 8 }, (_, i) => ({ id: randomUUID(), listId, contactId: null, dataset: "sample", listingId: `key-${i}`, mlsNumber: `T${i}`, updatedAt: now, notes: "Private property research" }));
+let mlsCalls = 0, roads = 0, flight = 0, maxFlight = 0, options: TourPlanOptions | null = null;
+const withheld = new Set<string>();
+const mls: PropertyMlsProvider = { lookup: async () => { throw Error("No search"); }, get: async (dataset, id, number) => { mlsCalls++; flight++; maxFlight = Math.max(flight, maxFlight); await new Promise(resolve => setTimeout(resolve, 1)); flight--;
+  const listing: Listing = { id, mlsNumber: number, source: "mls", address: "Fresh MLS location never persisted", city: "Synthetic", zip: "00000", status: "active", propertyType: "condo", listPrice: 100, beds: 1, baths: 1, sqft: 1, listedDate: startsAt, agentId: "", photos: [], description: "", priceHistory: [], coordinates: { lat: 26 + Number(id.replace("key-", "")) / 1000, lng: -80 }, addressWithheld: withheld.has(id) };
+  return { ok: true, value: { dataset, listing } }; } };
+const routing: TourRoutingProvider = { map: { kind: "sample" }, recommend: async (stops, input) => { roads++; options = input;
+  const matrix = stops.map((_, i) => stops.map((__, j) => ({ durationSeconds: i === j ? 0 : 120, distanceMeters: i === j ? 0 : 1000 })));
+  const result = optimizeTour(stops, matrix, input); return result.ok ? { ok: true, value: { ...result.value, computedAt: now.toISOString(), trafficAsOf: now.toISOString(), trafficLabel: "Synthetic roads", source: "sample" } } : result; } };
+function input(indices = [0, 1]): CreateSavedShowingTourInput { return { requestId: randomUUID(), name: "Private saved tour", notes: "User-authored private notes", contactId, sourceListId: listId, startsAt, bufferMinutes: 5, firstPropertyId: "auto", originAddress: "", endMode: "last_property", endAddress: "", stops: indices.map(index => ({ propertyId: properties[index].id, visitMinutes: 30, lockTime: false, linkedShowingId: null })) }; }
+async function create(value = input()) { const result = await createSavedShowingTour(ctx, value, now); check("ownedofflinedraftcreates", result.ok); return result.value; }
+async function review(tour: SavedShowingTourView, route = routing, feed = mls) { const result = await reviewSavedShowingTour(ctx, tour.id, { expectedUpdatedAt: tour.updatedAt }, feed, route, now); check("freshreviewresolves", result.ok); return result.value; }
+async function get(id: string) { const result = await getSavedShowingTour(ctx, id); check("ownedtourloads", result.ok); return result.value; }
+const scheduleInput = (tour: SavedShowingTourView, review: SavedTourReview) => ({ requestId: randomUUID(), expectedUpdatedAt: tour.updatedAt, reviewToken: review.reviewToken });
+async function counts() { return (await pg.query<{ facts: string }>("select (select count(*) from showings)::text||'|'||(select count(*) from saved_tour_requests)::text||'|'||(select count(*) from audit_events)::text||'|'||(select coalesce(jsonb_agg(t order by t.id),'[]'::jsonb)::text from saved_tour_stops t) as facts")).rows[0].facts; }
+const originalBatch = db.batch.bind(db);
+async function race<T>(change: () => Promise<void>, operation: () => Promise<T>): Promise<T> { let once = false; db.batch = (async (...args: Parameters<typeof db.batch>) => { if (!once) { once = true; await change(); } return originalBatch(...args); }) as unknown as typeof db.batch; try { return await operation(); } finally { db.batch = originalBatch; } }
+try {
+  await db.insert(dashboardUsers).values([actor, other, admin].map((user, i) => ({ id: user.userId, role: user.role, clerkUserId: `saved_tour_${i}`, primaryEmail: `tour${i}@example.test`, status: "active" as const })));
+  await db.insert(contacts).values([{ id: contactId, assignedAgentUserId: actor.userId, firstName: "Tour client", updatedAt: now, lastContactAt: new Date("2026-10-01T15:00:00Z"), nextFollowUpAt: new Date("2026-11-10T12:00:00Z"), nextActionId: randomUUID(), nextActionKind: "call", nextActionPurpose: "Existing next action", nextActionDueAt: new Date("2026-11-10T15:00:00Z"), nextActionAssignedUserId: actor.userId }, { id: secondContactId, assignedAgentUserId: actor.userId, firstName: "Different client", updatedAt: now }]);
+  await db.insert(propertyLists).values([{ id: listId, ownerUserId: actor.userId, brokerageKey: "fortmark", contactId: null, name: "Private personal list", updatedAt: now }, { id: otherListId, ownerUserId: other.userId, brokerageKey: "fortmark", contactId: null, name: "Never leak colleague list" }]);
+  await db.insert(contactProperties).values(properties);
+  const draftInput = input(), draft = await create(draftInput), beforeReview = await counts();
+  check("draftusesreferenceswithoutMLScalls", mlsCalls === 0 && roads === 0 && draft.stops.length === 2 && draft.stops.every(stop => stop.mlsNumber?.startsWith("T")) && draft.sourceList?.name === "Private personal list");
+  const again = await createSavedShowingTour(ctx, draftInput, now); check("createretryrecoverssamedraftwithoutduplicates", again.ok && again.value.id === draft.id && await counts() === beforeReview);
+  const changedCreate = await createSavedShowingTour(ctx, { ...draftInput, name: "Changed" }, now); check("createkeycannotrebindpayload", !changedCreate.ok && changedCreate.reason === "request_conflict");
+  check("admincannotreadanotherownerstour", !(await getSavedShowingTour({ actor: admin, db }, draft.id)).ok);
+  check("memberreadallowedbutallwritesandreviewsrefused", (await getSavedShowingTour(member, draft.id)).ok && !(await createSavedShowingTour(member, input(), now)).ok && !(await reviewSavedShowingTour(member, draft.id, { expectedUpdatedAt: draft.updatedAt }, mls, routing, now)).ok);
+  check("foreignlistdraftrefusedwithoutMLScalls", !(await createSavedShowingTour(ctx, { ...input(), sourceListId: otherListId }, now)).ok && mlsCalls === 0);
+  for (const invalid of [{ ...input(), stops: [input().stops[0]] }, { ...input(), stops: [input().stops[0], input().stops[0]] }, { ...input(), endMode: "address", endAddress: " " }, { ...input(), notes: "x".repeat(4001) }, { ...input(), stops: input().stops.map(stop => ({ ...stop, lockTime: true })) }, { ...input(), coordinates: { lat: 26, lng: -80 } }]) check("invaliddraftauthorityandtextrefused", !createSavedShowingTourInputSchema.safeParse(invalid).success);
+  const listed = await getSavedShowingTours(ctx, { contactId, pageSize: 1 }); check("pageddraftcountfiltersowncontact", listed.ok && listed.value.total === 1 && listed.value.items.length === 1);
+  const reviewed = await review(draft);
+  check("reviewisreadonlyandfresh", await counts() === beforeReview && reviewed.slots.length === 2 && Number(roads) === 1 && Number(mlsCalls) === 2);
+  const tokenBody = JSON.parse(Buffer.from(reviewed.reviewToken.split(".")[0], "base64url").toString("utf8"));
+  check("signedreviewcontainsnoGoogleMLSorprivatecontent", !/Fresh MLS|private|coordinates|mapPolyline|reviewKey|driveSeconds|originAddress|endAddress/i.test(JSON.stringify(tokenBody)) && tokenBody.actorUserId === actor.userId && reviewed.expiresAt === "2026-11-02T15:15:00.000Z");
+  const [secretRow] = await db.select().from(savedShowingTours).where(eq(savedShowingTours.id, draft.id)); check("perrowreviewkeyneverprojected", secretRow.reviewKey.length === 64 && !JSON.stringify(draft).includes(secretRow.reviewKey) && !reviewed.reviewToken.includes(secretRow.reviewKey));
+  const apply = scheduleInput(draft, reviewed), scheduled = await scheduleSavedShowingTour(ctx, draft.id, apply, now);
+  check("atomicapplycreatesallappointmentsandlinks", scheduled.ok && scheduled.value.showingIds.length === 2 && scheduled.value.tour.stops.every(stop => scheduled.value.showingIds.includes(stop.linkedShowingId!)) && scheduled.value.tour.lastScheduledAt === now.toISOString());
+  const rows = await db.select().from(showings); check("newappointmentsservercopystableidentities", rows.length === 2 && rows.every(row => row.ownerUserId === actor.userId && row.contactId === contactId && properties.some(p => p.id === row.sourcePropertyId && p.dataset === row.dataset && p.listingId === row.listingId && p.mlsNumber === row.mlsNumber)));
+  const [contactAfter] = await db.select().from(contacts).where(eq(contacts.id, contactId)); check("planningneverfakescontacttouchorclearsnextaction", contactAfter.lastContactAt?.toISOString() === "2026-10-01T15:00:00.000Z" && contactAfter.nextActionPurpose === "Existing next action");
+  const afterSchedule = await counts(), replay = await scheduleSavedShowingTour(ctx, draft.id, apply, new Date("2026-11-02T18:00:00Z")); check("committedreceiptcanreplayafterreviewexpirywithoutanywrites", replay.ok && replay.value.showingIds.join() === scheduled.value.showingIds.join() && await counts() === afterSchedule && Number(roads) === 1 && Number(mlsCalls) === 2);
+  const changedApply = await scheduleSavedShowingTour(ctx, draft.id, { ...apply, reviewToken: apply.reviewToken + "x" }, now); check("schedulekeycannotchangepayload", !changedApply.ok && changedApply.reason === "request_conflict");
+  const audit = await db.select().from(auditEvents); check("auditsnevercontainusernotesendpointsMLScontentorrouteestimates", !/User-authored|Fresh MLS|Private personal list|driveSeconds|coordinates/.test(JSON.stringify(audit)));
+  await db.update(showings).set({ notes: "Preserve existing private notes", meetingDetails: "Preserve meeting instructions", updatedAt: new Date(now.getTime() + 100) }).where(eq(showings.id, scheduled.value.showingIds[0]));
+  const current = await get(draft.id), lockedInput = { ...draftInput, requestId: randomUUID(), expectedUpdatedAt: current.updatedAt, stops: current.stops.map((stop, i) => ({ propertyId: stop.propertyId, visitMinutes: i === 0 ? 60 : 30, lockTime: i === 0, linkedShowingId: stop.linkedShowingId })) };
+  const edited = await updateSavedShowingTour(ctx, draft.id, lockedInput, now); check("fullsnapshoteditCAS", edited.ok && edited.value.updatedAt !== current.updatedAt);
+  const editedRetry = await updateSavedShowingTour(ctx, draft.id, lockedInput, now); check("editreceiptpreventsrepeatedlostresponsewrites", editedRetry.ok && editedRetry.value.updatedAt === edited.value.updatedAt);
+  const staleEdit = await updateSavedShowingTour(ctx, draft.id, { ...lockedInput, requestId: randomUUID(), name: "Stale edit" }, now); check("staleeditscannotoverwrite", !staleEdit.ok && staleEdit.reason === "conflict");
+  const lockedReview = await review(edited.value); check("lockedappointmentusesactualtimeandduration", lockedReview.slots[0].kept && lockedReview.slots[0].endsAt === rows[0].endsAt.toISOString() && lockedReview.recommendation.resolvedStops?.[0].visitMinutes === 30);
+  const lockedRevision = (await db.select().from(showings).where(eq(showings.id, scheduled.value.showingIds[0])))[0].updatedAt.toISOString();
+  const lockedApply = await scheduleSavedShowingTour(ctx, draft.id, scheduleInput(edited.value, lockedReview), now); check("lockedappointmentretainedwhileothervisitsapply", lockedApply.ok);
+  const preserved = (await db.select().from(showings).where(eq(showings.id, scheduled.value.showingIds[0])))[0]; check("existingprivatedetailsandlockedrevisionpreserved", preserved.notes === "Preserve existing private notes" && preserved.meetingDetails === "Preserve meeting instructions" && preserved.updatedAt.toISOString() === lockedRevision);
+  const nextDraft = await create({ ...input([2, 3]), startsAt: "2026-11-04T19:00:00Z" }), nextReview = await review(nextDraft);
+  const expired = await scheduleSavedShowingTour(ctx, nextDraft.id, scheduleInput(nextDraft, nextReview), new Date("2026-11-02T15:16:00Z")); check("uncommittedexpiredreviewrefused", !expired.ok && expired.reason === "review_expired");
+  const tampered = await scheduleSavedShowingTour(ctx, nextDraft.id, { ...scheduleInput(nextDraft, nextReview), reviewToken: nextReview.reviewToken.slice(0, -4) + "AAAA" }, now); check("tamperedreviewcannotapply", !tampered.ok && tampered.reason === "stale_review");
+  const beforeRace = await counts(), beforeRaceTour = await get(nextDraft.id);
+  const lateOverlap = { id: randomUUID(), ownerUserId: actor.userId, brokerageKey: "fortmark", contactId: secondContactId, sourcePropertyId: properties[4].id, dataset: "sample", listingId: properties[4].listingId, mlsNumber: properties[4].mlsNumber, startsAt: new Date(startsAt), endsAt: new Date(Date.parse(startsAt) + 30 * 60_000), createRequestId: randomUUID(), createPayloadHash: "c".repeat(64) };
+  // Move the second draft away from existing appointments before checking the late-write guard.
+  const shifted = await updateSavedShowingTour(ctx, nextDraft.id, { ...input([2, 3]), requestId: randomUUID(), expectedUpdatedAt: nextDraft.updatedAt, startsAt: "2026-11-04T19:00:00Z" }, now); check("shiftdraftforindependentplan", shifted.ok);
+  const shiftedReview = await review(shifted.value), applyShifted = scheduleInput(shifted.value, shiftedReview);
+  lateOverlap.startsAt = new Date("2026-11-04T19:00:00Z"); lateOverlap.endsAt = new Date("2026-11-04T19:30:00Z");
+  const beforeLateRows = (await db.select().from(showings)).length;
+  const late = await race(async () => { await db.insert(showings).values(lateOverlap); }, () => scheduleSavedShowingTour(ctx, shifted.value.id, applyShifted, now));
+  check("lateoverlaprejectsthewholebatchwithoutnewtourappointments", !late.ok && late.reason === "time_conflict" && (await db.select().from(showings)).length === beforeLateRows + 1 && (await get(shifted.value.id)).updatedAt === shifted.value.updatedAt);
+  check("rejectedbatchdoesnotreserveitsrequestreceipt", !(await db.select().from(savedTourRequests)).some(row => row.requestId === applyShifted.requestId));
+  await db.delete(showings).where(eq(showings.id, lateOverlap.id));
+  const propertyRace = await race(async () => { await db.update(contactProperties).set({ removedAt: now, updatedAt: new Date(now.getTime() + 5000) }).where(eq(contactProperties.id, properties[2].id)); }, () => scheduleSavedShowingTour(ctx, shifted.value.id, applyShifted, now));
+  check("latepropertyremovalrollsbackALLshowingsandreceipt", !propertyRace.ok && propertyRace.reason === "source_unavailable" && (await db.select().from(showings)).length === beforeLateRows && !(await db.select().from(savedTourRequests)).some(row => row.requestId === applyShifted.requestId));
+  await db.update(contactProperties).set({ removedAt: null }).where(eq(contactProperties.id, properties[2].id));
+  const currentShift = await get(shifted.value.id), safeReview = await review(currentShift), safeApply = scheduleInput(currentShift, safeReview), beforeRollback = await counts();
+  db.batch = (async (statements: Parameters<typeof db.batch>[0]) => originalBatch([...statements, db.insert(auditEvents).values({ eventType: "showing_tour_updated", actorUserId: randomUUID(), safeMetadata: {} })] as unknown as Parameters<typeof db.batch>[0])) as unknown as typeof db.batch;
+  const rolledBack = await scheduleSavedShowingTour(ctx, currentShift.id, safeApply, now); db.batch = originalBatch;
+  check("failureafterlastwriteleavesnoappointmentslinksreceiptsoraudits", !rolledBack.ok && await counts() === beforeRollback && (await get(currentShift.id)).updatedAt === currentShift.updatedAt);
+  const changedPropertyReview = await review(currentShift); await db.update(contactProperties).set({ updatedAt: new Date(now.getTime() + 6000) }).where(eq(contactProperties.id, properties[2].id));
+  const changedProperty = await scheduleSavedShowingTour(ctx, currentShift.id, scheduleInput(currentShift, changedPropertyReview), now); check("reviewbindspropertyrevision", !changedProperty.ok && changedProperty.reason === "stale_review");
+  const freshShift = await get(currentShift.id), beforeScopeReview = await review(freshShift);
+  await db.update(propertyLists).set({ ownerUserId: other.userId }).where(eq(propertyLists.id, listId));
+  const unavailable = await get(currentShift.id); check("ownmetadataretainedwithoutinaccessiblesourcenameorMLS", unavailable.sourceList === null && unavailable.stops.every(stop => stop.mlsNumber === null && !stop.available) && !JSON.stringify(unavailable).includes("Private personal list"));
+  const noScopeApply = await scheduleSavedShowingTour(ctx, currentShift.id, scheduleInput(freshShift, beforeScopeReview), now); check("withdrawnlistcannotapplyorreauthorizereceipt", !noScopeApply.ok && noScopeApply.reason === "source_unavailable" && !(await scheduleSavedShowingTour(ctx, draft.id, apply, now)).ok);
+  await db.update(propertyLists).set({ ownerUserId: actor.userId }).where(eq(propertyLists.id, listId));
+  let revoked = false; const revokeRouting: TourRoutingProvider = { ...routing, recommend: async (...args) => { const result = await routing.recommend(...args); if (!revoked) { revoked = true; await db.update(contacts).set({ assignedAgentUserId: other.userId }).where(eq(contacts.id, contactId)); } return result; } };
+  const scopeReview = await reviewSavedShowingTour(ctx, currentShift.id, { expectedUpdatedAt: currentShift.updatedAt }, mls, revokeRouting, now); check("postroutingrevocationneverreturnsreviewlocationsortoken", !scopeReview.ok && scopeReview.reason === "not_found");
+  await db.update(contacts).set({ assignedAgentUserId: actor.userId }).where(eq(contacts.id, contactId));
+  withheld.add(properties[2].listingId); const beforeWithheld = roads, hiddenReview = await reviewSavedShowingTour(ctx, currentShift.id, { expectedUpdatedAt: currentShift.updatedAt }, mls, routing, now); check("withheldlocationpreventsroadcalculation", !hiddenReview.ok && hiddenReview.reason === "unresolved_stops" && roads === beforeWithheld); withheld.clear();
+  const noConfigBefore = mlsCalls, noConfig = await reviewSavedShowingTour(ctx, currentShift.id, { expectedUpdatedAt: currentShift.updatedAt }, mls, { ...routing, map: { kind: "not_configured" } }, now); check("notconnectedreviewmakesnoMLSorroadcalls", !noConfig.ok && noConfig.reason === "not_configured" && mlsCalls === noConfigBefore);
+  const endpoints = await create({ ...input([4, 5, 6, 7]), startsAt: "2026-11-05T15:00:00Z", originAddress: "Private typed start", endMode: "address", endAddress: "Private typed finish" });
+  await review(endpoints); check("explicitendpointsforwardedasprivateJSONroutingpreferences", (options as TourPlanOptions | null)?.originAddress === "Private typed start" && (options as TourPlanOptions | null)?.endAddress === "Private typed finish" && maxFlight === 4);
+  const lateSource = await create({ ...input([2, 3]), startsAt: "2026-11-06T15:00:00Z" }), sourceReview = await review(lateSource), sourceApply = scheduleInput(lateSource, sourceReview), beforeAssocRows = (await db.select().from(showings)).length;
+  const changedAssoc = await race(async () => { await db.update(propertyLists).set({ contactId: secondContactId }).where(eq(propertyLists.id, listId)); }, () => scheduleSavedShowingTour(ctx, lateSource.id, sourceApply, now));
+  check("latelistassociationchangeinvalidatesreviewevenfordifferenttourclient", !changedAssoc.ok && changedAssoc.reason === "stale_review" && (await db.select().from(showings)).length === beforeAssocRows);
+  await db.update(propertyLists).set({ contactId: null }).where(eq(propertyLists.id, listId));
+  const stopReview = await review(lateSource), stopApply = scheduleInput(lateSource, stopReview);
+  const changedStop = await race(async () => { await db.update(savedTourStops).set({ visitMinutes: 45 }).where(eq(savedTourStops.id, lateSource.stops[0].id)); }, () => scheduleSavedShowingTour(ctx, lateSource.id, stopApply, now));
+  check("latechildconfigurationchangecannotbypasssignedsnapshot", !changedStop.ok && changedStop.reason === "stale_review" && (await db.select().from(showings)).length === beforeAssocRows);
+  const latestLocked = await get(draft.id), linkedReview = await review(latestLocked);
+  await db.update(showings).set({ notes: "New private showing note after review", updatedAt: new Date(now.getTime() + 9000) }).where(eq(showings.id, scheduled.value.showingIds[1]));
+  const staleLinked = await scheduleSavedShowingTour(ctx, latestLocked.id, scheduleInput(latestLocked, linkedReview), now);
+  check("linkedshowingrevisionprotectsnewerprivatenotes", !staleLinked.ok && staleLinked.reason === "stale_review" && (await db.select().from(showings).where(eq(showings.id, scheduled.value.showingIds[1])))[0].notes === "New private showing note after review");
+  const memberApply = await scheduleSavedShowingTour(member, latestLocked.id, scheduleInput(latestLocked, linkedReview), now); check("membercannotapplyevenwithvalidsignedreview", !memberApply.ok && memberApply.reason === "forbidden");
+  const wrongOwner = await scheduleSavedShowingTour({ actor: admin, db }, latestLocked.id, scheduleInput(latestLocked, linkedReview), now); check("admincannotapplyanotherownerssignedreview", !wrongOwner.ok && wrongOwner.reason === "not_found");
+  const allAudits = await db.select().from(auditEvents); check("noendpointsorroutegeometryeverenteraudit", !/Private typed|coordinates|mapPolyline|Synthetic roads/.test(JSON.stringify(allAudits)));
+  const archiveBody = { requestId: randomUUID(), expectedUpdatedAt: endpoints.updatedAt }, archived = await archiveSavedShowingTour(ctx, endpoints.id, archiveBody, now); check("archiveisrecoverablesoftstate", archived.ok && archived.value.archivedAt === now.toISOString() && !archived.value.canEdit);
+  check("archiveidempotentandreviewsrefused", (await archiveSavedShowingTour(ctx, endpoints.id, archiveBody, now)).ok && !(await reviewSavedShowingTour(ctx, endpoints.id, { expectedUpdatedAt: archived.value.updatedAt }, mls, routing, now)).ok);
+  const archivedPage = await getSavedShowingTours(ctx, { archived: true }); check("archivegalleryseparatewithaccuratecount", archivedPage.ok && archivedPage.value.total === 1 && archivedPage.value.items[0].id === endpoints.id);
+  console.log(`${passed}/${passed} saved showing tour checks passed (isolated PostgreSQL, fake MLS/sample routing; no live access)`);
+} finally { db.batch = originalBatch; await pg.close(); }

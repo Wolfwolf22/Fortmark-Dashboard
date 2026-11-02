@@ -431,3 +431,49 @@ scope and the complete fingerprint after resolving their locations/calculation.
 ```sh
 node --experimental-strip-types --no-warnings tools/design-preview/test-tour-session.mjs
 ```
+
+## Saved tours and reviewed scheduling
+
+`/showing-tours` renders the actual saved-tour workspace. Open its **Saturday
+buyer tour** fixture at `?tour=86000000-0000-4000-8000-000000000001`. It references
+the six-property Saturday list and the existing six appointments. A second draft
+uses the separate personal research list, a third belongs to another owner and
+remains private, and an archived draft demonstrates retained history. These are
+session-only synthetic records. Reload resets drafts and schedule changes; no
+browser storage, account service or provider content is persisted.
+
+The real saved-tour client adapter uses the isolated `/api/showing-tours`
+transport for index/detail/create/edit/archive/review/schedule. Editing stores
+only user-authored settings and opaque references. Reopening rebuilds the view
+from current synthetic memberships and appointments, without a cached map or
+route. CAS revisions and actor-scoped UUID receipts prevent stale replacement
+and duplicate operations. Contact merges include saved-tour children in their
+fingerprints and reparent references while retaining saved-tour identities.
+
+An explicit schedule review resolves current locations, applies the production
+optimizer to sample road matrices, and returns concrete current/proposed/kept
+slots. Its HMAC-signed token contains only safe references, times, revisions and
+a fingerprint; a deliberately synthetic per-tour key is used only in this
+harness. Reviews expire after 15 minutes. Confirm rechecks contact/list ownership,
+memberships, existing appointments, the tour revision and all owner-calendar
+overlaps before committing every appointment together. Locked appointments keep
+their real duration and times. A failed guard writes nothing. An exact committed
+request recovers after token expiry without duplicating appointments, provided
+the source and contact remain authorized. Planning and scheduling never create
+contact touches, overwrite next actions, send invitations or change research.
+
+Sample endpoint examples are **Sample FortMark office**, **Sample client meeting
+point**, and **Sample coastal meeting point**. Only these named fictional
+addresses resolve. Their explicit asymmetric road vectors and local coordinates
+produce A/B pins and driving totals that include the start/end legs. Returning
+to start uses the origin address when supplied, or the first property otherwise.
+An unrecognized address returns `unresolved_endpoint`; the preview never
+geocodes or converts air distance into a driving estimate. Records can calculate
+a read-only review, while mutations require Interactive samples.
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-saved-tour-session.mjs
+```
+
+See [saved tour behavior](../../docs/SAVED_SHOWING_TOURS.md) for persistence and
+review semantics.

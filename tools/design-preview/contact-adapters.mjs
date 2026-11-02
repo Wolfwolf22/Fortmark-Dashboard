@@ -191,8 +191,8 @@ export async function getLeadSource() { return "db"; }
 export async function getLead(id) {
   const contact = readSampleContact(id);
   const route = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("view") || "";
-  const pickerAlias = contact && previewRecordId(id) !== id && /^\/(showings|property-lists)(\?|$)/.test(route);
-  return copy(contact ? { ...remoteProjection(contact), ...(pickerAlias ? { id: previewPublicRecordId(contact.id) } : contact.id !== id ? { requestedContactId: id } : {}) } : undefined);
+  const pickerAlias = contact && /^\/(showings|showing-tours|property-lists)(\?|$)/.test(route);
+  return copy(contact ? { ...remoteProjection(contact), ...(pickerAlias ? { id: previewPublicRecordId(contact.id), ...(id !== previewPublicRecordId(contact.id) ? { requestedContactId: id } : {}) } : contact.id !== id ? { requestedContactId: id } : {}) } : undefined);
 }
 export async function getLeads(filters = {}, range) {
   const result = rows().filter(contact => {
@@ -222,7 +222,7 @@ export async function getLeadsPage(query) {
   // Project the existing stable aliases only in these isolated picker routes;
   // contact pages and old readable sample links keep their original identity.
   const route = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("view") || "";
-  const picker = /^\/(showings|property-lists)(\?|$)/.test(route);
+  const picker = /^\/(showings|showing-tours|property-lists)(\?|$)/.test(route);
   const contacts = picker ? rows().filter(person => person.recordSource === "db").map(person => ({ ...person, id: previewPublicRecordId(person.id) })) : rows();
   return copy(applyQuery(contacts, query, new Date(), SAMPLE_ACTOR.userId));
 }

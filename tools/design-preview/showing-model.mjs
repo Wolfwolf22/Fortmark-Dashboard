@@ -122,3 +122,33 @@ export function getSampleShowingActivity() {
 }
 export function readSampleContactShowings(id) { return copy(all().filter(item => item.contactId === id)); }
 export function reparentSampleShowings(from, to) { for (const value of records.values()) if (value.contactId === from) records.set(value.id, { ...value, contactId: to }); }
+export function readAllSampleShowings() { return copy(all()); }
+/** Validate every reviewed slot before changing any synthetic appointment. */
+export function checkSampleShowingSchedule(contactId, slots, now = new Date()) {
+  const person = contact(contactId), existingIds = new Set(slots.flatMap(slot => slot.showingId ? [slot.showingId] : []));
+  const planned = slots.map(slot => {
+    const linked = accessibleSource(slot.propertyId);
+    if (!linked || linked.member.removedAt) fail("source_unavailable", 409);
+    const current = slot.showingId ? own(slot.showingId) : null;
+    if (current && (current.contactId !== person.id || current.sourcePropertyId !== slot.propertyId || current.dataset !== linked.member.dataset || current.listingId !== linked.member.listingId)) fail("stale_review", 409);
+    if (current && current.status !== "scheduled") fail("invalid_transition", 409);
+    if (current && Date.parse(current.updatedAt) !== Date.parse(slot.expectedShowingUpdatedAt)) fail("stale_review", 409);
+    if (slot.kept && (!current || current.startsAt !== slot.startsAt || current.endsAt !== slot.endsAt)) fail("stale_review", 409);
+    if (!checkShowingSchedule(slot, now, slot.kept ? current : undefined)) fail("invalid_date");
+    return { slot, current, linked };
+  });
+  for (const [index, value] of planned.entries()) {
+    if (planned.slice(index + 1).some(other => showingsOverlap(value.slot, other.slot)) || all().some(other => other.ownerUserId === SAMPLE_ACTOR.userId && other.status === "scheduled" && !existingIds.has(other.id) && showingsOverlap(value.slot, other))) fail("time_conflict", 409);
+  }
+  return { person, planned };
+}
+export function applySampleShowingSchedule(contactId, slots, now = new Date()) {
+  writable(); const { person, planned } = checkSampleShowingSchedule(contactId, slots, now);
+  const next = planned.map(({ slot, current, linked }) => {
+    if (slot.kept) return current;
+    const stamp = current ? nextSampleRevision(current.updatedAt) : now.toISOString();
+    return current ? { ...current, startsAt: slot.startsAt, endsAt: slot.endsAt, updatedAt: stamp } : { id: crypto.randomUUID(), ownerUserId: SAMPLE_ACTOR.userId, contactId: person.id, sourcePropertyId: linked.member.id, dataset: linked.member.dataset, listingId: linked.member.listingId, mlsNumber: linked.member.mlsNumber, startsAt: slot.startsAt, endsAt: slot.endsAt, meetingDetails: "", notes: "", status: "scheduled", feedbackLikes: "", feedbackConcerns: "", feedbackSummary: "", visitedAt: null, cancelReason: "", createdAt: stamp, updatedAt: stamp };
+  });
+  next.forEach(item => records.set(item.id, copy(item)));
+  return next.map(item => ({ id: item.id, propertyId: item.sourcePropertyId, updatedAt: item.updatedAt }));
+}

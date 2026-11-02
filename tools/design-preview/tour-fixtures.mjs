@@ -26,3 +26,22 @@ export function sampleRoadMatrix(listingIds) {
   const indexes = listingIds.map(id => sampleTourListings.findIndex(listing => listing.id === id));
   return indexes.map((from, row) => indexes.map((to, column) => row === column ? { durationSeconds: 0, distanceMeters: 0 } : from < 0 || to < 0 ? { durationSeconds: null, distanceMeters: null } : { durationSeconds: minutes[from][to] * 60, distanceMeters: meters[from][to] }));
 }
+const endpoints = {
+  "sample fortmark office": { coordinates: { lat: 26.087, lng: -80.337 }, to: [7, 13, 19, 25, 32, 38], from: [8, 14, 20, 26, 33, 39], meters: [3200, 7600, 11900, 16200, 21400, 25800] },
+  "sample client meeting point": { coordinates: { lat: 26.112, lng: -80.267 }, to: [17, 11, 6, 9, 15, 22], from: [18, 12, 7, 10, 16, 23], meters: [11500, 7200, 3100, 5200, 9400, 14000] },
+  "sample coastal meeting point": { coordinates: { lat: 26.137, lng: -80.132 }, to: [36, 30, 23, 16, 9, 5], from: [37, 31, 24, 17, 10, 6], meters: [24100, 19600, 15400, 11000, 6500, 2300] },
+};
+/** Resolve only the explicitly named fictional endpoints. Never geocode. */
+export function sampleEndpointOptions(value, listingIds) {
+  const resolve = address => {
+    const endpoint = endpoints[address.trim().toLowerCase().replace(/\s+/g, " ")];
+    if (!endpoint) { const error = new Error("unresolved_endpoint"); error.code = "unresolved_endpoint"; error.status = 422; throw error; }
+    return endpoint;
+  };
+  const cells = (endpoint, direction) => listingIds.map(id => { const index = sampleTourListings.findIndex(listing => listing.id === id); return index < 0 ? { durationSeconds: null, distanceMeters: null } : { durationSeconds: endpoint[direction][index] * 60, distanceMeters: endpoint.meters[index] }; });
+  const origin = value.originAddress?.trim() ? resolve(value.originAddress) : null;
+  const mode = value.endMode || (value.returnToStart ? "return_to_start" : "last_property");
+  const destination = mode === "address" ? resolve(value.endAddress || "") : mode === "return_to_start" && origin ? origin : null;
+  return { options: { ...(origin ? { originTravel: cells(origin, "to") } : {}), ...(destination ? { endTravel: cells(destination, "from") } : {}), returnToStart: mode === "return_to_start" && !origin },
+    ...(origin ? { originPoint: { ...origin.coordinates } } : {}), ...(destination ? { destinationPoint: { ...destination.coordinates } } : {}) };
+}

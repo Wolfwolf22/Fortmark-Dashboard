@@ -10,22 +10,26 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { getShowingTourContext, getShowingTourRecommendation } from "@/lib/data/adapters/showing-tours";
 import type { TourContext, TourRecommendation, TourStop } from "@/lib/showings/tour-domain";
+import type { SavedTourSettings } from "@/lib/showings/saved-tour-domain";
 import { formatCalendarDayShort } from "@/lib/metrics/business-day";
 import { formatShowingTime } from "./shared";
 import { TourMapView, type TourMapPoint } from "./tour-map";
 import { TourEstimateAttribution, TourItinerary, TourRouteSummary } from "./tour-itinerary";
 import { currentTourResponse, tourRecommendationStops, canSelectTourStop, initialTourDraft, moveTourStop, orderedTourSelection, sameTourScope, toggleTourStop, tourDraftKey, tourFailure, tourInputForDraft, tourLocationIssue, tourStopLabel, visibleTourRecommendation, type TourDraft } from "./tour-state";
+import { SavedTourSaveDialog } from "./saved-tour-save-dialog";
+import { savedTourFromAdvisory } from "./saved-tour-state";
 
 export function mergeTourStops(stops: TourStop[], candidates: TourStop[]): TourStop[] { const rows = new Map<string, TourStop>(); candidates.forEach((stop) => rows.set(stop.propertyId, stop)); stops.forEach((stop) => rows.set(stop.propertyId, stop)); return [...rows.values()]; }
 export function TourScope({ context }: { context: TourContext }) { return <p className="break-words text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"><span className="sm:hidden">{context.list?.name || "Original list unavailable"} · {formatCalendarDayShort(context.day)}</span><span className="hidden sm:inline">{context.contactName} · {context.list?.name || "Original list unavailable"} · {formatCalendarDayShort(context.day)}, {context.day.slice(0, 4)} · New York time</span></p>; }
 
-export function ShowingTourPanel({ showingId }: { showingId: string }) {
+export function ShowingTourPanel({ showingId, canSave = false }: { showingId: string; canSave?: boolean }) {
   const prefix = useId(), alert = useRef<HTMLParagraphElement>(null), requestSequence = useRef(0), contextSequence = useRef(0), latestView = useRef("");
   const [context, setContext] = useState<TourContext | null>(null), [draft, setDraft] = useState<TourDraft | null>(null), [candidates, setCandidates] = useState<TourStop[]>([]), [candidatePage, setCandidatePage] = useState(1);
   const [pendingContext, setPendingContext] = useState<TourContext | null>(null), [reviewNeeded, setReviewNeeded] = useState(false), [epoch, setEpoch] = useState(0);
   const [loading, setLoading] = useState(true), [refreshing, setRefreshing] = useState(false), [loadingCandidates, setLoadingCandidates] = useState(false), [calculating, setCalculating] = useState(false), [settingsOpen, setSettingsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null), [selectedId, setSelectedId] = useState<string | null>(null), [displayOrder, setDisplayOrder] = useState<"current" | "recommended">("current");
   const [answer, setAnswer] = useState<{ key: string; value: TourRecommendation } | null>(null);
+  const [saveSettings, setSaveSettings] = useState<SavedTourSettings | null>(null);
   useEffect(() => {
     let cancelled = false; const generation = ++contextSequence.current;
     setLoading(true); setError(null);
@@ -101,6 +105,7 @@ export function ShowingTourPanel({ showingId }: { showingId: string }) {
     {unknown.length > 0 && <div className="space-y-2 rounded-panel border border-dashed border-input p-3"><h4 className="text-xs font-semibold">Unresolved scheduled properties</h4>{unknown.map((stop) => <p key={stop.propertyId} className="break-words text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{tourStopLabel(stop)} · {tourLocationIssue(stop)}</p>)}</div>}
     {recommendation && <TourEstimateAttribution result={recommendation} />}
     <p className="border-t border-border pt-3 text-[11px] leading-relaxed text-muted-foreground">Advisory only · booked showings stay unchanged. Drive to the first property is not included.</p>
+    <SavedTourSaveDialog settings={saveSettings} onClose={() => setSaveSettings(null)} />
   </section>;
 }
 function CheckOption({ id, checked, onChange, children }: { id: string; checked: boolean; onChange: (checked: boolean) => void; children: React.ReactNode }) { return <div className="flex min-w-0 items-start gap-2"><Checkbox id={id} checked={checked} className="mt-1 shrink-0" onCheckedChange={(value) => onChange(value === true)} /><Label htmlFor={id} className="min-w-0 break-words py-1 text-xs font-normal leading-relaxed">{children}</Label></div>; }

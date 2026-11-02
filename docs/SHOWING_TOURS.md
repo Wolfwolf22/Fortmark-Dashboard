@@ -22,10 +22,9 @@ preserved. Parking/travel buffer, actual visit lengths and waiting for a fixed
 appointment contribute to the proposed timeline.
 
 If no sequence fits the fixed appointments, the planner says so. Choosing
-flexible times produces a planning draft. **Recommendations never reschedule,
-create or cancel appointments.** No schedule-apply endpoint is introduced.
-The user reviews the route and can use the existing showing controls to change
-individual bookings deliberately.
+flexible times produces a planning draft. **This embedded recommendation never changes appointments.** Save it as a named
+tour to review and confirm the whole schedule in the saved-tour workspace. See
+[SAVED_SHOWING_TOURS.md](SAVED_SHOWING_TOURS.md).
 
 When a first property is chosen, the comparison starts there in both orders.
 When the first property is recommended, the comparison uses the current
@@ -72,7 +71,8 @@ Without explicit activation and both keys, routing returns Not connected.
 
 The server requests a travel matrix for the chosen first-visit time and a road
 polyline for the suggested order. Requests go only to the fixed Google Routes
-API endpoints, contain coordinates/departure/routing preferences, and omit
+API endpoints, contain coordinates/departure/routing preferences (plus user-entered start/end
+addresses for saved tours), and omit
 contact names, MLS identifiers, saved membership IDs and private text. Bodies
 and response bodies are bounded and timed out. Billable recommendations are
 never automatically retried.
@@ -102,8 +102,8 @@ original zigzag order has 103 sample driving minutes; a flexible order has 38.
 Keeping appointments fixed preserves their actual fixture times. Preview
 changes remain in memory and reset on reload.
 
-No new database migration is required. Existing migrations 0015–0022 remain
-unapplied to live databases. Presentations remain deferred for a future AI or
+The original embedded route panel needed no migration. The saved-tour update
+adds migration 0023; migrations 0015–0023 remain unapplied to live databases. Presentations remain deferred for a future AI or
 MCP integration.
 
 ## Verification
