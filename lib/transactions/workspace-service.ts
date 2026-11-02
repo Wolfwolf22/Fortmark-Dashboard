@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { auditEvents, contacts, transactionDeadlines, transactionEvents, transactionParties, transactionWriteRequests, transactionChecklistItems, transactions, type TransactionDeadlineRow, type TransactionRow } from "../db/schema.ts";
+import { auditEvents, contacts, transactionDeadlines, transactionEvents, transactionParties, transactionWriteRequests, transactionChecklistItems, transactionChecklistAttachments, transactions, type TransactionDeadlineRow, type TransactionRow } from "../db/schema.ts";
 import { isRecordId } from "../db/ids.ts";
 import { visibleTo as visibleContacts } from "../contacts/visibility.ts";
 import { createPayloadHash, revisionMatches } from "../contacts/reliability.ts";
@@ -11,6 +11,8 @@ import { ALL_STAGES, isTerminalStage } from "./stages.ts";
 import { getTransaction, visibleTo, transactionRevisionGuard, transactionWriteLocks, nextTransactionRevision, transactionWriteReplay, isTransactionGuardConflict, type TransactionContext, type ServiceResult } from "./service.ts";
 import { updateTransactionWorkspaceSchema, transactionDeadlineMutationSchema, type TransactionDetails, type TransactionWorkspace, type TransactionHistoryView } from "./workspace-domain.ts";
 import { transactionChecklistMutationSchema, checklistProgress, type TransactionChecklistItem } from "./checklist-domain.ts";
+import { transactionFilesEnabled } from "./transaction-file-storage.ts";
+import { readTransactionVendorSelections } from "./vendor-service.ts";
 
 type Write = Parameters<TransactionContext["db"]["batch"]>[0][number];
 type Batch = Parameters<TransactionContext["db"]["batch"]>[0];
@@ -25,15 +27,17 @@ async function load(ctx: TransactionContext, id: string, write = false): Promise
 function details(row: TransactionRow): TransactionDetails { return { transactionType: row.transactionType, addressLine1: row.addressLine1, addressLine2: row.addressLine2, city: row.city, state: row.state, postalCode: row.postalCode, listingKey: row.listingKey, mlsNumber: row.mlsNumber,
   contractPriceCents: row.contractPriceCents, listPriceCents: row.listPriceCents, commissionRateBps: row.commissionRateBps, commissionFlatCents: row.commissionFlatCents, agentSplitBps: row.agentSplitBps, transactionFeeCents: row.transactionFeeCents, referralFeeBps: row.referralFeeBps,
   contractExecutionDate: row.contractExecutionDate, closingDate: row.closingDate, notes: row.notes ?? "" }; }
-const SAFE_FIELDS = ["transactionType", "addressLine1", "addressLine2", "city", "state", "postalCode", "listingKey", "mlsNumber", "contractPriceCents", "listPriceCents", "commissionRateBps", "commissionFlatCents", "agentSplitBps", "transactionFeeCents", "referralFeeBps", "contractExecutionDate", "closingDate", "notes", "kind", "label", "dueDate", "note", "completedAt", "removedAt"];
-const SAFE_ACTIONS = ["create", "edit", "stage", "add_deadline", "edit_deadline", "complete_deadline", "reopen_deadline", "remove_deadline", "complete_checklist", "reopen_checklist"];
+const SAFE_FIELDS = ["transactionType", "addressLine1", "addressLine2", "city", "state", "postalCode", "listingKey", "mlsNumber", "contractPriceCents", "listPriceCents", "commissionRateBps", "commissionFlatCents", "agentSplitBps", "transactionFeeCents", "referralFeeBps", "contractExecutionDate", "closingDate", "notes", "kind", "label", "dueDate", "note", "completedAt", "removedAt", "attachments", "attachmentRequired", "vendorId", "vendorStatus"];
+const SAFE_ACTIONS = ["create", "edit", "stage", "add_deadline", "edit_deadline", "complete_deadline", "reopen_deadline", "remove_deadline", "complete_checklist", "reopen_checklist", "upload_attachment", "remove_attachment", "set_attachment_requirement", "set_vendor"];
 export async function getTransactionWorkspace(ctx: TransactionContext, id: string, options: { historyPage?: number } = {}, now = new Date()): Promise<ServiceResult<TransactionWorkspace>> {
   const loaded = await load(ctx, id); if (!loaded.ok) return loaded; const row = loaded.value;
   const historyPage = options.historyPage ?? 1; if (!Number.isInteger(historyPage) || historyPage < 1 || historyPage > 1000000) return { ok: false, reason: "invalid_transaction" };
-  const [transaction, deadlines, checklistRows, parties, [count]] = await Promise.all([getTransaction(ctx, id, now),
+  const [transaction, deadlines, checklistRows, attachmentRows, parties, vendors, [count]] = await Promise.all([getTransaction(ctx, id, now),
     ctx.db.select().from(transactionDeadlines).where(and(eq(transactionDeadlines.transactionId, id), isNull(transactionDeadlines.removedAt))).orderBy(transactionDeadlines.sortOrder, transactionDeadlines.dueDate, transactionDeadlines.id),
     ctx.db.select().from(transactionChecklistItems).where(eq(transactionChecklistItems.transactionId, id)).orderBy(transactionChecklistItems.sortOrder, transactionChecklistItems.id),
+    ctx.db.select({ id: transactionChecklistAttachments.id, itemId: transactionChecklistAttachments.checklistItemId, filename: transactionChecklistAttachments.filename, contentType: transactionChecklistAttachments.contentType, sizeBytes: transactionChecklistAttachments.sizeBytes, createdAt: transactionChecklistAttachments.createdAt, updatedAt: transactionChecklistAttachments.updatedAt }).from(transactionChecklistAttachments).where(and(eq(transactionChecklistAttachments.transactionId, id), isNull(transactionChecklistAttachments.removedAt))).orderBy(transactionChecklistAttachments.createdAt, transactionChecklistAttachments.id),
     ctx.db.select().from(transactionParties).where(eq(transactionParties.transactionId, id)).orderBy(transactionParties.createdAt, transactionParties.id),
+    readTransactionVendorSelections(ctx, id),
     ctx.db.select({ n: sql<number>`count(*)::int` }).from(transactionEvents).where(eq(transactionEvents.transactionId, id)),
   ]);
   if (!transaction) return { ok: false, reason: "not_found" };
@@ -41,7 +45,7 @@ export async function getTransactionWorkspace(ctx: TransactionContext, id: strin
   const events = await ctx.db.select().from(transactionEvents).where(eq(transactionEvents.transactionId, id)).orderBy(desc(transactionEvents.createdAt), desc(transactionEvents.id)).limit(20).offset((page - 1) * 20);
   const ids = [...new Set(parties.flatMap(p => p.contactId ? [p.contactId] : []))], allowedContacts = ids.length ? await ctx.db.select({ id: contacts.id }).from(contacts).where(and(inArray(contacts.id, ids), visibleContacts(ctx.actor))) : [];
   const canOpen = new Set(allowedContacts.map(c => c.id));
-  const checklistItems: TransactionChecklistItem[] = checklistRows.map(item => ({ id: item.id, templateKey: item.templateKey, label: item.label, stage: item.stage as TransactionChecklistItem["stage"], required: item.required, sortOrder: item.sortOrder, completedAt: item.completedAt?.toISOString() ?? null, updatedAt: item.updatedAt.toISOString() }));
+  const checklistItems: TransactionChecklistItem[] = checklistRows.map(item => ({ id: item.id, templateKey: item.templateKey, label: item.label, stage: item.stage as TransactionChecklistItem["stage"], required: item.required, attachmentRequired: item.attachmentRequired, attachments: attachmentRows.filter(a => a.itemId === item.id).map(a => ({ ...a, createdAt: a.createdAt.toISOString(), updatedAt: a.updatedAt.toISOString() })), sortOrder: item.sortOrder, completedAt: item.completedAt?.toISOString() ?? null, updatedAt: item.updatedAt.toISOString() }));
   const history: TransactionHistoryView[] = events.map(event => { const meta = event.safeMetadata ?? {}, action = typeof meta.action === "string" && SAFE_ACTIONS.includes(meta.action) ? meta.action : event.eventType === "transaction_created" ? "create" : event.eventType === "transaction_stage_changed" ? "stage" : "edit";
     return { id: event.id, eventType: event.eventType, action, fields: Array.isArray(meta.fields) ? meta.fields.filter((field): field is string => typeof field === "string" && SAFE_FIELDS.includes(field)) : [],
       ...(typeof meta.from === "string" && ALL_STAGES.includes(meta.from as never) ? { fromStage: meta.from } : {}), ...(typeof meta.to === "string" && ALL_STAGES.includes(meta.to as never) ? { toStage: meta.to } : {}), createdAt: event.createdAt.toISOString() }; });
@@ -49,7 +53,7 @@ export async function getTransactionWorkspace(ctx: TransactionContext, id: strin
   const current = await load(ctx, id); if (!current.ok) return current; if (!revisionMatches(current.value.updatedAt, row.updatedAt.toISOString())) return { ok: false, reason: "conflict" };
   return { ok: true, value: { transaction, details: details(row), deadlines: deadlines.map(d => ({ id: d.id, kind: d.kind, label: d.label, dueDate: d.dueDate, note: d.note ?? "", completedAt: d.completedAt?.toISOString() ?? null, updatedAt: d.updatedAt.toISOString(), state: transactionDeadlineState(d.dueDate, d.completedAt, now) })),
     parties: parties.map(p => ({ id: p.id, role: p.role, displayName: p.displayName, company: p.company, email: p.email, phone: p.phoneE164, isPrimary: p.isPrimary, contactId: p.contactId && canOpen.has(p.contactId) ? p.contactId : null, canOpenContact: Boolean(p.contactId && canOpen.has(p.contactId)) })),
-    checklist: { templateVersion: row.checklistTemplateVersion, items: checklistItems, progress: checklistProgress(checklistItems) }, history: { items: history, total, page, pageSize: 20 }, canEdit: canWrite(ctx.actor, row) && !isTerminalStage(row.stage), updatedAt: row.updatedAt.toISOString() } };
+    checklist: { templateVersion: row.checklistTemplateVersion, items: checklistItems, progress: checklistProgress(checklistItems) }, attachmentUploadsEnabled: transactionFilesEnabled(), canManageTransactionSetup: ctx.actor.role === "admin", vendors, history: { items: history, total, page, pageSize: 20 }, canEdit: canWrite(ctx.actor, row) && !isTerminalStage(row.stage), updatedAt: row.updatedAt.toISOString() } };
 }
 function deadlineGuard(rows: TransactionDeadlineRow[], id: string) {
   return sql`(select count(*) from ${transactionDeadlines} where ${transactionDeadlines.transactionId}=${id}::uuid and ${transactionDeadlines.removedAt} is null)=${rows.length}
@@ -132,9 +136,11 @@ export async function mutateTransactionChecklist(ctx: TransactionContext, id: st
   if (!item) return { ok: false, reason: "not_found" };
   if (!revisionMatches(item.updatedAt, d.expectedItemUpdatedAt)) return { ok: false, reason: "conflict" };
   if (d.action === "complete" && item.completedAt || d.action === "reopen" && !item.completedAt) return { ok: false, reason: "invalid_checklist_transition" };
+  if (d.action === "complete" && item.attachmentRequired) { const [proof] = await ctx.db.select({ id: transactionChecklistAttachments.id }).from(transactionChecklistAttachments).where(and(eq(transactionChecklistAttachments.transactionId, id), eq(transactionChecklistAttachments.checklistItemId, item.id), isNull(transactionChecklistAttachments.removedAt))).limit(1); if (!proof) return { ok: false, reason: "attachment_required" }; }
   const next = nextTransactionRevision(row, now), childGuard = and(eq(transactionChecklistItems.id, d.itemId), eq(transactionChecklistItems.transactionId, id), sql`date_trunc('milliseconds',${transactionChecklistItems.updatedAt})=${d.expectedItemUpdatedAt}::timestamptz`, d.action === "complete" ? isNull(transactionChecklistItems.completedAt) : sql`${transactionChecklistItems.completedAt} is not null`);
-  const guard = sql`exists(select 1 from ${transactions} where ${transactionRevisionGuard(ctx, row, d.expectedUpdatedAt)}) and exists(select 1 from ${transactionChecklistItems} where ${childGuard})`;
+  const guard = sql`exists(select 1 from ${transactions} where ${transactionRevisionGuard(ctx, row, d.expectedUpdatedAt)}) and exists(select 1 from ${transactionChecklistItems} where ${childGuard}) ${d.action === "complete" ? sql`and (not exists(select 1 from ${transactionChecklistItems} where ${transactionChecklistItems.id}=${item.id}::uuid and ${transactionChecklistItems.attachmentRequired}=true) or exists(select 1 from ${transactionChecklistAttachments} where ${transactionChecklistAttachments.transactionId}=${id}::uuid and ${transactionChecklistAttachments.checklistItemId}=${item.id}::uuid and ${transactionChecklistAttachments.removedAt} is null))` : sql``}`;
   const writes: Write[] = [...transactionWriteLocks(ctx, id), ctx.db.select({ id: transactionChecklistItems.id }).from(transactionChecklistItems).where(eq(transactionChecklistItems.transactionId, id)).orderBy(transactionChecklistItems.id).for("update"),
+    ctx.db.select({ id: transactionChecklistAttachments.id }).from(transactionChecklistAttachments).where(eq(transactionChecklistAttachments.transactionId, id)).orderBy(transactionChecklistAttachments.id).for("update"),
     ctx.db.insert(transactionWriteRequests).values({ actorUserId: ctx.actor.userId, requestId: d.requestId, transactionId: id, action, payloadHash: sql`case when ${guard} then ${hash}::text else null end`, result: { transactionId: id, updatedAt: next.toISOString() }, createdAt: now }),
     ctx.db.update(transactions).set({ updatedAt: next, updatedByUserId: ctx.actor.userId }).where(transactionRevisionGuard(ctx, row, d.expectedUpdatedAt)),
     ctx.db.update(transactionChecklistItems).set({ completedAt: d.action === "complete" ? now : null, completedByUserId: d.action === "complete" ? ctx.actor.userId : null, updatedAt: sql`greatest(date_trunc('milliseconds',${transactionChecklistItems.updatedAt})+interval '1 millisecond',${next.toISOString()}::timestamptz)` }).where(childGuard),

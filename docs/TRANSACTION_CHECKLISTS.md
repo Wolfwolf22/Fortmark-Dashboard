@@ -46,7 +46,10 @@ explicit receipt-recovery mechanism as the transaction workspace.
 
 ## Admin editing later
 
-The admin template editor is intentionally deferred. Brokerage leadership should
+Checklist label/stage editing remains deferred. Admin file requirements,
+new-file defaults and the approved vendor directory are now available through
+Transaction setup; see [TRANSACTION_FILES_AND_VENDORS.md](TRANSACTION_FILES_AND_VENDORS.md).
+Brokerage leadership should
 approve the actual required items for its transaction types and market before
 relying on this workflow for its compliance process. Future template editing
 should create another version and explicitly apply changes to existing file

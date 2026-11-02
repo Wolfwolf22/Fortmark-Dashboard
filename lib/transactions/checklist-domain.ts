@@ -1,6 +1,8 @@
 /** Versioned operational starter. It records reviewed work; it does not certify compliance. */
 import { z } from "zod";
 import { ACTIVE_STAGES, stageIndex, type ActiveStage, type TransactionStage } from "./stages.ts";
+import type { TransactionChecklistAttachment } from "./attachment-domain.ts";
+import { checklistItemSatisfied } from "./attachment-domain.ts";
 
 export const TRANSACTION_CHECKLIST_VERSION = "brokerage-starter-v1";
 export interface TransactionChecklistTemplateItem {
@@ -8,6 +10,7 @@ export interface TransactionChecklistTemplateItem {
   label: string;
   stage: ActiveStage;
   required: boolean;
+  attachmentRequired: boolean;
   sortOrder: number;
 }
 
@@ -24,12 +27,13 @@ export const DEFAULT_TRANSACTION_CHECKLIST: readonly TransactionChecklistTemplat
   { templateKey: "financing.contingencies", label: "Confirm outstanding contingencies have been reviewed", stage: "financing", required: true, sortOrder: 9 },
   { templateKey: "closing.review", label: "Confirm the final file review is complete", stage: "closing_prep", required: true, sortOrder: 10 },
   { templateKey: "closing.arrangements", label: "Record closing arrangements and client instructions", stage: "closing_prep", required: true, sortOrder: 11 },
-].map(item => Object.freeze(item as TransactionChecklistTemplateItem)));
+].map(item => Object.freeze({ ...item, attachmentRequired: false } as TransactionChecklistTemplateItem)));
 
 export interface TransactionChecklistItem extends TransactionChecklistTemplateItem {
   id: string;
   completedAt: string | null;
   updatedAt: string;
+  attachments: TransactionChecklistAttachment[];
 }
 export interface TransactionChecklist {
   templateVersion: string;
@@ -51,15 +55,15 @@ export function checklistRequiredStages(from: TransactionStage, to: TransactionS
   if (target < 0 || from !== "on_hold" && (stageIndex(from) < 0 || target <= stageIndex(from))) return [];
   return ACTIVE_STAGES.slice(0, target);
 }
-export function checklistBlockers<T extends { stage: ActiveStage; required: boolean; completedAt: string | Date | null }>(items: readonly T[], from: TransactionStage, to: TransactionStage): T[] {
+export function checklistBlockers<T extends { stage: ActiveStage; required: boolean; completedAt: string | Date | null; attachmentRequired?: boolean; attachments?: readonly unknown[]; attachmentCount?: number }>(items: readonly T[], from: TransactionStage, to: TransactionStage): T[] {
   const stages = checklistRequiredStages(from, to);
-  return items.filter(item => item.required && !item.completedAt && stages.includes(item.stage));
+  return items.filter(item => item.required && !checklistItemSatisfied(item) && stages.includes(item.stage));
 }
 /** Missing stage snapshots fail closed rather than silently granting advancement. */
 export function checklistMissingStages(items: readonly Pick<TransactionChecklistItem, "stage">[], from: TransactionStage, to: TransactionStage): ActiveStage[] {
   return checklistRequiredStages(from, to).filter(stage => !items.some(item => item.stage === stage));
 }
-export function checklistProgress(items: readonly { required: boolean; completedAt: string | Date | null }[]): TransactionChecklist["progress"] {
+export function checklistProgress(items: readonly { required: boolean; completedAt: string | Date | null; attachmentRequired?: boolean; attachments?: readonly unknown[]; attachmentCount?: number }[]): TransactionChecklist["progress"] {
   const required = items.filter(item => item.required);
-  return { completed: required.filter(item => item.completedAt !== null).length, required: required.length };
+  return { completed: required.filter(checklistItemSatisfied).length, required: required.length };
 }

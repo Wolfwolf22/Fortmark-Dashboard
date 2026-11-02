@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Transaction, TransactionType, MilestoneKey } from "../data/types.ts";
 import { deadlineInputSchema } from "./validation.ts";
 import type { TransactionChecklist } from "./checklist-domain.ts";
+import type { TransactionVendorSelectionView } from "./vendor-domain.ts";
 
 const text = (cap: number) => z.string().max(cap).refine(value => !value.includes("\u0000"), "Invalid text.");
 const optionalText = (cap: number) => text(cap).trim().nullable();
@@ -31,7 +32,7 @@ export interface TransactionDeadlineView { id: string; kind: MilestoneKey; label
 export interface TransactionPartyView { id: string; role: string; displayName: string; company: string | null; email: string | null; phone: string | null; isPrimary: boolean; contactId: string | null; canOpenContact: boolean }
 export interface TransactionHistoryView { id: string; eventType: string; action: string; fields: string[]; fromStage?: string; toStage?: string; createdAt: string }
 export interface TransactionHistoryPage { items: TransactionHistoryView[]; total: number; page: number; pageSize: number }
-export interface TransactionWorkspace { transaction: Transaction; details: TransactionDetails; deadlines: TransactionDeadlineView[]; checklist: TransactionChecklist; parties: TransactionPartyView[]; history: TransactionHistoryPage; canEdit: boolean; updatedAt: string }
+export interface TransactionWorkspace { transaction: Transaction; details: TransactionDetails; deadlines: TransactionDeadlineView[]; checklist: TransactionChecklist; vendors: TransactionVendorSelectionView[]; attachmentUploadsEnabled: boolean; canManageTransactionSetup: boolean; parties: TransactionPartyView[]; history: TransactionHistoryPage; canEdit: boolean; updatedAt: string }
 export function readTransactionWorkspaceQuery(params: URLSearchParams): { historyPage: number } | null {
   if ([...params.keys()].some(key => key !== "historyPage") || params.getAll("historyPage").length > 1) return null;
   const raw = params.get("historyPage"); return raw === null ? { historyPage: 1 } : /^\d{1,7}$/.test(raw) && Number(raw) >= 1 && Number(raw) <= 1000000 ? { historyPage: Number(raw) } : null;

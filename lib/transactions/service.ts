@@ -19,7 +19,7 @@ import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb, type Db } from "../db/client.ts";
 import {
   auditEvents,
-  contacts, dashboardUsers, transactionWriteRequests, transactionChecklistItems,
+  contacts, dashboardUsers, transactionWriteRequests, transactionChecklistItems, transactionChecklistAttachments,
   professionalProfiles,
   transactionDeadlines,
   transactionEvents,
@@ -71,7 +71,8 @@ export type ServiceFailure =
   | "invalid_transition"
   | "invalid_assignee"
   | "invalid_contact"
-  | "conflict" | "request_conflict" | "invalid_transaction" | "closing_deadline_conflict" | "invalid_deadline_transition" | "checklist_incomplete" | "checklist_not_ready" | "invalid_checklist_transition";
+  | "conflict" | "request_conflict" | "invalid_transaction" | "closing_deadline_conflict" | "invalid_deadline_transition" | "checklist_incomplete" | "checklist_not_ready" | "invalid_checklist_transition"
+  | "invalid_attachment" | "file_too_large" | "attachment_required" | "attachment_requires_reopen" | "attachment_not_configured" | "attachment_unavailable" | "attachment_limit" | "vendor_unavailable";
 
 /** The role a contact takes on the deal, by which side FortMark represents. */
 const CLIENT_PARTY_ROLE: Record<TransactionSideKey, "seller" | "buyer" | "landlord" | "tenant"> = {
@@ -228,14 +229,17 @@ export function isTransactionGuardConflict(error: unknown): boolean {
 /** A snapshot must exist for each crossed stage; absence is never permission to advance. */
 export async function transactionChecklistGate(ctx: TransactionContext, id: string, from: TransactionStage, to: TransactionStage): Promise<ServiceResult<true>> {
   const stages = checklistRequiredStages(from, to); if (!stages.length) return { ok: true, value: true };
-  const items = await ctx.db.select({ stage: transactionChecklistItems.stage, required: transactionChecklistItems.required, completedAt: transactionChecklistItems.completedAt }).from(transactionChecklistItems).where(eq(transactionChecklistItems.transactionId, id));
+  // Keep the correlated outer identifiers qualified: select-field rendering otherwise strips them.
+  const items = await ctx.db.select({ stage: transactionChecklistItems.stage, required: transactionChecklistItems.required, completedAt: transactionChecklistItems.completedAt, attachmentRequired: transactionChecklistItems.attachmentRequired,
+    attachmentCount: sql<number>`(select count(*)::int from ${transactionChecklistAttachments} a where a.transaction_id=transaction_checklist_items.transaction_id and a.checklist_item_id=transaction_checklist_items.id and a.removed_at is null)`,
+  }).from(transactionChecklistItems).where(eq(transactionChecklistItems.transactionId, id));
   const checked = items.map(item => ({ ...item, stage: item.stage as (typeof stages)[number] }));
   if (checklistMissingStages(checked, from, to).length) return { ok: false, reason: "checklist_not_ready" };
   return checklistBlockers(checked, from, to).length ? { ok: false, reason: "checklist_incomplete" } : { ok: true, value: true };
 }
 function checklistGateSql(id: string, from: TransactionStage, to: TransactionStage) {
   const stages = checklistRequiredStages(from, to); if (!stages.length) return sql`true`;
-  return sql`not exists(select 1 from ${transactionChecklistItems} where ${transactionChecklistItems.transactionId}=${id}::uuid and ${inArray(transactionChecklistItems.stage, [...stages])} and ${transactionChecklistItems.required}=true and ${transactionChecklistItems.completedAt} is null)
+  return sql`not exists(select 1 from ${transactionChecklistItems} where ${transactionChecklistItems.transactionId}=${id}::uuid and ${inArray(transactionChecklistItems.stage, [...stages])} and ${transactionChecklistItems.required}=true and (${transactionChecklistItems.completedAt} is null or (${transactionChecklistItems.attachmentRequired}=true and not exists(select 1 from ${transactionChecklistAttachments} a where a.transaction_id=transaction_checklist_items.transaction_id and a.checklist_item_id=transaction_checklist_items.id and a.removed_at is null))))
     and ${sql.join(stages.map(stage => sql`exists(select 1 from ${transactionChecklistItems} where ${transactionChecklistItems.transactionId}=${id}::uuid and ${transactionChecklistItems.stage}=${stage})`), sql` and `)}`;
 }
 
@@ -361,6 +365,7 @@ export async function planStageChange(
       writes: [
         ...transactionWriteLocks(ctx, id),
         ctx.db.select({ id: transactionChecklistItems.id }).from(transactionChecklistItems).where(eq(transactionChecklistItems.transactionId, id)).orderBy(transactionChecklistItems.id).for("update"),
+        ctx.db.select({ id: transactionChecklistAttachments.id }).from(transactionChecklistAttachments).where(eq(transactionChecklistAttachments.transactionId, id)).orderBy(transactionChecklistAttachments.id).for("update"),
         ctx.db.insert(transactionWriteRequests).values({ actorUserId: ctx.actor.userId, requestId, transactionId: id, action: "stage", payloadHash: sql`case when exists(select 1 from ${transactions} where ${guard}) and ${checklistGateSql(id, from, to)} then ${hash}::text else null end`, result: { transactionId: id, updatedAt: next.toISOString() }, createdAt: now }),
         ctx.db
           .update(transactions)

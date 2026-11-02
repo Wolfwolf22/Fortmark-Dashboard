@@ -1,8 +1,10 @@
 import { parseTransactionFilters } from "../../lib/transactions/filters.ts";
 import { readTransactionWorkspaceQuery } from "../../lib/transactions/workspace-domain.ts";
 import { listPreviewTransactions, getPreviewTransaction, getPreviewTransactionWorkspace, createPreviewTransaction, changePreviewTransactionStage, updatePreviewTransactionWorkspace, mutatePreviewTransactionDeadline, mutatePreviewTransactionChecklist } from "./transaction-model.mjs";
+import { transactionOperationsTransport } from "./transaction-operations-transport.mjs";
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 export async function transactionTransport(path, url, input, init = {}) {
+  const operation=await transactionOperationsTransport(path,url,input,init);if(operation)return operation;
   if (path !== "/api/transactions" && !path.startsWith("/api/transactions/")) return undefined;
   const method = (init.method || (typeof input === "object" && input.method) || "GET").toUpperCase();
   try {

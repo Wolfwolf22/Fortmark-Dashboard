@@ -77,7 +77,9 @@ permission or revision refusal does not unlock a second create while that
 original result is unknown.
 
 Migration 0024 adds removed_at and transaction_write_requests. Migration 0025
-adds the versioned checklist snapshots. Both remain unapplied live, together
+adds versioned checklist snapshots. Migration 0026 adds private evidence and
+approved vendor selection; see [TRANSACTION_FILES_AND_VENDORS.md](TRANSACTION_FILES_AND_VENDORS.md).
+These remain unapplied live, together
 with pending earlier local migrations. No live
 provider calls, data changes, deployment or remote push is part of this build.
 
@@ -90,10 +92,10 @@ HTTP/client adapters and UI state. The isolated preview uses synthetic memory
 records and the real UI. Reload resets its edits. Test totals and desktop/phone
 screenshots are recorded in the task release outputs.
 
-The full local suite completed with 7,277 numbered checks passing, including
-the stage checklist update. TypeScript and whitespace checks pass. The isolated
-preview suite passes all 150 groups, including 20 transaction groups and 12
-checklist groups. Authenticated live end-to-end
+The full local suite completed with 7,886 numbered checks passing, including
+the checklist files and vendor update. TypeScript and whitespace checks pass.
+The isolated preview suite passes all 165 groups, including 20 transaction,
+12 checklist and 15 file/vendor operation groups. Authenticated live end-to-end
 certification and a production build/deployment have not been run.
 
 Manual browser review covered a new opportunity with no invented dates or

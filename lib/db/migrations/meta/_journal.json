@@ -183,6 +183,13 @@
       "when": 1794013200000,
       "tag": "0025_transaction_checklists",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794016800000,
+      "tag": "0026_transaction_files_and_vendors",
+      "breakpoints": true
     }
   ]
 }

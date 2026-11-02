@@ -525,4 +525,22 @@ node --experimental-strip-types --no-warnings tools/design-preview/test-transact
 ```
 
 The Open stage checklist link keeps its fragment separate from the record ID
-and focuses the checklist after navigation. Total isolated preview groups: 150.
+and focuses the checklist after navigation.
+
+Transaction setup now provides Admin-only attachment defaults and a synthetic
+vendor directory. Files for each checklist item can be required per file,
+uploaded through the actual file picker, downloaded and softly removed in
+memory. Only synthetic PDF/JPEG/PNG files up to 4 MiB should be used in preview;
+no provider receives bytes. Required evidence gates item completion and stage
+advancement. Approved vendor dropdowns are scoped by category; retiring an
+entry preserves the file's recorded selection. New-file defaults do not rewrite
+existing checklist snapshots. Reload resets records, settings and file bytes.
+
+The real setup/workspace adapters exercise 15 additional groups:
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-transaction-operations-session.mjs
+```
+
+Total isolated preview groups: 165. Live private-file storage configuration is
+documented in [TRANSACTION_FILES_AND_VENDORS.md](../../docs/TRANSACTION_FILES_AND_VENDORS.md).

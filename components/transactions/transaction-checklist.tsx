@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Check, ClipboardCheck, RotateCcw } from "lucide-react";
+import { Check, ClipboardCheck, RotateCcw, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import { TRANSACTION_STAGE_LABELS } from "@/lib/data/types";
 import type { TransactionWorkspace } from "@/lib/transactions/workspace-domain";
 import type { TransactionChecklistItem, TransactionChecklistMutation } from "@/lib/transactions/checklist-domain";
 import { mutateTransactionChecklist } from "@/lib/data/adapters/transaction-workspace";
+import { checklistItemSatisfied } from "@/lib/transactions/attachment-domain";
 import { transactionAttempt, transactionFailure, transactionSaveAllowed, transactionWriteUncertain } from "./workspace-state";
 import { cn } from "@/lib/utils";
 
@@ -19,12 +20,13 @@ export function formatChecklistCompletion(value: string): string {
   return new Date(value).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) + " ET";
 }
 export function checklistActionAvailable(item: TransactionChecklistItem | undefined, action: "complete" | "reopen"): boolean {
-  return Boolean(item && (action === "complete" ? !item.completedAt : item.completedAt));
+  return Boolean(item && (action === "complete" ? !item.completedAt && (!item.attachmentRequired || item.attachments.length > 0) : item.completedAt));
 }
-export function TransactionChecklistCard({ workspace, canEdit, onReview }: {
+export function TransactionChecklistCard({ workspace, canEdit, onReview, onFiles }: {
   workspace: TransactionWorkspace;
   canEdit: boolean;
   onReview: (item: TransactionChecklistItem, action: "complete" | "reopen") => void;
+  onFiles: (item: TransactionChecklistItem) => void;
 }) {
   const { checklist, transaction } = workspace;
   const progress = checklist.progress;
@@ -40,7 +42,7 @@ export function TransactionChecklistCard({ workspace, canEdit, onReview }: {
       {progress.required > 0 && <div role="progressbar" aria-label="Required checklist completion" aria-valuemin={0} aria-valuemax={progress.required} aria-valuenow={progress.completed} className="mb-4 h-1.5 overflow-hidden rounded-full bg-track"><span aria-hidden="true" className="block h-full rounded-full bg-primary" style={{ width: `${Math.min(100, Math.max(0, progress.completed / progress.required * 100))}%` }} /></div>}
       {!checklist.items.length ? <p className="text-sm leading-relaxed text-muted-foreground">The checklist is not ready for this file. Refresh the file before moving to a later stage.</p> : <div className="divide-y divide-border">{ACTIVE_STAGES.map(stage => {
         const items = checklist.items.filter(item => item.stage === stage).sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
-        const required = items.filter(item => item.required), complete = required.filter(item => item.completedAt).length, current = transaction.stage === stage;
+        const required = items.filter(item => item.required), complete = required.filter(item => checklistItemSatisfied(item)).length, current = transaction.stage === stage;
         if (!items.length) return null;
         return <details key={stage} open={current} className="group min-w-0 py-1 first:pt-0 last:pb-0">
           <summary className="flex min-h-12 cursor-pointer list-none flex-wrap items-center justify-between gap-2 rounded-md py-3 text-sm [&::-webkit-details-marker]:hidden">
@@ -48,9 +50,9 @@ export function TransactionChecklistCard({ workspace, canEdit, onReview }: {
             <span className="text-xs text-muted-foreground tabular">{complete} / {required.length} required</span>
           </summary>
           <ul className="space-y-3 pb-4 pt-1">{items.map(item => <li key={item.id} className="flex min-w-0 items-start gap-3 rounded-panel border border-border/70 p-3">
-            <span aria-hidden="true" className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border", item.completedAt ? "border-primary bg-primary text-primary-foreground" : "border-input")} >{item.completedAt && <Check className="h-3 w-3" />}</span>
-            <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium leading-relaxed [overflow-wrap:anywhere]">{item.label}</p><p className="mt-1 text-[11px] text-muted-foreground">{item.required ? "Required" : "Optional"}</p>{item.completedAt && <p className="mt-1 text-xs text-muted-foreground tabular">Completed {formatChecklistCompletion(item.completedAt)}</p>}</div>
-            {canEdit && <Button type="button" variant={item.completedAt ? "ghost" : "outline"} size="sm" className="min-h-11 shrink-0 self-start" onClick={() => onReview(item, item.completedAt ? "reopen" : "complete")} aria-label={`${item.completedAt ? "Reopen" : "Complete"}: ${item.label}`}>{item.completedAt ? <><RotateCcw aria-hidden="true" className="h-3.5 w-3.5" /><span className="hidden sm:inline">Reopen</span></> : "Complete"}</Button>}
+            <span aria-hidden="true" className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border", checklistItemSatisfied(item) ? "border-primary bg-primary text-primary-foreground" : "border-input")} >{checklistItemSatisfied(item) && <Check className="h-3 w-3" />}</span>
+            <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium leading-relaxed [overflow-wrap:anywhere]">{item.label}</p><div className="mt-1 flex flex-wrap items-center gap-2"><p className="text-[11px] text-muted-foreground">{item.required ? "Required" : "Optional"}</p>{item.attachmentRequired&&<Badge variant="outline">File required</Badge>}</div><Button type="button" variant="ghost" size="sm" className="-ml-2 mt-1 min-h-11" onClick={()=>onFiles(item)} aria-label={`Files for ${item.label}`}><Paperclip aria-hidden className="h-3.5 w-3.5"/>Files ({item.attachments.length})</Button>{item.attachments.length>0&&<p className="line-clamp-2 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">{item.attachments.map(file=>file.filename).join(" · ")}</p>}{!item.completedAt&&item.attachmentRequired&&!item.attachments.length&&<p className="mt-1 text-xs text-muted-foreground">Add the required file before completing this item.</p>}{item.completedAt && <p className="mt-1 text-xs text-muted-foreground tabular">Completed {formatChecklistCompletion(item.completedAt)}</p>}</div>
+            {canEdit && <Button type="button" variant={item.completedAt ? "ghost" : "outline"} size="sm" className="min-h-11 min-w-11 shrink-0 self-start" disabled={!item.completedAt&&!checklistActionAvailable(item,"complete")} onClick={() => onReview(item, item.completedAt ? "reopen" : "complete")} aria-label={`${item.completedAt ? "Reopen" : "Complete"}: ${item.label}`}>{item.completedAt ? <><RotateCcw aria-hidden="true" className="h-3.5 w-3.5" /><span className="hidden sm:inline">Reopen</span></> : "Complete"}</Button>}
           </li>)}</ul>
         </details>;
       })}</div>}

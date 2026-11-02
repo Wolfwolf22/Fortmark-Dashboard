@@ -566,13 +566,13 @@ export const transactionWriteRequests = pgTable("transaction_write_requests", {
   requestId: uuid("request_id").notNull(),
   transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "restrict" }),
   action: text("action").notNull(), payloadHash: text("payload_hash").notNull(),
-  result: jsonb("result").$type<{ transactionId: string; updatedAt: string; deadlineId?: string }>().notNull(),
+  result: jsonb("result").$type<{ transactionId: string; updatedAt: string; deadlineId?: string; attachmentId?: string; vendorSelectionId?: string }>().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => [
   primaryKey({ name: "transaction_write_requests_pkey", columns: [t.actorUserId, t.requestId] }),
   index("transaction_write_requests_transaction_idx").on(t.transactionId),
   check("transaction_write_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`),
-  check("transaction_write_requests_action_check", sql`${t.action} in ('create','edit','stage','add_deadline','edit_deadline','complete_deadline','reopen_deadline','remove_deadline','complete_checklist','reopen_checklist')`),
+  check("transaction_write_requests_action_check", sql`${t.action} in ('create','edit','stage','add_deadline','edit_deadline','complete_deadline','reopen_deadline','remove_deadline','complete_checklist','reopen_checklist','upload_attachment','remove_attachment','set_attachment_requirement','set_vendor')`),
 ]);
 export type TransactionWriteRequestRow = typeof transactionWriteRequests.$inferSelect;
 
@@ -582,6 +582,7 @@ export const transactionChecklistItems = pgTable("transaction_checklist_items", 
   transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "cascade" }),
   templateKey: text("template_key").notNull(), label: text("label").notNull(),
   stage: transactionStage("stage").notNull(), required: boolean("required").notNull().default(true),
+  attachmentRequired: boolean("attachment_required").notNull().default(false),
   sortOrder: integer("sort_order").notNull(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   completedByUserId: uuid("completed_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
@@ -596,6 +597,50 @@ export const transactionChecklistItems = pgTable("transaction_checklist_items", 
   check("transaction_checklist_items_completion_check", sql`${t.completedAt} is not null or ${t.completedByUserId} is null`),
 ]);
 export type TransactionChecklistItemRow = typeof transactionChecklistItems.$inferSelect;
+
+export const transactionChecklistAttachments = pgTable("transaction_checklist_attachments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "restrict" }),
+  checklistItemId: uuid("checklist_item_id").notNull().references(() => transactionChecklistItems.id, { onDelete: "restrict" }),
+  storagePath: text("storage_path").notNull(), filename: text("filename").notNull(), contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(), sha256: text("sha256").notNull(),
+  uploadedByUserId: uuid("uploaded_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(), removedAt: timestamp("removed_at", { withTimezone: true }),
+}, t => [
+  uniqueIndex("transaction_checklist_attachments_path_idx").on(t.storagePath),
+  index("transaction_checklist_attachments_item_idx").on(t.transactionId, t.checklistItemId),
+  check("transaction_checklist_attachments_size_check", sql`${t.sizeBytes} between 1 and 4194304`),
+  check("transaction_checklist_attachments_type_check", sql`${t.contentType} in ('application/pdf','image/jpeg','image/png')`),
+  check("transaction_checklist_attachments_hash_check", sql`${t.sha256} ~ '^[0-9a-f]{64}$'`),
+  check("transaction_checklist_attachments_filename_check", sql`char_length(${t.filename}) between 1 and 180`),
+]);
+export type TransactionChecklistAttachmentRow = typeof transactionChecklistAttachments.$inferSelect;
+
+export const transactionChecklistTemplateSettings = pgTable("transaction_checklist_template_settings", {
+  brokerageKey: text("brokerage_key").notNull(), templateKey: text("template_key").notNull(), attachmentRequired: boolean("attachment_required").notNull(),
+  updatedByUserId: uuid("updated_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.brokerageKey, t.templateKey] })]);
+export const transactionSetupWriteRequests = pgTable("transaction_setup_write_requests", {
+  actorUserId: uuid("actor_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }), requestId: uuid("request_id").notNull(), brokerageKey: text("brokerage_key").notNull(), action: text("action").notNull(), payloadHash: text("payload_hash").notNull(),
+  result: jsonb("result").$type<{ templateKey: string; updatedAt: string }>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.actorUserId, t.requestId] }), check("transaction_setup_requests_action_check", sql`${t.action}='checklist_default'`), check("transaction_setup_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`)]);
+
+export const brokerageVendors = pgTable("brokerage_vendors", {
+  id: uuid("id").primaryKey().defaultRandom(), brokerageKey: text("brokerage_key").notNull(), name: text("name").notNull(), company: text("company"), email: text("email"), phone: text("phone"),
+  categories: text("categories").array().$type<import("../transactions/vendor-domain.ts").VendorRole[]>().notNull(), approved: boolean("approved").notNull().default(false),
+  createdByUserId: uuid("created_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }), updatedByUserId: uuid("updated_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [index("brokerage_vendors_book_idx").on(t.brokerageKey, t.approved), check("brokerage_vendors_name_check", sql`char_length(btrim(${t.name})) between 1 and 160`), check("brokerage_vendors_categories_check", sql`cardinality(${t.categories}) between 1 and 8 and ${t.categories} <@ ARRAY['inspector','mortgage','appraiser','termite','insurance','title','attorney','other']::text[]`)]);
+export type BrokerageVendorRow = typeof brokerageVendors.$inferSelect;
+export const brokerageVendorWriteRequests = pgTable("brokerage_vendor_write_requests", {
+  actorUserId: uuid("actor_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }), requestId: uuid("request_id").notNull(), brokerageKey: text("brokerage_key").notNull(), vendorId: uuid("vendor_id").notNull().references(() => brokerageVendors.id, { onDelete: "restrict" }), action: text("action").notNull(), payloadHash: text("payload_hash").notNull(),
+  result: jsonb("result").$type<{ vendorId: string; updatedAt: string }>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.actorUserId, t.requestId] }), check("brokerage_vendor_requests_action_check", sql`${t.action} in ('create','edit')`), check("brokerage_vendor_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`)]);
+export const transactionVendorSelections = pgTable("transaction_vendor_selections", {
+  id: uuid("id").primaryKey().defaultRandom(), transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "cascade" }), role: text("role").$type<import("../transactions/vendor-domain.ts").VendorRole>().notNull(), status: text("status").$type<"selected" | "not_needed" | "unset">().notNull(), vendorId: uuid("vendor_id").references(() => brokerageVendors.id, { onDelete: "restrict" }),
+  vendorName: text("vendor_name"), company: text("company"), email: text("email"), phone: text("phone"), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [uniqueIndex("transaction_vendor_selections_role_idx").on(t.transactionId, t.role), check("transaction_vendor_selections_role_check", sql`${t.role} in ('inspector','mortgage','appraiser','termite','insurance','title','attorney','other')`), check("transaction_vendor_selections_status_check", sql`${t.status} in ('selected','not_needed','unset')`), check("transaction_vendor_selections_vendor_check", sql`(${t.status}='selected' and ${t.vendorId} is not null and ${t.vendorName} is not null) or (${t.status}<>'selected' and ${t.vendorId} is null and ${t.vendorName} is null and ${t.company} is null and ${t.email} is null and ${t.phone} is null)`)]);
+export type TransactionVendorSelectionRow = typeof transactionVendorSelections.$inferSelect;
 
 // ===========================================================================
 // Release D — Contacts (the people layer)

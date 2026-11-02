@@ -12,6 +12,7 @@ import { SAMPLE_ACTOR, getPreviewScenario, interactiveSamples, readSampleContact
 import { previewRecordId, previewPublicRecordId } from "./import-merge-fixtures.mjs";
 import { contactAgents } from "./contact-fixtures.mjs";
 import { announceReadOnly } from "./read-only.mjs";
+import { previewAttachmentDefault, projectPreviewVendors } from "./transaction-operations.mjs";
 
 const copy = value => structuredClone(value), records = new Map(sampleTransactionBundles.map(bundle => [bundle.row.id, copy(bundle)])), receipts = new Map(), homeEvents = new Set(), remoteReads = new Set();
 let chain = Promise.resolve(), failedOnce = false;
@@ -53,7 +54,8 @@ function workspace(bundle, historyPage = 1, now = new Date()) {
   const history = [...bundle.history].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)), page = Math.min(historyPage, Math.max(1, Math.ceil(history.length / 20)));
   return { transaction: project(bundle, now), details: Object.fromEntries(detailKeys.map(key => [key, key === "notes" ? bundle.row.notes || "" : bundle.row[key]])),
     deadlines: bundle.deadlines.filter(item => !item.removedAt).sort((a, b) => a.sortOrder - b.sortOrder || a.dueDate.localeCompare(b.dueDate) || a.id.localeCompare(b.id)).map(item => ({ id: item.id, kind: item.kind, label: item.label, dueDate: item.dueDate, note: item.note || "", completedAt: item.completedAt, updatedAt: item.updatedAt, state: transactionDeadlineState(item.dueDate, item.completedAt, now) })),
-    checklist: { templateVersion: bundle.row.checklistTemplateVersion, items: [...bundle.checklist].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id)).map(({ id, templateKey, label, stage, required, sortOrder, completedAt, updatedAt }) => ({ id, templateKey, label, stage, required, sortOrder, completedAt, updatedAt })), progress: checklistProgress(bundle.checklist) },
+    checklist: { templateVersion: bundle.row.checklistTemplateVersion, items: [...bundle.checklist].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id)).map(({ id, templateKey, label, stage, required, attachmentRequired = false, attachments = [], sortOrder, completedAt, updatedAt }) => ({ id, templateKey, label, stage, required, attachmentRequired, attachments: attachments.filter(file => !file.removedAt).map(({removedAt,...file})=>file), sortOrder, completedAt, updatedAt })), progress: checklistProgress(bundle.checklist.map(item=>({...item,attachments:(item.attachments||[]).filter(file=>!file.removedAt)}))) },
+    vendors: projectPreviewVendors(bundle), attachmentUploadsEnabled: true, canManageTransactionSetup: SAMPLE_ACTOR.role === "admin",
     parties: bundle.parties.map(party => { const contact = party.contactId ? readSampleContact(party.contactId) : null, canOpen = Boolean(contact?.recordSource === "db" && (SAMPLE_ACTOR.role === "admin" || contact.assignedAgentId === SAMPLE_ACTOR.userId)); return { id: party.id, role: party.role, displayName: party.displayName, company: party.company, email: party.email, phone: party.phone || null, isPrimary: party.isPrimary, contactId: canOpen ? previewPublicRecordId(contact.id) : null, canOpenContact: canOpen }; }),
     history: { items: history.slice((page - 1) * 20, page * 20), total: history.length, page, pageSize: 20 }, canEdit: SAMPLE_ACTOR.role !== "member" && !isTerminalStage(bundle.row.stage), updatedAt: bundle.row.updatedAt };
 }
@@ -107,7 +109,7 @@ export function changePreviewTransactionStage(id, input, now = new Date()) {
   writeMode(id); const value = parse(stageChangeSchema, input); if (!value.requestId || !value.expectedUpdatedAt) fail("invalid_transaction");
   return serialized(async () => { const started = await begin(id, value, "stage"); if (started.repeated) return project(started.repeated, now); const bundle = load(id); writable(bundle, false); revision(bundle.row.updatedAt, value.expectedUpdatedAt); const from = bundle.row.stage; if (!canTransition(from, value.stage)) fail("invalid_transition", 409);
     if (checklistMissingStages(bundle.checklist, from, value.stage).length) fail("checklist_not_ready", 409);
-    if (checklistBlockers(bundle.checklist, from, value.stage).length) fail("checklist_incomplete", 409);
+    if (checklistBlockers(bundle.checklist.map(item=>({...item,attachments:(item.attachments||[]).filter(file=>!file.removedAt)})), from, value.stage).length) fail("checklist_incomplete", 409);
     Object.assign(bundle.row, { stage: value.stage, updatedAt: nextSampleRevision(bundle.row.updatedAt), updatedByUserId: SAMPLE_ACTOR.userId, ...(value.stage === "closed" ? { closedDate: calendarDayKey(now) } : isTerminalStage(value.stage) ? { cancelledDate: calendarDayKey(now) } : {}) }); event(bundle, "stage", [], now, { fromStage: from, toStage: value.stage }); save(bundle, started, "stage"); return project(bundle, now); });
 }
 export function mutatePreviewTransactionChecklist(id, input, now = new Date()) {
@@ -115,6 +117,7 @@ export function mutatePreviewTransactionChecklist(id, input, now = new Date()) {
   return serialized(async () => { const started = await begin(id, value, action); if (started.repeated) return workspace(started.repeated, 1, now); const bundle = load(id); writable(bundle); revision(bundle.row.updatedAt, value.expectedUpdatedAt);
     const current = bundle.checklist.find(item => item.id === value.itemId); if (!current) fail("not_found", 404); revision(current.updatedAt, value.expectedItemUpdatedAt);
     if (value.action === "complete" && current.completedAt || value.action === "reopen" && !current.completedAt) fail("invalid_checklist_transition", 409);
+    if (value.action === "complete" && current.attachmentRequired && !(current.attachments||[]).some(file=>!file.removedAt)) fail("attachment_required",409);
     const next = nextSampleRevision(bundle.row.updatedAt), childNext = new Date(Math.max(Date.parse(next), Date.parse(current.updatedAt) + 1)).toISOString();
     Object.assign(current, { completedAt: value.action === "complete" ? now.toISOString() : null, completedByUserId: value.action === "complete" ? SAMPLE_ACTOR.userId : null, updatedAt: childNext });
     Object.assign(bundle.row, { updatedAt: next, updatedByUserId: SAMPLE_ACTOR.userId }); event(bundle, action, ["completedAt"], now); save(bundle, started, action); return workspace(bundle, 1, now); });
@@ -135,7 +138,7 @@ export function createPreviewTransaction(input, now = new Date()) {
     const partyInputs = [...(contact ? [{ role, displayName: contact.name, contactId: contact.id, isPrimary: true, email: contact.email, phone: contact.phone }] : []), ...(value.parties || []).filter(party => !contact || party.role !== role)];
     const parties = partyInputs.map(party => ({ id: crypto.randomUUID(), transactionId: id, role: party.role, displayName: party.displayName, company: party.company || null, email: party.email || null, phone: party.phone || null, contactId: party.contactId || null, isPrimary: party.isPrimary || false, createdAt: stamp, updatedAt: stamp }));
     const deadlines = enteredDeadlines.map((deadline, sortOrder) => ({ id: crypto.randomUUID(), transactionId: id, ...deadline, note: deadline.note || "", sortOrder, completedAt: null, removedAt: null, createdAt: stamp, updatedAt: stamp }));
-    const checklist = DEFAULT_TRANSACTION_CHECKLIST.map(item => ({ ...item, id: crypto.randomUUID(), transactionId: id, completedAt: null, completedByUserId: null, createdAt: stamp, updatedAt: stamp }));
+    const checklist = DEFAULT_TRANSACTION_CHECKLIST.map(item => ({ ...item, attachmentRequired: previewAttachmentDefault(row.brokerageKey,item.templateKey), attachments: [], id: crypto.randomUUID(), transactionId: id, completedAt: null, completedByUserId: null, createdAt: stamp, updatedAt: stamp }));
     const bundle = { row, parties, deadlines, checklist, history: [] }; event(bundle, "create", ["stage", "side", "transactionType"], now);
     if (contact) { replaceSampleTransactionIds(contact.id, [...new Set([...readSampleTransactionIds(contact.id), id])]); appendSampleTimeline(contact.id, { id: crypto.randomUUID(), type: "transaction", title: "Transaction linked", at: stamp, by: "Sample Agent" }, undefined, false); }
     save(bundle, started, "create"); return project(bundle, now); });
@@ -145,5 +148,11 @@ export function previewTransactionActivity() {
   return all().filter(visible).flatMap(bundle => bundle.history.filter(item => homeEvents.has(item.id)).map(item => { const address = bundle.row.addressLine1, closed = item.action === "stage" && item.toStage === "closed"; return { id: `txn:${item.id}`, kind: item.action === "create" ? "transaction_created" : closed ? "transaction_closed" : "transaction_stage_changed", summary: item.action === "create" ? `Deal opened on ${address}` : closed ? `${STAGE_LABELS.closed} — ${address}` : `Stage changed on ${address}`, subject: address, at: item.createdAt, href: `/transactions/${encodeURIComponent(previewTransactionPublicId(bundle.row.id))}` }; }));
 }
 export function previewLinkedTransactions(ids) { const keys = new Set(ids.map(previewTransactionId)); return all().filter(bundle => visible(bundle) && keys.has(bundle.row.id)).map(bundle => { const dto = project(bundle); return { id: dto.id, address: dto.address, city: dto.city, stage: dto.stage }; }); }
+export function readPreviewTransactionExtra(id, read) { return read(load(id)); }
+/** Extensions share the file lock, exact receipts and safe history with core writes. */
+export function mutatePreviewTransactionExtra(id, input, action, work, now = new Date()) {
+  writeMode(id);
+  return serialized(async()=>{const started=await begin(id,input,action);if(started.repeated)return workspace(started.repeated,1,now);const bundle=load(id);writable(bundle);revision(bundle.row.updatedAt,input.expectedUpdatedAt);const next=nextSampleRevision(bundle.row.updatedAt);work(bundle,next);Object.assign(bundle.row,{updatedAt:next,updatedByUserId:SAMPLE_ACTOR.userId});event(bundle,action,action==="set_vendor"?["vendorId","vendorStatus"]:action==="set_attachment_requirement"?["attachmentRequired"]:["attachments"],now);save(bundle,started,action);return workspace(bundle,1,now);});
+}
 export function reparentPreviewTransactionParties(from, to) { for (const bundle of records.values()) bundle.parties = bundle.parties.map(party => party.contactId === from ? { ...party, contactId: to } : party); }
 export function previewContactTransactionParties(id) { return copy(all().flatMap(bundle => bundle.parties.filter(party => party.contactId === previewRecordId(id)))); }

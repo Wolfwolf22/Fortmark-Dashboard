@@ -45,7 +45,7 @@ for (const record of listed) {
   const file = await api.getTransactionWorkspace(record.id);
   assert.equal(file.checklist.templateVersion, TRANSACTION_CHECKLIST_VERSION);
   assert.deepEqual(file.checklist.progress, { completed: 0, required: 12 });
-  assert.deepEqual(file.checklist.items.map(({ templateKey, label, stage, required, sortOrder }) => ({ templateKey, label, stage, required, sortOrder })), DEFAULT_TRANSACTION_CHECKLIST);
+  assert.deepEqual(file.checklist.items.map(({ templateKey, label, stage, required, sortOrder, attachmentRequired }) => ({ templateKey, label, stage, required, sortOrder, attachmentRequired })), DEFAULT_TRANSACTION_CHECKLIST);
   assert(file.checklist.items.every(item => item.completedAt === null));
   assert(!JSON.stringify(file.checklist).includes("completedByUserId"));
 }
