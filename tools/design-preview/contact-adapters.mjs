@@ -15,7 +15,7 @@ import { z } from "zod";
 import { LeadsError } from "./contact-errors.mjs";
 export { LeadsError } from "./contact-errors.mjs";
 export { previewContactImport, commitContactImport, getContactDuplicates, getContactMergeReview, mergeContacts } from "./import-merge-adapters.mjs";
-export { getContactProperties, lookupContactProperty, addContactProperty, removeContactProperty, getPropertyLists, createPropertyList, getPropertyList, renamePropertyList, getPropertyListProperties, lookupPropertyListProperty, addPropertyListProperty, removePropertyListProperty } from "./property-adapters.mjs";
+export { getContactProperties, lookupContactProperty, addContactProperty, removeContactProperty, getPropertyLists, createPropertyList, getPropertyList, renamePropertyList, getPropertyListProperties, getPropertyListProperty, updatePropertyResearch, transferProperty, lookupPropertyListProperty, addPropertyListProperty, removePropertyListProperty } from "./property-adapters.mjs";
 import { SAMPLE_ACTOR, getPreviewScenario, interactiveSamples, canWriteSample, readSampleContacts, readSampleContact, readSampleRawContacts, readSampleNeeds, readSampleNotes, readSampleTransactionIds, readSampleTimeline, replaceSampleContact, replaceSampleNeeds, appendSampleTimeline, nextSampleRevision } from "./sample-session.mjs";
 
 const copy = value => value === undefined ? undefined : structuredClone(value);

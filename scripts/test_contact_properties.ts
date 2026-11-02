@@ -91,7 +91,8 @@ try {
   const added = await addContactProperty(ctx, contactId, { mlsNumber: "a000123", expectedDataset: "synthetic_mls", expectedListingId: "listing-1" }, provider, now);
   check("reviewed add persists a reference and returns fresh listing", added.ok && added.value.syncStatus === "available" && added.value.listing?.listPrice === 795_000 && await count() === 1 && await auditCount() === 1);
   const [stored] = await db.select().from(contactProperties);
-  check("storage contains no MLS display/media snapshot", Object.keys(stored).sort().join() === "contactId,createdAt,createdByUserId,dataset,id,listId,listingId,mlsNumber,removedAt" && !JSON.stringify(stored).includes("Synthetic property"));
+  check("storage contains no MLS display/media snapshot", Object.keys(stored).sort().join() === "contactId,createdAt,createdByUserId,dataset,id,listId,listingId,mlsNumber,notes,removedAt,reviewStatus,updatedAt" && !JSON.stringify(stored).includes("Synthetic property"));
+  check("new membership research starts empty with its real revision", stored.notes === "" && stored.reviewStatus === "to_review" && stored.updatedAt.toISOString() === now.toISOString() && added.value.updatedAt === now.toISOString());
   const [parent] = await db.select().from(contacts).where(eq(contacts.id, contactId));
   check("saving property does not invent contact or change parent revision", parent.updatedAt.toISOString() === now.toISOString() && parent.lastContactAt === null);
   const beforeAdminRead = getCalls;

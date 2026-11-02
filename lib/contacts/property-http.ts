@@ -56,6 +56,9 @@ export async function readPropertyBody(request: Request): Promise<{ ok: true; bo
 
 export function propertyFailure(reason: PropertyFailure): NextResponse {
   switch (reason) {
+    case "invalid_property_research": return NextResponse.json({ error: reason, fields: ["notes", "reviewStatus"] }, { status: 400, headers: NO_STORE });
+    case "invalid_property_transfer": return NextResponse.json({ error: reason, fields: ["targetListId"] }, { status: 400, headers: NO_STORE });
+    case "target_has_property": return NextResponse.json({ error: reason }, { status: 409, headers: NO_STORE });
     case "invalid_property_list": return NextResponse.json({ error: "invalid_property_list", fields: ["name"] }, { status: 400, headers: NO_STORE });
     case "invalid_property": return NextResponse.json({ error: "invalid_property", fields: ["mlsNumber"] }, { status: 400, headers: NO_STORE });
     case "listing_not_found": return NextResponse.json({ error: "listing_not_found" }, { status: 404, headers: NO_STORE });

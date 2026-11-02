@@ -21,6 +21,7 @@ const sessionOpportunities = new Map();
 const receipts = new Map();
 const sessionPropertyLists = new Map(samplePropertyLists.map(list => [list.id, copy(list)]));
 const sessionProperties = new Map(Object.entries(samplePropertyListRows).map(([id, items]) => [id, copy(items)]));
+const sessionPropertyAudits = [];
 
 export const SAMPLE_ACTOR = { userId: SAMPLE_AGENT_ID, role: "admin", brokerageKey: "design-preview" };
 export function getPreviewScenario() {
@@ -42,6 +43,16 @@ export function readSampleListPropertyRows(id) { return copy(interactiveSamples(
 export function readSampleDefaultPropertyList(contactId) { return readSampleRawPropertyLists().find(list => list.contactId === contactId && list.defaultForContactId === contactId && list.ownerUserId === SAMPLE_ACTOR.userId && !list.archivedAt); }
 export function readSampleContactPropertyLists(contactId) { return readSampleRawPropertyLists().filter(list => list.contactId === contactId); }
 export function readSampleContactListRows(contactId) { return readSampleContactPropertyLists(contactId).flatMap(list => readSampleListPropertyRows(list.id)); }
+export function readSamplePropertyAudits(contactId) {
+  if (!interactiveSamples()) return [];
+  const raw = readSampleRawContacts(), family = new Set([contactId]);
+  let changed = true;
+  while (changed) { changed = false; for (const contact of raw) if (family.has(contact.mergedIntoContactId) && !family.has(contact.id)) { family.add(contact.id); changed = true; } }
+  return copy(sessionPropertyAudits.filter(event => family.has(event.contactId)));
+}
+export function appendSamplePropertyAudit(list, propertyId, action, fields = []) {
+  sessionPropertyAudits.push({ id: crypto.randomUUID(), listId: list.id, contactId: list.contactId, propertyId, action, fields: [...fields], at: new Date().toISOString() });
+}
 export function readSamplePropertyRows(id) { const list = readSampleDefaultPropertyList(id); return list ? readSampleListPropertyRows(list.id) : []; }
 export function readSampleProperties(id) { return readSamplePropertyRows(id).filter(item => !item.removedAt); }
 export function readSampleTransactionIds(id) { return copy(interactiveSamples() ? sessionLinks.get(id) || [] : contactTransactionIds[id] || []); }

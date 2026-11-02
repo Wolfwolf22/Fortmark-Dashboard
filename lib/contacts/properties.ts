@@ -1,12 +1,13 @@
 /** A deliberately manual list: one exact MLS lookup, review, then save a reference. */
 import { z } from "zod";
 import type { Listing } from "../data/types.ts";
+import { PROPERTY_REVIEW_STATUSES, PROPERTY_SORTS, type PropertyReadOptions, type PropertyReviewStatus } from "./property-research.ts";
 
 export const PROPERTY_PAGE_SIZE = 12;
 export const MAX_PROPERTY_PAGE_SIZE = 24;
 export const PROPERTY_MLS_NUMBER_MAX = 40;
 export const PROPERTY_LISTING_ID_MAX = 256;
-export const PROPERTY_BODY_BYTES = 2048;
+export const PROPERTY_BODY_BYTES = 32768;
 
 /** Preserve leading zeroes and punctuation that can be part of an MLS identifier. */
 export function normalizePropertyMlsNumber(value: unknown): string | null {
@@ -39,6 +40,7 @@ export type PropertyResolution =
 export interface PropertyMlsProvider {
   lookup(mlsNumber: string): Promise<PropertyResolution>;
   get(dataset: string, listingId: string, mlsNumber: string): Promise<PropertyResolution>;
+  orderByPrice?(refs: { id: string; dataset: string; listingId: string }[], direction: "asc" | "desc"): Promise<{ ok: true; ids: string[] } | { ok: false; reason: "unavailable" | "not_configured" }>;
 }
 export interface PropertyView {
   id: string;
@@ -47,17 +49,22 @@ export interface PropertyView {
   mlsNumber: string;
   listingId: string;
   addedAt: string;
+  notes: string;
+  reviewStatus: PropertyReviewStatus;
+  updatedAt: string;
   listing: Listing | null;
   syncStatus: "available" | "not_found" | "unavailable" | "not_configured";
   checkedAt: string | null;
 }
-export interface PropertyPage { items: PropertyView[]; total: number; page: number; pageSize: number }
+export interface PropertyPage { items: PropertyView[]; total: number; totalAll?: number; page: number; pageSize: number }
 export interface PropertyLookup { dataset: string; listing: Listing; alreadySaved: boolean }
 
-export function readPropertyQuery(params: URLSearchParams): { page: number; pageSize: number } | null {
-  if ([...params.keys()].some(key => key !== "page" && key !== "pageSize")) return null;
+export function readPropertyQuery(params: URLSearchParams): Required<PropertyReadOptions> | null {
+  if ([...params.keys()].some(key => !["page", "pageSize", "reviewStatus", "sort"].includes(key))) return null;
   const rawPage = params.get("page"), rawSize = params.get("pageSize");
   if ((rawPage !== null && !/^\d{1,7}$/.test(rawPage)) || (rawSize !== null && !/^\d{1,2}$/.test(rawSize))) return null;
   const page = rawPage === null ? 1 : Number(rawPage), pageSize = rawSize === null ? PROPERTY_PAGE_SIZE : Number(rawSize);
-  return page >= 1 && page <= 1_000_000 && pageSize >= 1 && pageSize <= MAX_PROPERTY_PAGE_SIZE ? { page, pageSize } : null;
+  const reviewStatus = params.get("reviewStatus") ?? "all", sort = params.get("sort") ?? "added_desc";
+  if (reviewStatus !== "all" && !(PROPERTY_REVIEW_STATUSES as readonly string[]).includes(reviewStatus) || !(PROPERTY_SORTS as readonly string[]).includes(sort)) return null;
+  return page >= 1 && page <= 1_000_000 && pageSize >= 1 && pageSize <= MAX_PROPERTY_PAGE_SIZE ? { page, pageSize, reviewStatus: reviewStatus as Required<PropertyReadOptions>["reviewStatus"], sort: sort as Required<PropertyReadOptions>["sort"] } : null;
 }

@@ -148,6 +148,13 @@
       "when": 1793581200000,
       "tag": "0020_property_lists",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793667600000,
+      "tag": "0021_property_research_transfer",
+      "breakpoints": true
     }
   ]
 }

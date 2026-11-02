@@ -288,6 +288,28 @@ export class AmbiguousMlsNumberError extends Error {
   constructor() { super("The MLS number identifies more than one listing."); this.name = "AmbiguousMlsNumberError"; }
 }
 
+/** Small, displayable price reads for sorting an owner's saved references. No CRM identifiers go upstream. */
+export async function getListingPrices(config: BridgeConfig, listingKeys: readonly string[], signal?: AbortSignal): Promise<Map<string, number>> {
+  const keys = [...new Set(listingKeys)];
+  if (!keys.length) return new Map();
+  if (keys.length > 40) throw new Error("Saved-property price batch is too large.");
+  const result = await bridgeRequest<ResoRecord>(config, "Property", {
+    $filter: andFilters([DISPLAYABLE, anyOf("ListingKey", keys)]),
+    $select: selectClause(["ListingKey", "ListPrice", "ClosePrice", "StandardStatus", "InternetEntireListingDisplayYN"]), $top: keys.length,
+  }, signal);
+  const wanted = new Set(keys), seen = new Set<string>(), prices = new Map<string, number>();
+  for (const record of result.value) {
+    const id = typeof record.ListingKey === "string" ? record.ListingKey.trim() : "";
+    if (!wanted.has(id) || record.InternetEntireListingDisplayYN !== true) continue;
+    if (seen.has(id)) throw new Error("The MLS returned an ambiguous saved-property identity.");
+    seen.add(id);
+    const closed = typeof record.StandardStatus === "string" && record.StandardStatus.trim().toLowerCase() === "closed";
+    const price = closed && typeof record.ClosePrice === "number" && Boolean(record.ClosePrice) ? record.ClosePrice : record.ListPrice;
+    if (typeof price === "number" && Number.isFinite(price) && price > 0) prices.set(id, price);
+  }
+  return prices;
+}
+
 /** Exact ListingId lookup across all displayable types and statuses, including rentals. */
 export async function getListingByMlsNumber(
   config: BridgeConfig, mlsNumber: string, signal?: AbortSignal, ctx: ListingContext = {}

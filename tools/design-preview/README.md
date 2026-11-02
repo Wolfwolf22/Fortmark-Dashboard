@@ -117,7 +117,8 @@ Select **Interactive samples** in the contact preview controls, or open:
 - `/responsive?width=320&height=568&view=/contacts?open=sample-quiet&scenario=interactive`
 
 This mode permits only contact stage changes, structured next actions, client
-need creation/content/status changes, manual property references, import/merge,
+need creation/content/status changes, manual property references and private
+property research/copy/move, import/merge,
 and the optional About/named personal-details section. The fixture actor
 is explicitly a synthetic Admin. Stage changes use the production transition
 graph and optional expected-stage check. About/details use the production schema
@@ -308,4 +309,44 @@ Records/conflict scenarios reject writes; reload/Reset clears all sample changes
 ```sh
 node --experimental-strip-types --no-warnings tools/design-preview/test-property-session.mjs
 node --experimental-strip-types --no-warnings tools/design-preview/test-named-property-list-session.mjs
+```
+
+## Property research, copy/move and list filters
+
+The real workspace now offers notes and To review/Shortlisted/Ruled out status
+for each saved membership. The same MLS property in Waterfront and Personal
+market research starts with different notes/status. The long-history list
+(`83000000-0000-4000-8000-000000000006`) has thirteen mixed-status memberships,
+varied fictional prices and one unavailable reference for global sorting checks.
+Normal preview notes use ordinary property-research language; markup and boundary
+payloads exist only in the isolated regression script.
+
+More actions opens the actual research or copy/move dialog. A metadata-only
+single read, research save or transfer works without an MLS lookup. Notes preserve
+whitespace/newlines and belong to one membership. A stale differing save returns
+409; an exact submitted snapshot already saved is acknowledged without rewriting.
+Remove also accepts the reviewed membership revision.
+
+Copy preserves the source and creates independent destination research. Move
+soft-removes the source after creating its new destination membership. An already
+saved identity in the destination returns `target_has_property`; neither record
+is overwritten or removed. Receipts reauthorize the original source/destination
+on replay, preserve request identity, and refuse replay after destination removal.
+Private colleague-owned targets remain inaccessible even to the sample Admin.
+
+Status filtering and added-date/price ordering apply to the complete scoped list
+before pagination. Filter totals and unfiltered totals remain distinct. Unknown
+prices stay at the tail, with stable added-date ordering. Membership/list revisions
+and content-free audit facts participate in contact merge checks; a copy can
+leave its source revision unchanged while still requiring a fresh merge review.
+None of these operations manufactures a contact touch or activity feed entry.
+
+For browser stale-research review, choose **Remote research change (409)** in the
+preview controls or use `scenario=conflict` on a property-list detail URL. The
+first refused save reveals a predefined newer notes/status revision for explicit
+review. The original draft is kept, subsequent writes remain blocked, and reload
+resets the rehearsal. All interactive research and transfer data remains in memory.
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-property-research-session.mjs
 ```

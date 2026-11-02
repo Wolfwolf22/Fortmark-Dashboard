@@ -35,6 +35,7 @@ import type { DuplicateSuggestionsPage } from "../../contacts/duplicates.ts";
 import type { ContactMergeInput, ContactMergeResult, MergeReview } from "../../contacts/merge.ts";
 import type { AddPropertyInput, PropertyLookup, PropertyPage, PropertyView } from "../../contacts/properties.ts";
 import type { CreatePropertyListInput, PropertyListsPage, PropertyListView, RenamePropertyListInput } from "../../contacts/property-lists.ts";
+import type { PropertyResearchInput, PropertyReviewFilter, PropertySort, PropertyTransferInput, PropertyTransferResult } from "../../contacts/property-research.ts";
 import { HISTORY_PAGE_SIZE, type HistoryPage } from "../../contacts/history.ts";
 
 export type { LeadFilters };
@@ -594,9 +595,24 @@ export async function renamePropertyList(id: string, input: RenamePropertyListIn
   try { return (await request<{ list: PropertyListView }>(`/api/property-lists/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) })).list; }
   finally { bumpDataVersion(); }
 }
-export async function getPropertyListProperties(id: string, page = 1): Promise<PropertyPage> {
+export async function getPropertyListProperties(id: string, page = 1, options: { reviewStatus?: PropertyReviewFilter; sort?: PropertySort } = {}): Promise<PropertyPage> {
   if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
-  return request<PropertyPage>(`/api/property-lists/${encodeURIComponent(id)}/properties?${new URLSearchParams({ page: String(page) })}`);
+  const params = new URLSearchParams({ page: String(page), ...(options.reviewStatus ? { reviewStatus: options.reviewStatus } : {}), ...(options.sort ? { sort: options.sort } : {}) });
+  return request<PropertyPage>(`/api/property-lists/${encodeURIComponent(id)}/properties?${params}`);
+}
+export async function getPropertyListProperty(id: string, propertyId: string): Promise<PropertyView> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  return (await request<{ property: PropertyView }>(`/api/property-lists/${encodeURIComponent(id)}/properties/${encodeURIComponent(propertyId)}`)).property;
+}
+export async function updatePropertyResearch(id: string, propertyId: string, input: PropertyResearchInput): Promise<PropertyView> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try { return (await request<{ property: PropertyView }>(`/api/property-lists/${encodeURIComponent(id)}/properties/${encodeURIComponent(propertyId)}`, { method: "PATCH", body: JSON.stringify(input) })).property; }
+  finally { bumpDataVersion(); }
+}
+export async function transferProperty(id: string, propertyId: string, input: PropertyTransferInput): Promise<PropertyTransferResult> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try { return await request<PropertyTransferResult>(`/api/property-lists/${encodeURIComponent(id)}/properties/${encodeURIComponent(propertyId)}/transfer`, { method: "POST", body: JSON.stringify(input) }); }
+  finally { bumpDataVersion(); }
 }
 export async function lookupPropertyListProperty(id: string, mlsNumber: string): Promise<PropertyLookup> {
   if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
@@ -607,8 +623,8 @@ export async function addPropertyListProperty(id: string, input: AddPropertyInpu
   try { return (await request<{ property: PropertyView }>(`/api/property-lists/${encodeURIComponent(id)}/properties`, { method: "POST", body: JSON.stringify(input) })).property; }
   finally { bumpDataVersion(); }
 }
-export async function removePropertyListProperty(id: string, propertyId: string): Promise<{ removed: true }> {
+export async function removePropertyListProperty(id: string, propertyId: string, expectedUpdatedAt?: string): Promise<{ removed: true }> {
   if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
-  try { return await request<{ removed: true }>(`/api/property-lists/${encodeURIComponent(id)}/properties/${encodeURIComponent(propertyId)}`, { method: "DELETE" }); }
+  try { return await request<{ removed: true }>(`/api/property-lists/${encodeURIComponent(id)}/properties/${encodeURIComponent(propertyId)}`, { method: "DELETE", ...(expectedUpdatedAt ? { body: JSON.stringify({ expectedUpdatedAt }) } : {}) }); }
   finally { bumpDataVersion(); }
 }

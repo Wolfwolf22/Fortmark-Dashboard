@@ -83,6 +83,7 @@ function PreviewControls() {
           {route === "/contacts" && <option value="empty">Empty contact book</option>}
           {route !== "/property-lists" && <option value="unavailable">First request unavailable</option>}
           {route === "/contacts" && <option value="conflict">Remote change on save (409)</option>}
+          {route === "/property-lists" && <option value="conflict">Remote research change (409)</option>}
           {(route === "/contacts" || route === "/property-lists" || interactive) && <option value="interactive">Interactive samples</option>}
         </select>
       </label>}
@@ -93,6 +94,9 @@ function PreviewControls() {
     </p>}
     {route === "/contacts" && scenario === "conflict" && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
       Conflict rehearsal: change a sample contact's Company or next action, or review a duplicate merge, then save. The refused save reveals a predefined newer sample version. Review latest details to compare it with your kept draft. No draft is written.
+    </p>}
+    {route === "/property-lists" && scenario === "conflict" && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
+      Research conflict rehearsal: edit a saved property's notes or status, then save. The first refused save reveals a predefined newer sample version. Review it explicitly while keeping your draft. This scenario remains read-only.
     </p>}
     {writeBlocked && <div role="alert" className="flex items-center justify-center gap-3 border-b border-border bg-card px-4 py-2 text-xs">
       <span>{interactive ? "This write is disabled in interactive samples. Only stages, next actions, needs, client information, property lists, import and duplicate merge can save." : "Design preview is read-only. No records were changed."}</span>

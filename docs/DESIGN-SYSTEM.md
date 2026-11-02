@@ -319,6 +319,28 @@ const { data, loading } = useQuery(
   returns to a stable opener or the saved item. Read-only roles have no mutation
   controls; private-list existence is never disclosed through client scope.
 
+## Property research
+
+- Keep Your review visually separate from the MLS status. Use neutral labels
+  for To review, Shortlisted and Ruled out, plus a two-line private note preview.
+- Consolidate writer controls in a labelled Actions menu: Edit review, Copy or
+  move, Remove from list. Read-only users can open the complete note in a quiet
+  read view with no form or save action.
+- Edit review is a bounded popup with a complete note field, character count
+  and pinned actions. Freeze the opening revision; preserve a refused draft
+  and compare the latest saved note/status before accepting its revision.
+- Copy/move names the destination and states whether the source remains. Do
+  not choose a destination automatically. Loaded options must be owner-scoped
+  and distinguish personal/contact lists and duplicate names. A duplicate
+  destination gives a non-destructive explanation and keeps the source.
+- Filter and sort controls have explicit labels, reset pagination and accept
+  only settled responses for that same view. Empty filtered results must not
+  claim the whole list is empty. Price-sort failures retain the loaded view
+  with retry or date-added recovery.
+- On success, close the popup and focus a stable opener or workspace heading;
+  the edited/moved card may no longer exist under the current filter. At 320px,
+  note and transfer bodies scroll while save/copy/move actions stay visible.
+
 ## Copy checklist (every string you write)
 
 sentence case · plain verbs · button = the action ("Add lead", "Save

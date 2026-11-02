@@ -11,7 +11,7 @@ import { contactAgents } from "./contact-fixtures.mjs";
 import { previewRecordId, previewPublicRecordId } from "./import-merge-fixtures.mjs";
 import { LeadsError } from "./contact-errors.mjs";
 import { announceReadOnly } from "./read-only.mjs";
-import { SAMPLE_ACTOR, interactiveSamples, getPreviewScenario, readSampleRawContacts, readSampleContact, readSampleNotes, readSampleNeeds, readSampleTimeline, readSampleActivities, readSampleTransactionIds, readSampleOpportunities, readSampleContactListRows, readSampleContactPropertyLists, readSampleListPropertyRows, replaceSampleContact, replaceSampleNotes, replaceSampleNeeds, replaceSampleTimeline, replaceSampleTransactionIds, replaceSampleOpportunities, replaceSamplePropertyList, replaceSampleListPropertyRows, appendSampleTimeline, nextSampleRevision, readSampleReceipt, replaceSampleReceipt } from "./sample-session.mjs";
+import { SAMPLE_ACTOR, interactiveSamples, getPreviewScenario, readSampleRawContacts, readSampleContact, readSampleNotes, readSampleNeeds, readSampleTimeline, readSampleActivities, readSampleTransactionIds, readSampleOpportunities, readSampleContactListRows, readSampleContactPropertyLists, readSampleListPropertyRows, readSamplePropertyAudits, replaceSampleContact, replaceSampleNotes, replaceSampleNeeds, replaceSampleTimeline, replaceSampleTransactionIds, replaceSampleOpportunities, replaceSamplePropertyList, replaceSampleListPropertyRows, appendSampleTimeline, nextSampleRevision, readSampleReceipt, replaceSampleReceipt } from "./sample-session.mjs";
 
 const copy = value => structuredClone(value);
 const error = (code, status = 400) => new LeadsError(code, status);
@@ -117,7 +117,7 @@ function pairRecords(primaryId, duplicateId) {
   if (!primary || !duplicate) throw error("not_found", 404);
   return [primary, duplicate];
 }
-function children(id) { return { notes: readSampleNotes(id), needs: readSampleNeeds(id), activities: readSampleActivities(id), opportunities: readSampleOpportunities(id), transactions: readSampleTransactionIds(id), timeline: readSampleTimeline(id), properties: readSampleContactListRows(id), propertyLists: readSampleContactPropertyLists(id) }; }
+function children(id) { return { notes: readSampleNotes(id), needs: readSampleNeeds(id), activities: readSampleActivities(id), opportunities: readSampleOpportunities(id), transactions: readSampleTransactionIds(id), timeline: readSampleTimeline(id), properties: readSampleContactListRows(id), propertyLists: readSampleContactPropertyLists(id), propertyAudits: readSamplePropertyAudits(id) }; }
 const propertyIdentity = item => `${item.listId}\u0000${item.dataset}\u0000${item.listingId}`;
 const pairStamp = records => JSON.stringify(records.map(contact => ({ contact, children: children(contact.id) })));
 async function reviewContact(contact) {

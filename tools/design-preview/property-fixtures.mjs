@@ -4,16 +4,21 @@ import { contactFixtureNow, SAMPLE_AGENT_ID, SAMPLE_COLLEAGUE_ID } from "./conta
 import { DUPLICATE_PRIMARY_ID, DUPLICATE_SOURCE_ID } from "./import-merge-fixtures.mjs";
 
 const copy = value => structuredClone(value);
+const researchPrices = [775000, 460000, 910000, 520000, 650000, 390000, 840000, 505000, 725000, 420000, 990000, 610000, 335000, 805000];
 const extraListings = Array.from({ length: 14 }, (_, index) => ({
   ...copy(visualListings[0]), id: `sample-client-property-${String(index + 1).padStart(2, "0")}`,
   mlsNumber: `SAMPLE-${101 + index}`, address: `Sample Saved Property ${String(index + 1).padStart(2, "0")}`,
+  listPrice: researchPrices[index],
   photos: [visualListings[index % visualListings.length].photos[0] || "/photos/plate-01.svg"],
   description: "Synthetic property-list example for an isolated design preview. The illustration, address and specifications do not describe a real listing.",
 }));
 export const samplePropertyCatalog = [...visualListings, ...extraListings];
 export const SAMPLE_PROPERTY_DATASET = "synthetic-preview";
-export const samplePropertyProviderStates = { "SAMPLE-MISSING-901": "not_found", "SAMPLE-OFFLINE-902": "unavailable", "SAMPLE-NOT-CONFIGURED-903": "not_configured" };
-const saved = (number, contactId, mlsNumber, listingId, age = 1) => ({ id: `82000000-0000-4000-8000-${String(number).padStart(12, "0")}`, contactId, dataset: SAMPLE_PROPERTY_DATASET, mlsNumber, listingId, addedAt: new Date(contactFixtureNow.getTime() - age * 86_400_000).toISOString(), removedAt: null });
+export const samplePropertyProviderStates = { "SAMPLE-MISSING-901": "not_found", "SAMPLE-OFFLINE-902": "unavailable", "SAMPLE-NOT-CONFIGURED-903": "not_configured", "SAMPLE-109": "unavailable" };
+const saved = (number, contactId, mlsNumber, listingId, age = 1) => {
+  const addedAt = new Date(contactFixtureNow.getTime() - age * 86_400_000).toISOString();
+  return { id: `82000000-0000-4000-8000-${String(number).padStart(12, "0")}`, contactId, dataset: SAMPLE_PROPERTY_DATASET, mlsNumber, listingId, addedAt, updatedAt: addedAt, notes: "", reviewStatus: "to_review", removedAt: null };
+};
 export const sampleContactProperties = {
   "sample-due-today": [saved(1, "sample-due-today", "SAMPLE-001", "sample-coastal"), saved(2, "sample-due-today", "SAMPLE-MISSING-901", "sample-removed-reference", 2), saved(3, "sample-due-today", "SAMPLE-OFFLINE-902", "sample-unavailable-reference", 3)],
   "sample-long-history": extraListings.slice(0, 13).map((listing, index) => saved(100 + index, "sample-long-history", listing.mlsNumber, listing.id, 15 - index)),
@@ -49,3 +54,8 @@ samplePropertyListRows[SAMPLE_INVESTMENT_LIST_ID] = [{ ...saved(301, "sample-due
 samplePropertyListRows[SAMPLE_PERSONAL_RESEARCH_LIST_ID] = [{ ...saved(302, null, "SAMPLE-001", "sample-coastal"), listId: SAMPLE_PERSONAL_RESEARCH_LIST_ID }];
 samplePropertyListRows[SAMPLE_PERSONAL_EMPTY_LIST_ID] = [];
 samplePropertyListRows[SAMPLE_PRIVATE_LIST_ID] = [{ ...saved(303, null, "SAMPLE-002", "sample-courtyard"), listId: SAMPLE_PRIVATE_LIST_ID }];
+Object.assign(samplePropertyListRows[SAMPLE_WATERFRONT_LIST_ID][0], { notes: "Review the floor plan and confirm parking before arranging a visit.", reviewStatus: "shortlisted" });
+Object.assign(samplePropertyListRows[SAMPLE_WATERFRONT_LIST_ID][1], { notes: "Layout does not fit the current search.", reviewStatus: "ruled_out" });
+samplePropertyListRows[SAMPLE_WATERFRONT_LIST_ID][2].notes = "Confirm availability with the listing agent.";
+Object.assign(samplePropertyListRows[SAMPLE_PERSONAL_RESEARCH_LIST_ID][0], { notes: "Carrying costs are above the research budget.", reviewStatus: "ruled_out" });
+for (const [index, row] of sampleContactProperties["sample-long-history"].entries()) Object.assign(row, { notes: ["Review monthly fees and parking availability.", "Keep this option for the next round of visits.", "Location does not fit the current search."][index % 3], reviewStatus: ["to_review", "shortlisted", "ruled_out"][index % 3] });

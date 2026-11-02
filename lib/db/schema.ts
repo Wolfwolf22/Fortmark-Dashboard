@@ -1151,6 +1151,10 @@ export const contactProperties = pgTable("contact_properties", {
   createdByUserId: uuid("created_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   removedAt: timestamp("removed_at", { withTimezone: true }),
+  /** Private research text, never MLS display data or audit content. */
+  notes: text("notes").notNull().default(""),
+  reviewStatus: text("review_status").notNull().default("to_review"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => [
   index("contact_properties_contact_created_idx").on(t.contactId, t.createdAt.desc(), t.id.desc()),
   index("contact_properties_list_created_idx").on(t.listId, t.createdAt.desc(), t.id.desc()),
@@ -1158,5 +1162,24 @@ export const contactProperties = pgTable("contact_properties", {
   check("contact_properties_dataset_check", sql`${t.dataset} ~ '^[A-Za-z0-9_-]{1,80}$'`),
   check("contact_properties_listing_id_check", sql`char_length(${t.listingId}) between 1 and 256 and btrim(${t.listingId}) = ${t.listingId} and ${t.listingId} !~ '[[:cntrl:]]'`),
   check("contact_properties_mls_number_check", sql`${t.mlsNumber} ~ '^[A-Z0-9][A-Z0-9-]{0,39}$' and ${t.mlsNumber} ~ '[0-9]'`),
+  check("contact_properties_notes_check", sql`char_length(${t.notes}) <= 5000`),
+  check("contact_properties_review_status_check", sql`${t.reviewStatus} in ('to_review','shortlisted','ruled_out')`),
 ]);
 export type ContactPropertyRow = typeof contactProperties.$inferSelect;
+
+/** Durable transfer receipts contain safe membership/list IDs, never private research text. */
+export const propertyTransferRequests = pgTable("property_transfer_requests", {
+  actorUserId: uuid("actor_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  requestId: uuid("request_id").notNull(),
+  sourceListId: uuid("source_list_id").notNull().references(() => propertyLists.id, { onDelete: "restrict" }),
+  targetListId: uuid("target_list_id").notNull().references(() => propertyLists.id, { onDelete: "restrict" }),
+  sourcePropertyId: uuid("source_property_id").notNull().references(() => contactProperties.id, { onDelete: "restrict" }),
+  payloadHash: text("payload_hash").notNull(),
+  result: jsonb("result").$type<{ propertyId: string; sourceRemoved: boolean; targetListId: string }>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  primaryKey({ name: "property_transfer_requests_pkey", columns: [t.actorUserId, t.requestId] }),
+  check("property_transfer_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`),
+  check("property_transfer_requests_lists_check", sql`${t.sourceListId} <> ${t.targetListId}`),
+]);
+export type PropertyTransferRequestRow = typeof propertyTransferRequests.$inferSelect;

@@ -173,8 +173,8 @@ try {
   const propertyIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const originalAdded = new Date("2026-08-01T12:00:00.000Z");
   await db.insert(contactProperties).values([
-    { id: propertyIds[0], listId: listA, contactId: propertyA, dataset: "synthetic", listingId: "common-key", mlsNumber: "A12345678", createdByUserId: OWNER, createdAt: originalAdded },
-    { id: propertyIds[1], listId: listB, contactId: propertyB, dataset: "synthetic", listingId: "common-key", mlsNumber: "A12345678", createdByUserId: OWNER },
+    { id: propertyIds[0], listId: listA, contactId: propertyA, dataset: "synthetic", listingId: "common-key", mlsNumber: "A12345678", createdByUserId: OWNER, createdAt: originalAdded, notes: "Private waterfront research", reviewStatus: "shortlisted" },
+    { id: propertyIds[1], listId: listB, contactId: propertyB, dataset: "synthetic", listingId: "common-key", mlsNumber: "A12345678", createdByUserId: OWNER, notes: "Private alternative-list concern", reviewStatus: "ruled_out" },
     { id: propertyIds[2], listId: listB, contactId: propertyB, dataset: "synthetic", listingId: "unique-key", mlsNumber: "F12345678", createdByUserId: OWNER },
     { id: propertyIds[3], listId: listB, contactId: propertyB, dataset: "synthetic", listingId: "removed-key", mlsNumber: "RX-12345678", createdByUserId: OWNER, removedAt: originalAdded },
   ]);
@@ -190,6 +190,7 @@ try {
   const propertyRows = await db.select().from(contactProperties).where(inArray(contactProperties.id, propertyIds));
   check("all saved and removed property associations are retained by original ID", propertyRows.length === 4 && propertyRows.every(row => row.contactId === propertyA));
   check("same property in distinct lists remains saved in both lists", propertyRows.filter(row => !row.removedAt).length === 3 && propertyRows.find(row => row.id === propertyIds[0])?.listId === listA && propertyRows.find(row => row.id === propertyIds[1])?.listId === listB);
+  check("merge preserves independent notes and review decisions for the same MLS property", propertyRows.find(row => row.id === propertyIds[0])?.notes === "Private waterfront research" && propertyRows.find(row => row.id === propertyIds[0])?.reviewStatus === "shortlisted" && propertyRows.find(row => row.id === propertyIds[1])?.notes === "Private alternative-list concern" && propertyRows.find(row => row.id === propertyIds[1])?.reviewStatus === "ruled_out");
   const mergedLists = await db.select().from(propertyLists).where(inArray(propertyLists.id, [listA, listB, emptyListB, privateListB]));
   check("merge retains all named and empty lists without changing owner or collapsing names", mergedLists.length === 4 && mergedLists.every(row => row.contactId === propertyA) && mergedLists.filter(row => row.name === "Waterfront options").length === 2 && mergedLists.find(row => row.id === privateListB)?.ownerUserId === ADMIN);
   check("default list anchors retain original identity through a merge", mergedLists.find(row => row.id === listA)?.defaultForContactId === propertyA && mergedLists.find(row => row.id === listB)?.defaultForContactId === propertyB);
@@ -218,5 +219,10 @@ try {
   const propertyRaceResult = await mergeContacts(ctx, propertyRace, NOW); db.batch = baseBatch;
   check("property saved after preflight is protected by atomic merge guard", !propertyRaceResult.ok && propertyRaceResult.reason === "conflict");
   check("refused merge leaves racing saved property in its original file", (await db.select().from(contactProperties).where(eq(contactProperties.contactId, propertyC))).length === 1 && !(await db.select().from(contacts).where(eq(contacts.id, propertyC)))[0]?.mergedIntoContactId);
+  const researchRace = input(await review(propertyA, propertyC)); let researchInjected = false;
+  db.batch = (async statements => { if (!researchInjected) { researchInjected = true; await db.update(contactProperties).set({ notes: "Research updated while merging", reviewStatus: "to_review", updatedAt: new Date("2026-11-02T15:00:00.000Z") }).where(eq(contactProperties.id, propertyIds[0])); } return baseBatch(statements); }) as typeof db.batch;
+  const researchRaceResult = await mergeContacts(ctx, researchRace, NOW); db.batch = baseBatch;
+  check("research edited after merge preflight invalidates its atomic snapshot", !researchRaceResult.ok && researchRaceResult.reason === "conflict");
+  check("refused merge retains the newer private note and review status", (await db.select().from(contactProperties).where(eq(contactProperties.id, propertyIds[0])))[0]?.notes === "Research updated while merging" && !(await db.select().from(contacts).where(eq(contacts.id, propertyC)))[0]?.mergedIntoContactId);
   console.log(`\n${passed}/${passed} contact merge checks passed (ephemeral PostgreSQL; no live access)`);
 } finally { await pg.close(); }

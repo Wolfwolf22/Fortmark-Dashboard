@@ -4,10 +4,10 @@ Status: **Built and certified on Preview. NOT in Production.**
 Branch: `claude/dashboard-status-yir55p` · Production baseline: `74ff9d4` (Leads V2), untouched.
 Schema record: [`CONTACTS_V3_SCHEMA_PROPOSAL.md`](./CONTACTS_V3_SCHEMA_PROPOSAL.md) (APPROVED / APPLIED TO PREVIEW).
 
-**Current local release — 2026-10-29:** the reliability, client-context, Next Action,
-CSV import, reviewed merges and multiple named MLS property lists below are implemented and verified locally.
+**Current local release — 2026-11-02:** the reliability, client-context, Next Action,
+CSV import, reviewed merges and named MLS property lists and private property research below are implemented and verified locally.
 The historical Preview certification above does not certify these additions on a
-deployment. Migrations **0015–0020 remain unapplied to live databases**; Production
+deployment. Migrations **0015–0021 remain unapplied to live databases**; Production
 was not changed by this work.
 
 ## What changed
@@ -540,3 +540,81 @@ property cards or MLS form remained in the drawer. The 320×568 create and MLS
 review dialogs fit without horizontal overflow; Add to list stayed visible and
 closed the popup after confirmation. All browser records were synthetic and
 reset on reload. Screenshots are saved with the local project handoff.
+
+## Property research — current local update (2026-11-02)
+
+Each saved property has its own private note (up to 5,000 characters), Your
+review status and update revision. Review states are To review, Shortlisted
+and Ruled out, separate from the MLS listing's status. Notes belong to one
+list membership; the same property can have different notes and decisions in
+other lists. They render as plain text and are never sent to clients or the
+MLS. Cards show a short preview; Edit review opens the complete note/status
+popup. Read-only users can open the complete review without mutation controls.
+
+Research saves use a frozen opening revision and an explicit save. A conflict
+keeps the draft and loads the current saved note/status for deliberate review.
+The user can keep the draft or adopt the saved review before saving against
+the new revision. Exact retries with identical already-saved values return
+the current record without another write or audit. A single scoped metadata
+GET works even when the property is outside the current filter or MLS is
+unavailable. Removal optionally carries the reviewed revision so a newer note
+is not silently removed.
+
+Copy or move opens a popup with owned destination lists, including personal
+and contact-linked lists. It carries the source note/status to the selected
+list. Copy retains the source; move soft-removes it only in the same transaction
+that creates the destination. A property already in the destination produces
+an explicit refusal; neither entry nor its research is overwritten.
+
+Transfers authorize both private list scopes, including linked-contact
+visibility. Locks follow sorted contacts → lists → memberships. A guarded
+receipt rechecks both current associations, source revision and target absence
+before any write. Receipt replay and failure classification reauthorize both
+list scopes. Stable request identities recover lost responses without creating
+another copy or removal. Changing destination, mode or reviewed revision uses
+a new request identity. Notes/status values are absent from receipts and
+audits; only IDs, actions and changed field names are retained there.
+
+Notes, review updates and transfers require no MLS call. MLS refreshes do not
+change research, and none of these operations creates outreach, tasks or a
+last-touch change. Contact merges preserve independent research in every list;
+a research change after merge preflight invalidates its guarded snapshot.
+
+Your review filters run in SQL before pagination. Date-added ordering is
+stable by original creation time and ID. Price ordering covers all matching
+memberships before selecting a page; it never sorts only the visible page. It
+reads fresh displayable MLS price fields in batches of up to 40 keys with at
+most four calls at once, with no persisted MLS snapshots. Closed properties
+use the same displayed sold-price rule as their cards. Unknown, hidden, missing
+and old-source prices remain last in either direction. Price ordering is
+bounded to 1,000 matching memberships and refuses larger or unavailable reads
+honestly; date-added ordering remains available. The UI preserves the loaded
+view and offers retry/date recovery on a price-read failure.
+
+The property route now supports metadata GET and research PATCH, plus POST
+`/api/property-lists/:listId/properties/:propertyId/transfer`. Query parameters
+include validated reviewStatus and sort choices. Property request bodies are bounded
+to 32 KiB to support multiline notes. All routes retain owner-only scope,
+private/no-store reads and the existing production source gate.
+
+Migration `0021_property_research_transfer.sql` adds research fields, backfills
+existing property revisions from their creation time and creates transfer
+receipts. The live prerequisite set is now **0015–0021**. No live migration,
+build, data mutation, configuration change, push or deployment was performed.
+
+Verification: the full dashboard run passed **5,704 counted checks**, plus the
+unnumbered personal-workspace suite. Two final removal-race regressions brought
+the current combined total to **5,706**, with the research suite passing 74/74.
+Other changed coverage includes 104 merge checks, 100 compatibility checks,
+20 fresh/global MLS price-order checks, 24 actual research UI/state checks and
+114 adapter checks. TypeScript and whitespace checks pass. All 66 isolated
+preview groups pass.
+
+Browser review saved private notes and status, filtered shortlisted properties,
+copied to a personal list, refused a duplicate destination, and moved the
+copied entry while preserving the original in its other list. The destination
+retained the complete note/status. A conflict rehearsal kept the draft and
+required explicit comparison with newer saved research. At 320×568, the edit
+and transfer popups fit without horizontal overflow and kept actions visible;
+an offline MLS entry remained editable and copyable. All browser records were
+synthetic, isolated and reset on reload.

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Building2 } from "lucide-react";
+import { useRef } from "react";
+import { Building2, Copy, MoreHorizontal, NotebookPen, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconWell } from "@/components/ui/icon-well";
 import { LISTING_STATUS_PILL, StatusPill } from "@/components/ui/status-pill";
@@ -11,6 +12,8 @@ import type { Listing } from "@/lib/data/types";
 import { type AddPropertyInput, type PropertyLookup, type PropertyPage, type PropertyView } from "@/lib/contacts/properties";
 import { BUSINESS_TIME_ZONE } from "@/lib/metrics/business-day";
 import { formatCurrency } from "@/lib/utils";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { REVIEW_LABELS } from "@/components/property-lists/research";
 
 interface ContactPropertiesProps { contactId: string; canWrite: boolean; available: boolean; refreshKey?: number }
 export interface ContactPropertyPreview { query: string; result: PropertyLookup }
@@ -71,20 +74,24 @@ export function ContactPropertyListing({ listing, headingId }: { listing: Listin
   </div>;
 }
 
-export function SavedContactProperty({ property, canWrite, confirming, saving, prefix, onAskRemove, onCancelRemove, onRemove }: {
+export function SavedContactProperty({ property, canWrite, confirming, saving, prefix, onAskRemove, onCancelRemove, onRemove, onEditReview, onTransfer, onReadReview }: {
   property: PropertyView; canWrite: boolean; confirming: boolean; saving: boolean; prefix: string;
   onAskRemove: () => void; onCancelRemove: () => void; onRemove: () => void;
+  onEditReview?: () => void; onTransfer?: () => void; onReadReview?: () => void;
 }) {
   const headingId = `${prefix}-property-${property.id}`;
+  const menuNavigation = useRef(false), hasResearchActions = Boolean(onEditReview || onTransfer);
   const syncCopy = property.syncStatus === "not_found" ? "The MLS did not return details for this saved listing. The entry remains on this list."
     : property.syncStatus === "not_configured" ? "The MLS connection is not configured. This saved entry is kept."
       : "The MLS could not be refreshed. This saved entry is kept.";
-  return <article className="min-w-0 rounded-panel border border-border bg-card p-3" data-testid="contact-property">
+  return <article className="flex min-w-0 flex-col rounded-card border border-border bg-card p-3 shadow-card" data-testid="contact-property">
     {property.listing ? <ContactPropertyListing listing={property.listing} headingId={headingId} /> : <div className="rounded-lg border border-dashed border-input bg-tint p-4"><h4 id={headingId} tabIndex={-1} className="break-words text-sm font-semibold [overflow-wrap:anywhere]">MLS {property.mlsNumber}</h4><p className="mt-2 text-xs leading-relaxed text-muted-foreground">{syncCopy}</p></div>}
     {property.checkedAt && <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">Checked <time dateTime={property.checkedAt}>{checkedStamp.format(new Date(property.checkedAt))}</time></p>}
-    <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
+    <div className="my-3 space-y-2 rounded-lg bg-tint p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] text-muted-foreground">Your review</p><StatusPill tone="neutral">{REVIEW_LABELS[property.reviewStatus ?? "to_review"]}</StatusPill></div>{property.notes ? <p className="line-clamp-2 whitespace-pre-wrap break-words text-xs leading-relaxed [overflow-wrap:anywhere]">{property.notes}</p> : <p className="text-xs leading-relaxed text-muted-foreground">No private note.</p>}</div>
+    <div className="mt-auto flex flex-wrap items-start justify-between gap-2 border-t border-border pt-3">
       {property.listing && <Button asChild size="sm" variant="outline"><Link href={`/listings/${encodeURIComponent(property.listing.id)}`}>View listing</Link></Button>}
-      {canWrite && (confirming ? <div role="group" aria-label={`Remove MLS ${property.mlsNumber} from this list`} className="space-y-2"><p className="text-xs leading-relaxed text-muted-foreground">Remove this property from this list?</p><div className="flex flex-wrap gap-2"><Button id={`${headingId}-confirm-remove`} type="button" size="sm" disabled={saving} onClick={onRemove}>Remove from list</Button><Button type="button" size="sm" variant="ghost" disabled={saving} onClick={onCancelRemove}>Keep property</Button></div></div> : <Button id={`${headingId}-remove`} type="button" size="sm" variant="ghost" disabled={saving} onClick={onAskRemove}>Remove from list</Button>)}
+      {!canWrite && onReadReview && <Button id={`${headingId}-actions`} type="button" size="sm" variant="ghost" onClick={onReadReview}>Read review</Button>}
+      {canWrite && (confirming ? <div role="group" aria-label={`Remove MLS ${property.mlsNumber} from this list`} className="basis-full space-y-2"><p className="text-xs leading-relaxed text-muted-foreground">Remove this property from this list? Its private note and review will leave this list with it.</p><div className="flex flex-wrap gap-2"><Button id={`${headingId}-confirm-remove`} type="button" size="sm" disabled={saving} onClick={onRemove}>Remove from list</Button><Button type="button" size="sm" variant="ghost" disabled={saving} onClick={onCancelRemove}>Keep property</Button></div></div> : hasResearchActions ? <DropdownMenu><DropdownMenuTrigger asChild><Button id={`${headingId}-actions`} type="button" size="sm" variant="ghost" disabled={saving} aria-label={`Actions for MLS ${property.mlsNumber}`}><MoreHorizontal aria-hidden="true" />Actions</Button></DropdownMenuTrigger><DropdownMenuContent align="end" onCloseAutoFocus={(event) => { if (menuNavigation.current) { event.preventDefault(); menuNavigation.current = false; } }}>{onEditReview && <DropdownMenuItem className="min-h-10" onSelect={() => { menuNavigation.current = true; onEditReview(); }}><NotebookPen aria-hidden="true" />Edit review</DropdownMenuItem>}{onTransfer && <DropdownMenuItem className="min-h-10" onSelect={() => { menuNavigation.current = true; onTransfer(); }}><Copy aria-hidden="true" />Copy or move</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem className="min-h-10" onSelect={() => { menuNavigation.current = true; onAskRemove(); }}><Trash2 aria-hidden="true" />Remove from list</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : <Button id={`${headingId}-remove`} type="button" size="sm" variant="ghost" disabled={saving} onClick={onAskRemove}>Remove from list</Button>)}
     </div>
   </article>;
 }
