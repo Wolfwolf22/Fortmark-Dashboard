@@ -21,6 +21,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { freshToken, refreshingApiFor, signInCertificationUser } from "./session";
 import { nextStage as nextTransactionStage } from "../lib/transactions/stages";
+import { checklistRequiredStages } from "../lib/transactions/checklist-domain";
 import { TRANSACTION_STAGE_LABELS, type TransactionStage } from "../lib/data/types";
 
 test.describe.configure({ mode: "serial" });
@@ -62,6 +63,29 @@ async function gotoReady(p: Page, path: string, ready: Locator, timeout = 30_000
 const drawer = () => page.getByRole("dialog");
 const followRegion = () => drawer().getByRole("region", { name: "Next follow-up" });
 const touchForm = () => drawer().getByRole("form", { name: "Log a touch" });
+
+/** Record each required checkpoint through the same reviewed controls an agent uses. */
+async function completeRequiredTransactionChecklist(id: string, from: TransactionStage, to: TransactionStage) {
+  await gotoReady(page, `/dashboard/transactions/${id}`, page.locator("#transaction-checklist"));
+  const checklist = page.locator("#transaction-checklist");
+  for (const stage of checklistRequiredStages(from, to)) {
+    const group = checklist.locator("details").filter({ has: page.locator("summary").getByText(TRANSACTION_STAGE_LABELS[stage], { exact: true }) });
+    await expect(group).toBeVisible();
+    if ((await group.getAttribute("open")) === null) await group.locator("summary").click();
+    const requiredItems = group.locator("li").filter({ has: page.getByText("Required", { exact: true }) });
+    const pending = requiredItems.getByRole("button", { name: /^Complete: / });
+    while ((await pending.count()) > 0) {
+      const button = pending.first();
+      const label = (await button.getAttribute("aria-label"))!.slice("Complete: ".length);
+      await button.click();
+      const review = page.getByRole("dialog", { name: "Complete checklist item", exact: true });
+      await expect(review.getByText(label, { exact: true })).toBeVisible();
+      await review.getByRole("button", { name: "Confirm complete", exact: true }).click();
+      await expect(review).toBeHidden();
+      await expect(group.getByRole("button", { name: `Reopen: ${label}`, exact: true })).toBeVisible();
+    }
+  }
+}
 
 async function snap(id: string) {
   const c = await api(`/dashboard/api/contacts/${id}`);
@@ -247,7 +271,14 @@ test.describe("agent workday", () => {
     await gotoReady(page, `/dashboard/transactions?open=${state.dated}`, page.getByRole("combobox", { name: "Change transaction stage" }));
     await page.getByRole("combobox", { name: "Change transaction stage" }).click();
     await page.getByRole("option", { name: "Offer", exact: true }).click();
-    await page.getByRole("dialog", { name: "Review stage change" }).getByRole("button", { name: "Confirm stage", exact: true }).click();
+    const blockedReview = page.getByRole("dialog", { name: "Review stage change", exact: true });
+    await expect(blockedReview.getByText("Required before Offer", { exact: true })).toBeVisible();
+    await expect(blockedReview.getByRole("button", { name: "Confirm stage", exact: true })).toBeDisabled();
+    await blockedReview.getByRole("button", { name: "Cancel", exact: true }).click();
+    await completeRequiredTransactionChecklist(state.dated, "opportunity", "offer");
+    await page.getByRole("combobox", { name: "Change transaction stage" }).click();
+    await page.getByRole("option", { name: "Offer", exact: true }).click();
+    await page.getByRole("dialog", { name: "Review stage change", exact: true }).getByRole("button", { name: "Confirm stage", exact: true }).click();
     await expect(async () => {
       const t = (await api(`/dashboard/api/transactions/${state.dated}`)).body.transaction as { stage: string };
       expect(t.stage).toBe("offer");
@@ -358,9 +389,9 @@ test.describe("broker workday", () => {
     const list = (await api("/dashboard/api/transactions")).body.items as { id: string; stage: string }[];
     const deal = list.find((t) => t.id === COLLEAGUE_TXN);
     expect(deal, "the broker sees the colleague's deal").toBeTruthy();
-    await gotoReady(page, `/dashboard/transactions?open=${COLLEAGUE_TXN}`, page.getByRole("combobox", { name: "Change transaction stage" }));
     const next = nextTransactionStage(deal!.stage as TransactionStage);
     expect(next, "the colleague’s file has a next active stage").toBeTruthy();
+    await completeRequiredTransactionChecklist(COLLEAGUE_TXN, deal!.stage as TransactionStage, next!);
     await page.getByRole("combobox", { name: "Change transaction stage" }).click();
     await page.getByRole("option", { name: TRANSACTION_STAGE_LABELS[next!], exact: true }).click();
     await page.getByRole("dialog", { name: "Review stage change" }).getByRole("button", { name: "Confirm stage", exact: true }).click();

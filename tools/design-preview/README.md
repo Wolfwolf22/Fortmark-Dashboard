@@ -489,7 +489,7 @@ deadlines), `sample-financing` (a deadline due today in New York),
 file routes through its `view` parameter.
 
 Records is read-only. Interactive samples permits transaction creation, details,
-stage and deadline changes in memory; reload resets everything. Worklist, file,
+stage, deadline and checklist changes in memory; reload resets everything. Worklist, file,
 Home totals/attention and linked contact transactions share one synthetic book.
 The real transaction and workspace adapters are used without an adapter alias;
 their requests terminate in the closed preview transport, with no live fallback.
@@ -511,3 +511,18 @@ Home/contact agreement:
 ```sh
 node --experimental-strip-types --no-warnings tools/design-preview/test-transaction-session.mjs
 ```
+
+Each existing or newly created file starts with 12 unchecked starter checklist
+items. Stage review explains unfinished requirements; forward jumps and resuming
+a paused file cannot bypass earlier checkpoints. Checklist completion/reopening
+uses the real adapter, parent/item revisions and exact request receipts. It
+never completes a deadline or contact touch. The 12 additional checklist groups
+cover these rules, current permissions, stale writes, interrupted results and
+atomic refusal:
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-transaction-checklist-session.mjs
+```
+
+The Open stage checklist link keeps its fragment separate from the record ID
+and focuses the checklist after navigation. Total isolated preview groups: 150.

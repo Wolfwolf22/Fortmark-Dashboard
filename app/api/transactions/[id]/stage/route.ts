@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
-import { getSampleTransaction, updateSampleTransactionStage } from "@/lib/data/sample-transactions";
+import { getSampleTransaction } from "@/lib/data/sample-transactions";
 import { stageChangeSchema } from "@/lib/transactions/domain";
 import { actorOrResponse, failure, NO_STORE, transactionsSource, unexpected, readTransactionBody } from "@/lib/transactions/http";
 import { changeStage } from "@/lib/transactions/service";
-import { canTransition } from "@/lib/transactions/stages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,9 +36,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (transactionsSource() === "sample") {
     const current = getSampleTransaction(id);
     if (!current) return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
-    if (!canTransition(current.stage, parsed.data.stage)) return failure("invalid_transition");
-    const updated = updateSampleTransactionStage(id, parsed.data.stage);
-    return NextResponse.json({ transaction: updated }, { headers: NO_STORE });
+    return NextResponse.json({ error: "sample_read_only" }, { status: 403, headers: NO_STORE });
   }
 
   if (!parsed.data.requestId || !parsed.data.expectedUpdatedAt) return NextResponse.json({ error: "invalid", fields: ["requestId", "expectedUpdatedAt"] }, { status: 400, headers: NO_STORE });

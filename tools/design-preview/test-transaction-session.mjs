@@ -10,6 +10,7 @@ import { readPreviewTransactionBundles, previewContactTransactionParties, previe
 import { SAMPLE_ACTOR, readSampleContact } from "./sample-session.mjs";
 import { SAMPLE_COLLEAGUE_ID } from "./contact-fixtures.mjs";
 import { calendarDayKey, formatTransactionDay, transactionDay } from "../../lib/transactions/calendar-days.ts";
+import { checklistBlockers } from "../../lib/transactions/checklist-domain.ts";
 import { useDataVersion } from "../../lib/data/store.ts";
 import * as contacts from "./contact-adapters.mjs";
 import { DUPLICATE_PRIMARY_ID, DUPLICATE_SOURCE_ID } from "./import-merge-fixtures.mjs";
@@ -36,6 +37,10 @@ const refused = (fn, status, code) => assert.rejects(fn, error => error.status =
 const edit = (workspace, values = {}) => ({ requestId: crypto.randomUUID(), expectedUpdatedAt: workspace.updatedAt, details: { ...workspace.details, ...values } });
 const deadline = (workspace, action, child, value) => ({ requestId: crypto.randomUUID(), expectedUpdatedAt: workspace.updatedAt, action, ...(child ? { deadlineId: child.id, expectedDeadlineUpdatedAt: child.updatedAt } : {}), ...(value ? { deadline: value } : {}) });
 const nextDay = days => new Date(Date.parse(`${calendarDayKey()}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+async function completeRequired(workspace, target) {
+  for (const item of checklistBlockers(workspace.checklist.items, workspace.transaction.stage, target)) workspace = await api.mutateTransactionChecklist(workspace.transaction.id, { requestId: crypto.randomUUID(), expectedUpdatedAt: workspace.updatedAt, itemId: item.id, expectedItemUpdatedAt: item.updatedAt, action: "complete" });
+  return workspace;
+}
 const base = JSON.stringify(sampleTransactionBundles);
 let groups = 0;
 
@@ -104,18 +109,19 @@ assert(!getPreviewMetrics().attention.data.items.some(item => item.id === `deadl
 assert.equal(getPreviewMetrics().transactions.data.projectedCommissionCents, readPreviewTransactionBundles().filter(item => ["opportunity", "offer", "under_contract", "due_diligence", "financing", "closing_prep"].includes(item.row.stage)).reduce((sum, item) => sum + (item.row.commissionFlatCents ?? Math.round((item.row.contractPriceCents || 0) * (item.row.commissionRateBps || 0) / 10000)), 0));
 assert(attentionBefore.some(item => item.id === `deadline:${today.id}`)); groups++;
 
-let closing = await api.getTransactionWorkspace("sample-closing"); const untouchedDeadlines = JSON.stringify(closing.deadlines), beforeClose = getPreviewMetrics().transactions.data.activeCount;
+let closing = await completeRequired(await api.getTransactionWorkspace("sample-closing"), "closed"); const untouchedDeadlines = JSON.stringify(closing.deadlines), beforeClose = getPreviewMetrics().transactions.data.activeCount;
 const stageInput = Object.freeze({ requestId: crypto.randomUUID(), expectedUpdatedAt: closing.updatedAt }), closed = await api.updateTransactionStage(closing.transaction.id, "closed", stageInput);
 closing = await api.getTransactionWorkspace(closing.transaction.id); assert.equal(closed.stage, "closed"); assert.equal(JSON.stringify(closing.deadlines), untouchedDeadlines); assert.equal(closing.canEdit, false);
 assert.equal(getPreviewMetrics().transactions.data.activeCount, beforeClose - 1); assert(getPreviewMetrics().activity.data.some(item => item.kind === "transaction_closed"));
 assert.equal((await api.updateTransactionStage(closing.transaction.id, "closed", stageInput)).updatedAt, closed.updatedAt);
 await refused(() => api.updateTransactionWorkspace(closing.transaction.id, edit(closing)), 409, "invalid_transition"); groups++;
 
-let paused = await api.getTransactionWorkspace("sample-on-hold"); assert(paused.canEdit); paused = await api.updateTransactionWorkspace(paused.transaction.id, edit(paused, { notes: "Updated while paused" }));
+let paused = await api.getTransactionWorkspace("sample-on-hold"); assert(paused.canEdit); paused = await api.updateTransactionWorkspace(paused.transaction.id, edit(paused, { notes: "Updated while paused" })); paused = await completeRequired(paused, "offer");
 const resumed = await api.updateTransactionStage(paused.transaction.id, "offer", { requestId: crypto.randomUUID(), expectedUpdatedAt: paused.updatedAt }); assert.equal(resumed.stage, "offer");
 assert.equal(resumed.milestones.length, 0); await refused(() => api.updateTransactionStage(resumed.id, "closed", { requestId: crypto.randomUUID(), expectedUpdatedAt: resumed.updatedAt }), 409, "invalid_transition");
-const ready = await api.updateTransactionStage(resumed.id, "closing_prep", { requestId: crypto.randomUUID(), expectedUpdatedAt: resumed.updatedAt });
-await api.updateTransactionStage(ready.id, "closed", { requestId: crypto.randomUUID(), expectedUpdatedAt: ready.updatedAt });
+const beforeReady = await completeRequired(await api.getTransactionWorkspace(resumed.id), "closing_prep"), ready = await api.updateTransactionStage(resumed.id, "closing_prep", { requestId: crypto.randomUUID(), expectedUpdatedAt: beforeReady.updatedAt });
+const beforePausedClose = await completeRequired(await api.getTransactionWorkspace(ready.id), "closed");
+await api.updateTransactionStage(ready.id, "closed", { requestId: crypto.randomUUID(), expectedUpdatedAt: beforePausedClose.updatedAt });
 const stagedActivity = previewTransactionActivity().filter(item => item.href.endsWith("/sample-on-hold"));
 assert.equal(stagedActivity.filter(item => item.kind === "transaction_stage_changed").length, 2); assert.equal(stagedActivity.filter(item => item.kind === "transaction_closed").length, 1); groups++;
 

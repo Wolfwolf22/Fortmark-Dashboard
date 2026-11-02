@@ -47,6 +47,12 @@ on_hold -> any active stage    -> allowed
 on_hold -> terminal            -> refused
 ```
 
+This is the lifecycle graph. The stage writer additionally requires every
+earlier required checklist item before forward movement or resuming a paused
+file at a later checkpoint. Missing snapshot groups also refuse advancement.
+See [TRANSACTION_CHECKLISTS.md](TRANSACTION_CHECKLISTS.md). Pauses, backward
+moves and non-closing exits do not require this forward checklist gate.
+
 Two properties worth stating because a future AI capability would inherit
 them: **closing is reachable from exactly one stage**, and **every terminal
 stage is a one-way door** — there is no reopen path in the domain at all.
@@ -62,6 +68,7 @@ stage is a one-way door** — there is no reopen path in the domain at all.
 | Transactions table, drawer, filters, search | display and filter only |
 | Commission | **not stage-dependent** — `projectCommission` reads stored money only |
 | Deadlines | **untouched by stage changes** |
+| Required checklist | Blocks forward moves until earlier requirements are complete; a stage move never completes an item |
 
 Closed metrics depend on `closed_date` as well as the stage, which is why the
 writer stamps it.

@@ -19,7 +19,7 @@ import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb, type Db } from "../db/client.ts";
 import {
   auditEvents,
-  contacts, dashboardUsers, transactionWriteRequests,
+  contacts, dashboardUsers, transactionWriteRequests, transactionChecklistItems,
   professionalProfiles,
   transactionDeadlines,
   transactionEvents,
@@ -46,6 +46,7 @@ import {
   type CreateTransactionInput,
 } from "./domain.ts";
 import { canTransition, isTerminalStage, isStage } from "./stages.ts";
+import { checklistRequiredStages, checklistBlockers, checklistMissingStages } from "./checklist-domain.ts";
 
 /** Keys that must never appear in event metadata. Same rule as audit. */
 const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
@@ -70,7 +71,7 @@ export type ServiceFailure =
   | "invalid_transition"
   | "invalid_assignee"
   | "invalid_contact"
-  | "conflict" | "request_conflict" | "invalid_transaction" | "closing_deadline_conflict" | "invalid_deadline_transition";
+  | "conflict" | "request_conflict" | "invalid_transaction" | "closing_deadline_conflict" | "invalid_deadline_transition" | "checklist_incomplete" | "checklist_not_ready" | "invalid_checklist_transition";
 
 /** The role a contact takes on the deal, by which side FortMark represents. */
 const CLIENT_PARTY_ROLE: Record<TransactionSideKey, "seller" | "buyer" | "landlord" | "tenant"> = {
@@ -224,6 +225,20 @@ export function isTransactionGuardConflict(error: unknown): boolean {
   return false;
 }
 
+/** A snapshot must exist for each crossed stage; absence is never permission to advance. */
+export async function transactionChecklistGate(ctx: TransactionContext, id: string, from: TransactionStage, to: TransactionStage): Promise<ServiceResult<true>> {
+  const stages = checklistRequiredStages(from, to); if (!stages.length) return { ok: true, value: true };
+  const items = await ctx.db.select({ stage: transactionChecklistItems.stage, required: transactionChecklistItems.required, completedAt: transactionChecklistItems.completedAt }).from(transactionChecklistItems).where(eq(transactionChecklistItems.transactionId, id));
+  const checked = items.map(item => ({ ...item, stage: item.stage as (typeof stages)[number] }));
+  if (checklistMissingStages(checked, from, to).length) return { ok: false, reason: "checklist_not_ready" };
+  return checklistBlockers(checked, from, to).length ? { ok: false, reason: "checklist_incomplete" } : { ok: true, value: true };
+}
+function checklistGateSql(id: string, from: TransactionStage, to: TransactionStage) {
+  const stages = checklistRequiredStages(from, to); if (!stages.length) return sql`true`;
+  return sql`not exists(select 1 from ${transactionChecklistItems} where ${transactionChecklistItems.transactionId}=${id}::uuid and ${inArray(transactionChecklistItems.stage, [...stages])} and ${transactionChecklistItems.required}=true and ${transactionChecklistItems.completedAt} is null)
+    and ${sql.join(stages.map(stage => sql`exists(select 1 from ${transactionChecklistItems} where ${transactionChecklistItems.transactionId}=${id}::uuid and ${transactionChecklistItems.stage}=${stage})`), sql` and `)}`;
+}
+
 /** The parent, client link, deadlines, receipt and required history share one commit. */
 export async function createTransaction(ctx: TransactionContext, input: CreateTransactionInput, now = new Date()): Promise<ServiceResult<Transaction>> {
   const parsed = createTransactionSchema.safeParse(input); if (!parsed.success) return { ok: false, reason: "invalid_transaction" };
@@ -327,6 +342,7 @@ export async function planStageChange(
 
   const expected = options.expectedUpdatedAt ?? row.updatedAt.toISOString();
   if (!revisionMatches(row.updatedAt, expected)) return { ok: false, reason: "conflict" };
+  const checklist = await transactionChecklistGate(ctx, id, from, to); if (!checklist.ok) return checklist;
   const requestId = options.requestId ?? randomUUID(), next = nextTransactionRevision(row, now);
   const hash = createPayloadHash({ id, stage: to, expectedUpdatedAt: options.expectedUpdatedAt });
   const guard = transactionRevisionGuard(ctx, row, expected);
@@ -344,7 +360,8 @@ export async function planStageChange(
       to,
       writes: [
         ...transactionWriteLocks(ctx, id),
-        ctx.db.insert(transactionWriteRequests).values({ actorUserId: ctx.actor.userId, requestId, transactionId: id, action: "stage", payloadHash: sql`case when exists(select 1 from ${transactions} where ${guard}) then ${hash}::text else null end`, result: { transactionId: id, updatedAt: next.toISOString() }, createdAt: now }),
+        ctx.db.select({ id: transactionChecklistItems.id }).from(transactionChecklistItems).where(eq(transactionChecklistItems.transactionId, id)).orderBy(transactionChecklistItems.id).for("update"),
+        ctx.db.insert(transactionWriteRequests).values({ actorUserId: ctx.actor.userId, requestId, transactionId: id, action: "stage", payloadHash: sql`case when exists(select 1 from ${transactions} where ${guard}) and ${checklistGateSql(id, from, to)} then ${hash}::text else null end`, result: { transactionId: id, updatedAt: next.toISOString() }, createdAt: now }),
         ctx.db
           .update(transactions)
           .set({
@@ -412,6 +429,7 @@ export async function changeStage(
   } catch (error) {
     const recovered = await replay(); if (recovered) return recovered;
     const current = await getTransaction(ctx, id, now); if (!current) return { ok: false, reason: "not_found" };
+    if (isTransactionGuardConflict(error) && current.stage === planned.value.from) { const gate = await transactionChecklistGate(ctx, id, current.stage, to); if (!gate.ok) return gate; }
     return { ok: false, reason: isTransactionGuardConflict(error) ? "conflict" : "unavailable" };
   }
 

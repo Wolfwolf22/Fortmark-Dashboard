@@ -21,7 +21,8 @@ import type { Actor } from "../lib/auth/actor.ts";
 import { createContactScenarios } from "./helpers/contact-scenario.ts";
 import { changeStage as changeContactStage } from "../lib/contacts/service.ts";
 import { ALL_CONTACT_STAGES, canTransition as canContactTransition } from "../lib/contacts/stages.ts";
-import { auditEvents, contactActivities, contacts, transactionEvents, transactions } from "../lib/db/schema.ts";
+import { auditEvents, contactActivities, contacts, transactionEvents, transactions, transactionChecklistItems } from "../lib/db/schema.ts";
+import { DEFAULT_TRANSACTION_CHECKLIST } from "../lib/transactions/checklist-domain.ts";
 import { changeStage as changeTransactionStage, planStageChange } from "../lib/transactions/service.ts";
 import { ALL_STAGES, canTransition, isTerminalStage } from "../lib/transactions/stages.ts";
 import type { TransactionStage } from "../lib/data/types.ts";
@@ -56,7 +57,9 @@ function memoryDb(tableRow: { table: unknown; row: Record<string, unknown> }, fa
   const select = () => {
     let rows: unknown[] = [];
     const b = {
-      from(t: unknown) { rows = t === tableRow.table ? [{ ...tableRow.row }] : []; return b; },
+      // Lifecycle/rollback controls use reviewed files. Checklist gating itself
+      // is exercised against real isolated PostgreSQL in test_transaction_checklists.
+      from(t: unknown) { rows = t === tableRow.table ? [{ ...tableRow.row }] : t === transactionChecklistItems && tableRow.table === transactions ? DEFAULT_TRANSACTION_CHECKLIST.map(item => ({ ...item, completedAt: NOW })) : []; return b; },
       where() { return b; }, limit() { return b; }, orderBy() { return b; }, for() { return b; }, run() {},
       then(ok: (v: unknown[]) => unknown, fail?: (e: unknown) => unknown) { return Promise.resolve(rows).then(ok, fail); },
     };

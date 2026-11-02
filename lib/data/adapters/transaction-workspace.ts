@@ -2,6 +2,7 @@
 import { apiPath } from "@/lib/routes";
 import { bumpDataVersion } from "../store";
 import { getTransactionSource, TransactionsError } from "./transactions";
+import type { TransactionChecklistMutation } from "../../transactions/checklist-domain";
 import type { TransactionWorkspace, TransactionDeadlineMutation, UpdateTransactionWorkspaceInput } from "../../transactions/workspace-domain";
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const send = () => fetch(apiPath(path), { ...init, headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}) } });
@@ -14,3 +15,5 @@ async function requireSource() { if (await getTransactionSource() !== "db") thro
 export async function getTransactionWorkspace(id: string, options?: { historyPage?: number }): Promise<TransactionWorkspace> { await requireSource(); return request(`/api/transactions/${encodeURIComponent(id)}/workspace?${new URLSearchParams({ historyPage: String(options?.historyPage ?? 1) })}`); }
 export async function updateTransactionWorkspace(id: string, input: UpdateTransactionWorkspaceInput): Promise<TransactionWorkspace> { await requireSource(); try { return await request(`/api/transactions/${encodeURIComponent(id)}/workspace`, { method: "PATCH", body: JSON.stringify(input) }); } finally { bumpDataVersion(); } }
 export async function mutateTransactionDeadline(id: string, input: TransactionDeadlineMutation): Promise<TransactionWorkspace> { await requireSource(); try { return await request(`/api/transactions/${encodeURIComponent(id)}/deadlines`, { method: "POST", body: JSON.stringify(input) }); } finally { bumpDataVersion(); } }
+
+export async function mutateTransactionChecklist(id: string, input: TransactionChecklistMutation): Promise<TransactionWorkspace> { await requireSource(); try { return await request(`/api/transactions/${encodeURIComponent(id)}/checklist`, { method: "POST", body: JSON.stringify(input) }); } finally { bumpDataVersion(); } }

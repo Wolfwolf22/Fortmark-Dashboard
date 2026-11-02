@@ -6,6 +6,7 @@ import { createTransactionSchema, stageChangeSchema, initialDeadlines } from "..
 import { transactionDetailsSchema, updateTransactionWorkspaceSchema, transactionDeadlineMutationSchema } from "../../lib/transactions/workspace-domain.ts";
 import { canTransition, isTerminalStage, STAGE_LABELS } from "../../lib/transactions/stages.ts";
 import { calendarDayKey, transactionDeadlineState } from "../../lib/transactions/calendar-days.ts";
+import { DEFAULT_TRANSACTION_CHECKLIST, TRANSACTION_CHECKLIST_VERSION, transactionChecklistMutationSchema, checklistProgress, checklistBlockers, checklistMissingStages } from "../../lib/transactions/checklist-domain.ts";
 import { canonicalTourFingerprint } from "../../lib/showings/tour-domain.ts";
 import { SAMPLE_ACTOR, getPreviewScenario, interactiveSamples, readSampleContact, readSampleTransactionIds, replaceSampleTransactionIds, appendSampleTimeline, nextSampleRevision } from "./sample-session.mjs";
 import { previewRecordId, previewPublicRecordId } from "./import-merge-fixtures.mjs";
@@ -52,6 +53,7 @@ function workspace(bundle, historyPage = 1, now = new Date()) {
   const history = [...bundle.history].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)), page = Math.min(historyPage, Math.max(1, Math.ceil(history.length / 20)));
   return { transaction: project(bundle, now), details: Object.fromEntries(detailKeys.map(key => [key, key === "notes" ? bundle.row.notes || "" : bundle.row[key]])),
     deadlines: bundle.deadlines.filter(item => !item.removedAt).sort((a, b) => a.sortOrder - b.sortOrder || a.dueDate.localeCompare(b.dueDate) || a.id.localeCompare(b.id)).map(item => ({ id: item.id, kind: item.kind, label: item.label, dueDate: item.dueDate, note: item.note || "", completedAt: item.completedAt, updatedAt: item.updatedAt, state: transactionDeadlineState(item.dueDate, item.completedAt, now) })),
+    checklist: { templateVersion: bundle.row.checklistTemplateVersion, items: [...bundle.checklist].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id)).map(({ id, templateKey, label, stage, required, sortOrder, completedAt, updatedAt }) => ({ id, templateKey, label, stage, required, sortOrder, completedAt, updatedAt })), progress: checklistProgress(bundle.checklist) },
     parties: bundle.parties.map(party => { const contact = party.contactId ? readSampleContact(party.contactId) : null, canOpen = Boolean(contact?.recordSource === "db" && (SAMPLE_ACTOR.role === "admin" || contact.assignedAgentId === SAMPLE_ACTOR.userId)); return { id: party.id, role: party.role, displayName: party.displayName, company: party.company, email: party.email, phone: party.phone || null, isPrimary: party.isPrimary, contactId: canOpen ? previewPublicRecordId(contact.id) : null, canOpenContact: canOpen }; }),
     history: { items: history.slice((page - 1) * 20, page * 20), total: history.length, page, pageSize: 20 }, canEdit: SAMPLE_ACTOR.role !== "member" && !isTerminalStage(bundle.row.stage), updatedAt: bundle.row.updatedAt };
 }
@@ -104,7 +106,18 @@ export function mutatePreviewTransactionDeadline(id, input, now = new Date()) {
 export function changePreviewTransactionStage(id, input, now = new Date()) {
   writeMode(id); const value = parse(stageChangeSchema, input); if (!value.requestId || !value.expectedUpdatedAt) fail("invalid_transaction");
   return serialized(async () => { const started = await begin(id, value, "stage"); if (started.repeated) return project(started.repeated, now); const bundle = load(id); writable(bundle, false); revision(bundle.row.updatedAt, value.expectedUpdatedAt); const from = bundle.row.stage; if (!canTransition(from, value.stage)) fail("invalid_transition", 409);
+    if (checklistMissingStages(bundle.checklist, from, value.stage).length) fail("checklist_not_ready", 409);
+    if (checklistBlockers(bundle.checklist, from, value.stage).length) fail("checklist_incomplete", 409);
     Object.assign(bundle.row, { stage: value.stage, updatedAt: nextSampleRevision(bundle.row.updatedAt), updatedByUserId: SAMPLE_ACTOR.userId, ...(value.stage === "closed" ? { closedDate: calendarDayKey(now) } : isTerminalStage(value.stage) ? { cancelledDate: calendarDayKey(now) } : {}) }); event(bundle, "stage", [], now, { fromStage: from, toStage: value.stage }); save(bundle, started, "stage"); return project(bundle, now); });
+}
+export function mutatePreviewTransactionChecklist(id, input, now = new Date()) {
+  writeMode(id); const value = parse(transactionChecklistMutationSchema, input), action = `${value.action}_checklist`;
+  return serialized(async () => { const started = await begin(id, value, action); if (started.repeated) return workspace(started.repeated, 1, now); const bundle = load(id); writable(bundle); revision(bundle.row.updatedAt, value.expectedUpdatedAt);
+    const current = bundle.checklist.find(item => item.id === value.itemId); if (!current) fail("not_found", 404); revision(current.updatedAt, value.expectedItemUpdatedAt);
+    if (value.action === "complete" && current.completedAt || value.action === "reopen" && !current.completedAt) fail("invalid_checklist_transition", 409);
+    const next = nextSampleRevision(bundle.row.updatedAt), childNext = new Date(Math.max(Date.parse(next), Date.parse(current.updatedAt) + 1)).toISOString();
+    Object.assign(current, { completedAt: value.action === "complete" ? now.toISOString() : null, completedByUserId: value.action === "complete" ? SAMPLE_ACTOR.userId : null, updatedAt: childNext });
+    Object.assign(bundle.row, { updatedAt: next, updatedByUserId: SAMPLE_ACTOR.userId }); event(bundle, action, ["completedAt"], now); save(bundle, started, action); return workspace(bundle, 1, now); });
 }
 export function createPreviewTransaction(input, now = new Date()) {
   writeMode(); const normalized = { ...input, ...(input?.contactId && readSampleContact(input.contactId) ? { contactId: previewPublicRecordId(readSampleContact(input.contactId).id) } : {}) }, value = parse(createTransactionSchema, normalized); if (!value.requestId) fail("invalid_transaction");
@@ -116,12 +129,14 @@ export function createPreviewTransaction(input, now = new Date()) {
     if (closing.length > 1 || value.closingDate && closing.some(deadline => deadline.dueDate !== value.closingDate)) fail("closing_deadline_conflict", 409);
     const id = crypto.randomUUID(), stamp = now.toISOString(), row = { id, brokerageKey: SAMPLE_ACTOR.brokerageKey, agentUserId, createdByUserId: SAMPLE_ACTOR.userId, updatedByUserId: SAMPLE_ACTOR.userId, stage: "offer", transactionType: value.transactionType, side: value.side, addressLine1: value.addressLine1, addressLine2: value.addressLine2 || null, city: value.city, state: (value.state || "FL").toUpperCase(), postalCode: value.postalCode || null, county: null, propertySubType: null, listingKey: value.listingKey || null, mlsNumber: value.mlsNumber || null, listPriceCents: value.listPriceCents ?? null, offerPriceCents: null, contractPriceCents: value.contractPriceCents ?? null, commissionRateBps: value.commissionRateBps ?? null, commissionFlatCents: value.commissionFlatCents ?? null, agentSplitBps: value.agentSplitBps ?? null, transactionFeeCents: null, referralFeeBps: null, referralPayee: null, commissionPaidCents: null, commissionPaidAt: null, contractExecutionDate: value.contractExecutionDate || null, effectiveDate: null, closingDate: value.closingDate || null, closedDate: null, possessionDate: null, cancelledDate: null, notes: value.notes || "", createdAt: stamp, updatedAt: stamp };
     row.stage = value.contractExecutionDate ? "under_contract" : "opportunity";
+    row.checklistTemplateVersion = TRANSACTION_CHECKLIST_VERSION;
     row.closingDate = value.closingDate || closing[0]?.dueDate || null;
     const role = value.side === "listing" ? "seller" : value.side === "landlord" ? "landlord" : value.side === "tenant" ? "tenant" : "buyer";
     const partyInputs = [...(contact ? [{ role, displayName: contact.name, contactId: contact.id, isPrimary: true, email: contact.email, phone: contact.phone }] : []), ...(value.parties || []).filter(party => !contact || party.role !== role)];
     const parties = partyInputs.map(party => ({ id: crypto.randomUUID(), transactionId: id, role: party.role, displayName: party.displayName, company: party.company || null, email: party.email || null, phone: party.phone || null, contactId: party.contactId || null, isPrimary: party.isPrimary || false, createdAt: stamp, updatedAt: stamp }));
     const deadlines = enteredDeadlines.map((deadline, sortOrder) => ({ id: crypto.randomUUID(), transactionId: id, ...deadline, note: deadline.note || "", sortOrder, completedAt: null, removedAt: null, createdAt: stamp, updatedAt: stamp }));
-    const bundle = { row, parties, deadlines, history: [] }; event(bundle, "create", ["stage", "side", "transactionType"], now);
+    const checklist = DEFAULT_TRANSACTION_CHECKLIST.map(item => ({ ...item, id: crypto.randomUUID(), transactionId: id, completedAt: null, completedByUserId: null, createdAt: stamp, updatedAt: stamp }));
+    const bundle = { row, parties, deadlines, checklist, history: [] }; event(bundle, "create", ["stage", "side", "transactionType"], now);
     if (contact) { replaceSampleTransactionIds(contact.id, [...new Set([...readSampleTransactionIds(contact.id), id])]); appendSampleTimeline(contact.id, { id: crypto.randomUUID(), type: "transaction", title: "Transaction linked", at: stamp, by: "Sample Agent" }, undefined, false); }
     save(bundle, started, "create"); return project(bundle, now); });
 }

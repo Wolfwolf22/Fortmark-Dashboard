@@ -176,6 +176,13 @@
       "when": 1793926800000,
       "tag": "0024_transaction_workspace",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794013200000,
+      "tag": "0025_transaction_checklists",
+      "breakpoints": true
     }
   ]
 }

@@ -27,7 +27,9 @@ stamped by the lifecycle transition, distinct from a scheduled date.
 
 The allowed stage graph is unchanged: active moves, one-step contingency
 reopening, pause/resume and terminal exits follow the existing domain. Closing
-is reachable only from Closing prep. Terminal moves require clear UI review;
+is reachable only from Closing prep. Required per-stage checklist items now gate
+forward moves and resuming a paused file, as described in
+[TRANSACTION_CHECKLISTS.md](TRANSACTION_CHECKLISTS.md). Terminal moves require clear UI review;
 closed/exited files remain read-only. Existing historical lifecycle limitations
 remain documented in TRANSACTION_STAGE_DOMAIN.md. This build adds no AI stage
 writer, document interpretation, message sending or calendar integration.
@@ -74,8 +76,9 @@ request. Reopening New transaction restores the pending result check. A later
 permission or revision refusal does not unlock a second create while that
 original result is unknown.
 
-Migration 0024 adds removed_at and transaction_write_requests. It is additive and
-remains unapplied live, together with pending earlier local migrations. No live
+Migration 0024 adds removed_at and transaction_write_requests. Migration 0025
+adds the versioned checklist snapshots. Both remain unapplied live, together
+with pending earlier local migrations. No live
 provider calls, data changes, deployment or remote push is part of this build.
 
 ## Verification
@@ -87,11 +90,10 @@ HTTP/client adapters and UI state. The isolated preview uses synthetic memory
 records and the real UI. Reload resets its edits. Test totals and desktop/phone
 screenshots are recorded in the task release outputs.
 
-The full local suite completed with 7,098 numbered checks passing. Subsequent
-focused checks cover the final create-recovery guard (8), metrics consistency
-in isolated PostgreSQL (4), existing metrics (105), and the final UI changes.
-TypeScript and whitespace checks pass. The isolated preview suite passes all
-138 groups, including 20 transaction groups. Authenticated live end-to-end
+The full local suite completed with 7,277 numbered checks passing, including
+the stage checklist update. TypeScript and whitespace checks pass. The isolated
+preview suite passes all 150 groups, including 20 transaction groups and 12
+checklist groups. Authenticated live end-to-end
 certification and a production build/deployment have not been run.
 
 Manual browser review covered a new opportunity with no invented dates or

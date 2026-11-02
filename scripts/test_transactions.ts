@@ -347,7 +347,7 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
   check("history metadata is scrubbed", /FORBIDDEN_META/.test(service));
   check("closing stamps the closed date", /closedDate: to === "closed" \? today/.test(service));
   check("out of scope is answered like not found", /reason: "not_found"/.test(service) && stage.includes('status: 404'));
-  check("a refused move is 409, not silence", /invalid_transition/.test(stage) && readFileSync("lib/transactions/http.ts", "utf8").includes("status: 409"));
+  check("a refused move is 409, not silence", /reason: "invalid_transition"/.test(service) && stage.includes("failure(result.reason)") && /case "invalid_transition"[\s\S]*?status: 409/.test(readFileSync("lib/transactions/http.ts", "utf8")));
   check("the list route caps its rows", /MAX_LIST_ROWS/.test(service) && /\.limit\(MAX_LIST_ROWS\)/.test(service));
   check("validation errors name fields, never values", /fields \}/.test(list) && !/parsed\.error\.issues\.map\(\(i\) => i\.message/.test(list));
   check("the adapter asks the server which source is live", adapter.includes('"/api/transactions/source"'));

@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { createLocalContactDb } from "./helpers/contact-test-db.ts";
 import { auditEvents, contacts, dashboardUsers, transactionDeadlines, transactionEvents, transactionParties, transactionWriteRequests, transactions } from "../lib/db/schema.ts";
 import { createTransaction, changeStage, getTransaction, planStageChange, commitStageChange, type TransactionContext } from "../lib/transactions/service.ts";
-import { getTransactionWorkspace, updateTransactionWorkspace, mutateTransactionDeadline } from "../lib/transactions/workspace-service.ts";
+import { getTransactionWorkspace, updateTransactionWorkspace, mutateTransactionDeadline, mutateTransactionChecklist } from "../lib/transactions/workspace-service.ts";
 import { createTransactionSchema } from "../lib/transactions/validation.ts";
 import { toTransaction } from "../lib/transactions/projection.ts";
 import type { TransactionWorkspace } from "../lib/transactions/workspace-domain.ts";
@@ -61,6 +61,7 @@ try {
   const closingDone = await mutateTransactionDeadline(ctx, file.transaction.id, { action: "complete", requestId: randomUUID(), expectedUpdatedAt: file.updatedAt, deadlineId: closing.id, expectedDeadlineUpdatedAt: closing.updatedAt }, now); check("closingcompletiondoesnotmarkfileclosed", closingDone.ok && closingDone.value.transaction.stage === "opportunity"); file = closingDone.value;
   const overwriteClosing = await updateTransactionWorkspace(ctx, file.transaction.id, updateInput(file, { closingDate: "2026-12-04" }), now); check("completedclosingcannotbesilentlyrescheduled", !overwriteClosing.ok && overwriteClosing.reason === "closing_deadline_conflict");
   const privateHistory = JSON.stringify(file.history); check("safehistorycontainsactionsfieldnamesnotprivatetext", !/Private|Corrected label|client@example/.test(privateHistory) && file.history.items.some(h => h.action === "complete_deadline"));
+  for (const item of file.checklist.items) { const result = await mutateTransactionChecklist(ctx, file.transaction.id, { action: "complete", requestId: randomUUID(), expectedUpdatedAt: file.updatedAt, itemId: item.id, expectedItemUpdatedAt: item.updatedAt }, now); check("requiredchecklistreviewedbeforestageprogress", result.ok); file = result.value; }
   const moved = await changeStage(ctx, file.transaction.id, "financing", now, { requestId: randomUUID(), expectedUpdatedAt: file.updatedAt }); check("stagechangeusesCASreceipt", moved.ok); file = await workspace(file.transaction.id);
   const stageOptions = { requestId: randomUUID(), expectedUpdatedAt: file.updatedAt }, stageChanged = await changeStage(ctx, file.transaction.id, "closing_prep", now, stageOptions); check("stagechangesstillfollowlifecycle", stageChanged.ok);
   const stageState = await state(), stageRetry = await changeStage(ctx, file.transaction.id, "closing_prep", now, stageOptions); check("stageexactretrysucceedswithouthistoryduplicate", stageRetry.ok && await state() === stageState);

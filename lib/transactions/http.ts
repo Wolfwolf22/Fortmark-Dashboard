@@ -32,7 +32,7 @@ export function failure(reason: ServiceFailure): NextResponse {
       return NextResponse.json({ error: "no_identity" }, { status: 403, headers: NO_STORE });
     case "invalid_transition":
       return NextResponse.json({ error: "invalid_transition" }, { status: 409, headers: NO_STORE });
-    case "conflict": case "request_conflict": case "closing_deadline_conflict": case "invalid_deadline_transition":
+    case "conflict": case "request_conflict": case "closing_deadline_conflict": case "invalid_deadline_transition": case "checklist_incomplete": case "checklist_not_ready": case "invalid_checklist_transition":
       return NextResponse.json({ error: reason }, { status: 409, headers: NO_STORE });
     case "invalid_transaction":
       return NextResponse.json({ error: "invalid", fields: ["transaction"] }, { status: 400, headers: NO_STORE });

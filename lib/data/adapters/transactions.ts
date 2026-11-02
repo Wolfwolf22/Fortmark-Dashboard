@@ -13,7 +13,6 @@ import {
   createSampleTransaction,
   getSampleTransaction,
   listSampleTransactions,
-  updateSampleTransactionStage,
 } from "../sample-transactions";
 import { bumpDataVersion } from "../store";
 import type {
@@ -131,8 +130,7 @@ export async function updateTransactionStage(
   options?: { requestId: string; expectedUpdatedAt: string }
 ): Promise<Transaction | undefined> {
   if ((await getTransactionSource()) === "sample") {
-    await delay(150);
-    return updateSampleTransactionStage(id, stage);
+    throw new TransactionsError("sample_read_only", 403);
   }
   if (!options) throw new TransactionsError("revision_required", 400);
   try {

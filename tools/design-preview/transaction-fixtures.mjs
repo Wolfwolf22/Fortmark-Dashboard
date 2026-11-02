@@ -4,6 +4,7 @@ import { visualTransactions } from "./visual-fixtures.mjs";
 import { contactFixtureNow, SAMPLE_AGENT_ID, SAMPLE_COLLEAGUE_ID } from "./contact-fixtures.mjs";
 import { contactTransactionIds } from "./import-merge-fixtures.mjs";
 import { calendarDayKey } from "../../lib/transactions/calendar-days.ts";
+import { DEFAULT_TRANSACTION_CHECKLIST, TRANSACTION_CHECKLIST_VERSION } from "../../lib/transactions/checklist-domain.ts";
 
 const day = offset => new Date(Date.parse(`${calendarDayKey(contactFixtureNow)}T12:00:00Z`) + offset * 86400000).toISOString().slice(0, 10);
 const stamp = offset => new Date(contactFixtureNow.getTime() + offset * 86400000).toISOString();
@@ -15,7 +16,7 @@ const closingOffsets = [null, 25, 18, 3, null, -8];
 const deadlineSpecs = [[], [["inspection", "Inspection", -1, false], ["appraisal", "Appraisal", 5, false], ["closing", "Closing", 25, false]], [["inspection", "Inspection", -7, true], ["appraisal", "Appraisal", -3, true], ["financing", "Financing approval", 4, false], ["closing", "Closing", 18, false], ["title", "Title documents", 0, false]], [["inspection", "Inspection", -20, true], ["financing", "Financing", -10, true], ["title", "Title review", 1, false], ["closing", "Closing", 3, false]], [], [["inspection", "Inspection", -30, true], ["closing", "Closing", -8, true]]];
 export const sampleTransactionBundles = visualTransactions.map((deal, index) => {
   const id = previewTransactionId(deal.id), updatedAt = new Date(contactFixtureNow.getTime() - 3600000).toISOString();
-  const row = { id, brokerageKey: "design-preview", agentUserId: SAMPLE_AGENT_ID, createdByUserId: SAMPLE_AGENT_ID, updatedByUserId: SAMPLE_AGENT_ID, stage: deal.stage, transactionType: deal.transactionType, side: deal.side,
+  const row = { id, brokerageKey: "design-preview", agentUserId: SAMPLE_AGENT_ID, createdByUserId: SAMPLE_AGENT_ID, updatedByUserId: SAMPLE_AGENT_ID, stage: deal.stage, checklistTemplateVersion: TRANSACTION_CHECKLIST_VERSION, transactionType: deal.transactionType, side: deal.side,
     addressLine1: deal.address, addressLine2: null, city: deal.city, state: "FL", postalCode: "33308", county: "Broward", propertySubType: null, listingKey: deal.listingId || null, mlsNumber: null,
     listPriceCents: null, offerPriceCents: null, contractPriceCents: Math.round(deal.contractPrice * 100), commissionRateBps: index === 0 || index === 4 ? null : Math.round(deal.commissionRate * 10000), commissionFlatCents: index === 4 ? Math.round(deal.projectedCommission * 100) : null, agentSplitBps: null, transactionFeeCents: null, referralFeeBps: null, referralPayee: null, commissionPaidCents: null, commissionPaidAt: null,
     contractExecutionDate: index === 0 ? null : day(-10), effectiveDate: null, closingDate: closingOffsets[index] === null ? null : day(closingOffsets[index]), closedDate: deal.stage === "closed" ? day(-8) : null, possessionDate: null, cancelledDate: null,
@@ -24,8 +25,10 @@ export const sampleTransactionBundles = visualTransactions.map((deal, index) => 
   const role = deal.side === "listing" ? "seller" : "buyer";
   const parties = (linked.length ? linked : [null]).map((contactId, position) => ({ id: `89000000-0000-4000-8000-${String((index + 1) * 100 + position).padStart(12, "0")}`, transactionId: id, role, displayName: deal.clientName, company: null, email: null, phone: null, isPrimary: position === 0, contactId, createdAt: stamp(-35), updatedAt }));
   const deadlines = deadlineSpecs[index].map(([kind, label, offset, done], position) => ({ id: `90000000-0000-4000-8000-${String((index + 1) * 100 + position).padStart(12, "0")}`, transactionId: id, kind, label, dueDate: day(offset), note: kind === "inspection" ? "Review the report before the entered deadline." : "", completedAt: done ? `${day(offset)}T16:00:00.000Z` : null, removedAt: null, sortOrder: position, createdAt: stamp(-35), updatedAt }));
+  // Stage and deadline history do not prove a checklist task was reviewed.
+  const checklist = DEFAULT_TRANSACTION_CHECKLIST.map((item, position) => ({ ...item, id: `92000000-0000-4000-8000-${String((index + 1) * 100 + position).padStart(12, "0")}`, transactionId: id, completedAt: null, completedByUserId: null, createdAt: stamp(-35), updatedAt }));
   const history = Array.from({ length: index === 2 ? 25 : 1 }, (_, position) => ({ id: `91000000-0000-4000-8000-${String((index + 1) * 100 + position).padStart(12, "0")}`, eventType: position ? "transaction_updated" : "transaction_created", action: position ? "edit" : "create", fields: position ? ["notes"] : ["stage", "side", "transactionType"], createdAt: stamp(-35 + position) }));
-  return { row, parties, deadlines, history };
+  return { row, parties, deadlines, checklist, history };
 });
 export const SAMPLE_FOREIGN_TRANSACTION_ID = "88000000-0000-4000-8000-000000000999";
-sampleTransactionBundles.push({ row: { ...structuredClone(sampleTransactionBundles[0].row), id: SAMPLE_FOREIGN_TRANSACTION_ID, brokerageKey: "other-design-preview", agentUserId: SAMPLE_COLLEAGUE_ID, addressLine1: "Sample other brokerage private file" }, parties: [], deadlines: [], history: [] });
+sampleTransactionBundles.push({ row: { ...structuredClone(sampleTransactionBundles[0].row), id: SAMPLE_FOREIGN_TRANSACTION_ID, brokerageKey: "other-design-preview", agentUserId: SAMPLE_COLLEAGUE_ID, addressLine1: "Sample other brokerage private file" }, parties: [], deadlines: [], checklist: [], history: [] });

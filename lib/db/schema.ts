@@ -461,6 +461,9 @@ export const transactions = pgTable(
 
     notes: text("notes"),
 
+    /** The operational template selected when this file was initialized. */
+    checklistTemplateVersion: text("checklist_template_version").notNull().default("brokerage-starter-v1"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -569,9 +572,30 @@ export const transactionWriteRequests = pgTable("transaction_write_requests", {
   primaryKey({ name: "transaction_write_requests_pkey", columns: [t.actorUserId, t.requestId] }),
   index("transaction_write_requests_transaction_idx").on(t.transactionId),
   check("transaction_write_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`),
-  check("transaction_write_requests_action_check", sql`${t.action} in ('create','edit','stage','add_deadline','edit_deadline','complete_deadline','reopen_deadline','remove_deadline')`),
+  check("transaction_write_requests_action_check", sql`${t.action} in ('create','edit','stage','add_deadline','edit_deadline','complete_deadline','reopen_deadline','remove_deadline','complete_checklist','reopen_checklist')`),
 ]);
 export type TransactionWriteRequestRow = typeof transactionWriteRequests.$inferSelect;
+
+/** A file keeps the checklist it was opened with, independently of later template changes. */
+export const transactionChecklistItems = pgTable("transaction_checklist_items", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "cascade" }),
+  templateKey: text("template_key").notNull(), label: text("label").notNull(),
+  stage: transactionStage("stage").notNull(), required: boolean("required").notNull().default(true),
+  sortOrder: integer("sort_order").notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  completedByUserId: uuid("completed_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  uniqueIndex("transaction_checklist_items_template_idx").on(t.transactionId, t.templateKey),
+  index("transaction_checklist_items_stage_idx").on(t.transactionId, t.stage, t.sortOrder),
+  check("transaction_checklist_items_stage_check", sql`${t.stage} in ('opportunity','offer','under_contract','due_diligence','financing','closing_prep')`),
+  check("transaction_checklist_items_text_check", sql`char_length(btrim(${t.templateKey})) between 1 and 160 and char_length(btrim(${t.label})) between 1 and 240`),
+  check("transaction_checklist_items_order_check", sql`${t.sortOrder} between 0 and 999`),
+  check("transaction_checklist_items_completion_check", sql`${t.completedAt} is not null or ${t.completedByUserId} is null`),
+]);
+export type TransactionChecklistItemRow = typeof transactionChecklistItems.$inferSelect;
 
 // ===========================================================================
 // Release D — Contacts (the people layer)
