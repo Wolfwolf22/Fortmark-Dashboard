@@ -92,6 +92,7 @@ export function toTransaction(bundle: RowBundle, now: Date = new Date()): Transa
   const stage = row.stage as TransactionStage;
   return {
     id: row.id,
+    deletedAt: row.deletedAt?.toISOString(),
     listingId: row.listingKey ?? undefined,
     mlsNumber: row.mlsNumber ?? undefined,
     listingDataset: row.listingDataset ?? undefined,

@@ -54,6 +54,10 @@ import { checkFollowUpDay, type FollowUpOutcome } from "./follow-up.ts";
 import { BUSINESS_TIME_ZONE, businessDayKey } from "../metrics/business-day.ts";
 import { toE164 } from "../profile/normalize.ts";
 import { contactCreateRequests, contactRevision, createPayloadHash, nextContactUpdatedAt, revisionMatches } from "./reliability.ts";
+import { contactEngagementFiles } from "../db/schema.ts";
+import { activeEngagementGuard } from "./engagement-guard.ts";
+import { currentContactActor } from "./lifecycle-service.ts";
+import type { ContactLifecycleFailure } from "./lifecycle-service.ts";
 
 const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
 
@@ -69,6 +73,7 @@ function scrub(meta: Record<string, unknown> | undefined) {
 }
 
 export type ServiceFailure =
+  | ContactLifecycleFailure
   | "disabled"
   | "unavailable"
   | "no_identity"
@@ -396,7 +401,7 @@ export async function planStageChange(
   ctx: Ctx,
   id: string,
   to: LeadStage,
-  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date; engagementAcknowledged?: boolean; expectedStage?: LeadStage } = {}
+  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date; engagementAcknowledged?: boolean; expectedStage?: LeadStage; expectedUpdatedAt?:string } = {}
 ): Promise<ServiceResult<StageChangePlan>> {
   if (!isRecordId(id)) return { ok: false, reason: "not_found" };
   const now = options.now ?? new Date();
@@ -412,15 +417,21 @@ export async function planStageChange(
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
   const from = row.stage as LeadStage;
   if (options.expectedStage && from !== options.expectedStage) return { ok: false, reason: "conflict" };
+  if(options.expectedUpdatedAt&&!revisionMatches(row.updatedAt,options.expectedUpdatedAt))return{ok:false,reason:"conflict"};
   // `canTransition` refuses same-stage, so a no-op arrives here as an invalid
   // transition rather than as a silent success that writes history.
   if (!canTransition(from, to)) return { ok: false, reason: "invalid_transition" };
+  const needsEngagement = requiresEngagementNotice(from,to);
+  const [proof] = needsEngagement ? await ctx.db.select({id:contactEngagementFiles.id,updatedAt:contactEngagementFiles.updatedAt}).from(contactEngagementFiles).where(and(eq(contactEngagementFiles.contactId,id),sql`${contactEngagementFiles.removedAt} is null`)).limit(1) : [];
+  if(needsEngagement&&!proof)return{ok:false,reason:"engagement_required"};
+  if(needsEngagement&&options.engagementAcknowledged!==true)return{ok:false,reason:"engagement_acknowledgement_required"};
+  const engagementGuard = proof ? sql`${activeEngagementGuard(id)} and exists(select 1 from ${contactEngagementFiles} where ${contactEngagementFiles.id}=${proof.id}::uuid and ${contactEngagementFiles.contactId}=${id}::uuid and ${contactEngagementFiles.removedAt} is null and date_trunc('milliseconds',${contactEngagementFiles.updatedAt})=${proof.updatedAt.toISOString()}::timestamptz)` : sql`true`;
 
   // The mechanism is additive metadata. A manual change records exactly what
   // it always recorded, so existing history stays comparable.
   // Entering a formally-engaged stage records whether the notice was
   // acknowledged — never that an engagement was verified, because none is.
-  const gate = requiresEngagementNotice(from, to) ? { engagementAcknowledged: options.engagementAcknowledged === true } : {};
+  const gate = needsEngagement ? { engagementAcknowledged: true,engagementId:proof!.id } : {};
   const extra = { ...(mechanism === "manual" ? {} : { mechanism, ...(options.metadata ?? {}) }), ...gate };
 
   return {
@@ -430,6 +441,8 @@ export async function planStageChange(
       from,
       to,
       writes: [
+        ctx.db.select({id:dashboardUsers.id}).from(dashboardUsers).where(eq(dashboardUsers.id,ctx.actor.userId)).for("no key update"),
+        ctx.db.select({id:contacts.id}).from(contacts).where(eq(contacts.id,row.id)).for("update"),
         ctx.db
           .update(contacts)
           .set({
@@ -437,7 +450,7 @@ export async function planStageChange(
             // A stale plan deliberately violates stage's NOT NULL constraint,
             // aborting the entire batch, including appended AI action writes.
             // A zero-row conditional UPDATE alone would let its history commit.
-            stage: sql`case when ${contacts.stage} = ${from}::contact_stage and ${visibleTo(ctx.actor)}
+            stage: sql`case when ${contacts.stage} = ${from}::contact_stage and ${visibleTo(ctx.actor)} and ${currentContactActor(ctx)} and ${contactRevision(row.updatedAt.toISOString())} and ${engagementGuard}
               then ${to}::contact_stage else null end`,
             updatedByUserId: ctx.actor.userId, updatedAt: nextContactUpdatedAt(now),
           })
@@ -477,9 +490,9 @@ export async function changeStage(
   id: string,
   to: LeadStage,
   now = new Date(),
-  options: { engagementAcknowledged?: boolean; expectedStage?: LeadStage } = {}
+  options: { engagementAcknowledged?: boolean; expectedStage?: LeadStage;expectedUpdatedAt?:string } = {}
 ): Promise<ServiceResult<Lead>> {
-  const planned = await planStageChange(ctx, id, to, { mechanism: "manual", now, engagementAcknowledged: options.engagementAcknowledged, expectedStage: options.expectedStage });
+  const planned = await planStageChange(ctx, id, to, { mechanism: "manual", now, engagementAcknowledged: options.engagementAcknowledged, expectedStage: options.expectedStage,expectedUpdatedAt:options.expectedUpdatedAt });
   if (!planned.ok) return planned;
 
   try {
@@ -612,6 +625,7 @@ export async function changeFollowUp(
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
   if (row.nextActionId) return { ok: false, reason: "conflict" };
+  if(change.expectedUpdatedAt&&!revisionMatches(row.updatedAt,change.expectedUpdatedAt))return{ok:false,reason:"conflict"};
 
   if (change.action === "schedule" && !checkFollowUpDay(change.day, now).ok) {
     return { ok: false, reason: "invalid_date" };
@@ -622,7 +636,7 @@ export async function changeFollowUp(
     const result = await ctx.db.execute<{ outcome: FollowUpOutcome }>(sql`
       with locked as materialized (
         select id, next_follow_up_at from ${contacts}
-        where ${and(eq(contacts.id, id), visibleTo(ctx.actor))} and ${contacts.nextActionId} is null for update
+        where ${and(eq(contacts.id, id), visibleTo(ctx.actor),currentContactActor(ctx),change.expectedUpdatedAt?contactRevision(change.expectedUpdatedAt):undefined)} and ${contacts.nextActionId} is null for update
       ), decision as materialized (
         select id, ${follow.outcome} as outcome, ${follow.value} as value from locked
       ), changed as (

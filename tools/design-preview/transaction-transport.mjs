@@ -1,11 +1,11 @@
 import { parseTransactionFilters } from "../../lib/transactions/filters.ts";
 import { readTransactionWorkspaceQuery } from "../../lib/transactions/workspace-domain.ts";
-import { listPreviewTransactions, getPreviewTransaction, getPreviewTransactionWorkspace, createPreviewTransaction, changePreviewTransactionStage, updatePreviewTransactionWorkspace, mutatePreviewTransactionDeadline, mutatePreviewTransactionChecklist } from "./transaction-model.mjs";
+import { listPreviewTransactions, getPreviewTransaction, getPreviewTransactionWorkspace, createPreviewTransaction, changePreviewTransactionStage, updatePreviewTransactionWorkspace, mutatePreviewTransactionDeadline, mutatePreviewTransactionChecklist, mutatePreviewTransactionWorkflow } from "./transaction-model.mjs";
 import { transactionOperationsTransport } from "./transaction-operations-transport.mjs";
 import { vendorDetailTransport } from "./vendor-detail-transport.mjs";
 import { transactionPropertyTransport } from "./transaction-property-transport.mjs";
 import { transactionTourTransport } from "./transaction-tour-transport.mjs";
-const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json","Cache-Control":"private, no-store" } });
 export async function transactionTransport(path, url, input, init = {}) {
   const tours=await transactionTourTransport(path,url,input,init);if(tours)return tours;
   const property=await transactionPropertyTransport(path,url,input,init);if(property)return property;
@@ -15,7 +15,7 @@ export async function transactionTransport(path, url, input, init = {}) {
   const method = (init.method || (typeof input === "object" && input.method) || "GET").toUpperCase();
   try {
     if (path === "/api/transactions/source" && method === "GET") return json({ source: "db" });
-    const route = /^\/api\/transactions\/([^/]+)(?:\/(workspace|deadlines|checklist|stage))?$/.exec(path);
+    const route = /^\/api\/transactions\/([^/]+)(?:\/(workspace|deadlines|checklist|stage|workflow))?$/.exec(path);
     if (method === "GET") {
       if (path === "/api/transactions") { const { filters, range } = parseTransactionFilters(key => key === "q" ? null : url.searchParams.get(key)); return json({ items: listPreviewTransactions(filters, range) }); }
       if (!route) return json({ error: "not_found" }, 404);
@@ -25,12 +25,13 @@ export async function transactionTransport(path, url, input, init = {}) {
       return json({ error: "not_found" }, 404);
     }
     const raw = init.body === undefined && input instanceof Request ? await input.text() : init.body;
-    if (typeof raw !== "string" || new TextEncoder().encode(raw).length > 131072) return json({ error: "invalid_transaction" }, 400);
+    if (typeof raw !== "string" || new TextEncoder().encode(raw).length > 65536) return json({ error: "invalid_transaction" }, 400);
     let body; try { body = JSON.parse(raw); } catch { return json({ error: "invalid_transaction" }, 400); }
     if (path === "/api/transactions/search" && method === "POST") { if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "invalid_transaction" }, 400); const { filters, range } = parseTransactionFilters(key => typeof body[key] === "string" ? body[key] : null); return json({ items: listPreviewTransactions(filters, range) }); }
     if (path === "/api/transactions" && method === "POST") return json({ transaction: await createPreviewTransaction(body) }, 201);
     if (!route) return json({ error: "not_found" }, 404);
     const id = decodeURIComponent(route[1]);
+    if(method==="POST"&&route[2]==="workflow"){if([...url.searchParams.keys()].length)return json({error:"invalid_workflow"},400);return json(await mutatePreviewTransactionWorkflow(id,body));}
     if (method === "PATCH" && route[2] === "workspace") return json(await updatePreviewTransactionWorkspace(id, body));
     if (method === "POST" && route[2] === "stage") return json({ transaction: await changePreviewTransactionStage(id, body) });
     if (method === "POST" && route[2] === "deadlines") return json(await mutatePreviewTransactionDeadline(id, body));

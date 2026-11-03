@@ -15,15 +15,18 @@ import "server-only";
  * characters, not wildcards — and is sent in a POST body so a client's name
  * never reaches a request line.
  */
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, inArray, sql } from "drizzle-orm";
 import { contacts } from "../db/schema.ts";
 import { containsPattern } from "../search/query.ts";
 import { displayName } from "./domain.ts";
 import type { Ctx } from "./service.ts";
 import { visibleTo } from "./visibility.ts";
+import { ENGAGEMENT_REQUIRED_STAGES } from "./engagement.ts";
+import { activeEngagementGuard } from "./engagement-guard.ts";
 
 export const ELIGIBLE_LIMIT = 25;
 export const ELIGIBLE_STAGE = "representation" as const;
+export const ELIGIBLE_STAGES = ENGAGEMENT_REQUIRED_STAGES;
 
 export interface EligibleContact {
   id: string;
@@ -31,7 +34,7 @@ export interface EligibleContact {
 }
 
 export async function listEligibleContacts(ctx: Pick<Ctx, "actor" | "db">, text?: string): Promise<EligibleContact[]> {
-  const clauses = [visibleTo(ctx.actor), eq(contacts.stage, ELIGIBLE_STAGE)];
+  const clauses = [visibleTo(ctx.actor), inArray(contacts.stage, [...ELIGIBLE_STAGES]), activeEngagementGuard(contacts.id)];
   const needle = text?.trim().toLowerCase().slice(0, 100);
   if (needle) {
     const contains = containsPattern(needle);

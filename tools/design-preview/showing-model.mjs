@@ -5,6 +5,7 @@ import { sampleShowings, sampleShowingTimelineItem } from "./showing-fixtures.mj
 import { samplePropertyCatalog, samplePropertyProviderStates, SAMPLE_PROPERTY_DATASET } from "./property-fixtures.mjs";
 import { previewPublicRecordId, previewRecordId } from "./import-merge-fixtures.mjs";
 import { SAMPLE_ACTOR, interactiveSamples, readSampleContact, readSampleContacts, readSampleRawPropertyLists, readSampleListPropertyRows, replaceSampleListPropertyRows, replaceSamplePropertyList, replaceSampleContact, appendSampleTimeline, appendSamplePropertyAudit, nextSampleRevision } from "./sample-session.mjs";
+import { readAllSampleSavedTours } from "./saved-tour-model.mjs";
 
 const copy = value => structuredClone(value);
 const records = new Map(sampleShowings.map(value => [value.id, copy(value)]));
@@ -34,7 +35,9 @@ function dto(record) {
   const listing = !configuredState ? samplePropertyCatalog.find(item => item.id === record.listingId && item.mlsNumber === record.mlsNumber) || null : null;
   const { ownerUserId, completionActivityId, ...value } = record;
   const pending = record.status === "scheduled" && SAMPLE_ACTOR.role !== "member";
+  const tour = readAllSampleSavedTours().find(tour => tour.ownerUserId === SAMPLE_ACTOR.userId && tour.contactId === person.id && !tour.archivedAt && tour.stops.some(stop => stop.linkedShowingId === record.id));
   return copy({ ...value, contactId: previewPublicRecordId(person.id), contactName: person.name,
+    linkedTour: tour ? { id: tour.id, name: tour.name } : null,
     sourceProperty: linked ? { id: linked.member.id, listId: linked.list.id, listName: linked.list.name, removed: Boolean(linked.member.removedAt), reviewStatus: linked.member.reviewStatus, updatedAt: linked.member.updatedAt } : null,
     canEdit: pending, canComplete: pending, canCancel: pending, canUpdatePropertyReview: pending && Boolean(linked && !linked.member.removedAt),
     listing, syncStatus: configuredState || (listing ? "available" : "not_found"), checkedAt: new Date().toISOString() });

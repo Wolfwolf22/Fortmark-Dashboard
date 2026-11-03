@@ -1,18 +1,19 @@
 "use client";
 
 /**
- * The brokerage-engagement notice, shown when a contact is moved INTO Active
- * client or Representation.
- *
- * It is an acknowledgement and nothing more. Nothing here checks for, verifies
- * or attaches an agreement, and it does not say whether one would be legally
- * sufficient — secure document storage does not exist yet, so the notice asks the
- * person to confirm the fact themselves and records that they did. Cancel leaves
- * the stage exactly as it was.
+ * Entering a represented stage requires a current private PDF plus explicit
+ * acknowledgement. The software does not verify the agreement's contents.
+ * Cancel leaves the stage unchanged.
  */
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CONTACT_STAGE_LABELS, type ContactStage } from "@/lib/contacts/stages";
+import{useEffect,useState,type ReactNode}from"react";
+import{Checkbox}from"@/components/ui/checkbox";
+import{ENGAGEMENT_WARNING}from"@/lib/contacts/engagement";
+
+/** An acknowledgement belongs to the exact stage and PDF revision reviewed. */
+export const engagementAcknowledgementKey=(target:ContactStage|null,revision?:string)=>JSON.stringify([target,revision??null]);
 
 export function EngagementNotice({
   target,
@@ -20,6 +21,10 @@ export function EngagementNotice({
   onCancel,
   onContinue,
   returnFocusTo,
+  engagementReady=false,
+  engagementRevision,
+  children,
+  skipReturnFocus=false,
 }: {
   /** The stage being entered, or null when the notice is closed. */
   target: ContactStage | null;
@@ -32,18 +37,24 @@ export function EngagementNotice({
    * stable "element that had focus" to return to — the caller names it.
    */
   returnFocusTo?: string;
+  engagementReady?:boolean;
+  engagementRevision?:string;
+  children?:ReactNode;
+  skipReturnFocus?:boolean;
 }) {
+  const[acknowledgedFor,setAcknowledgedFor]=useState<string|null>(null),proofKey=engagementAcknowledgementKey(target,engagementRevision),acknowledged=engagementReady&&acknowledgedFor===proofKey;useEffect(()=>setAcknowledgedFor(null),[target,engagementReady,engagementRevision]);
   return (
     <Dialog open={target !== null} onOpenChange={(open) => !open && !busy && onCancel()}>
       <DialogContent
         onCloseAutoFocus={(event) => {
+          if(skipReturnFocus){event.preventDefault();return;}
           const el = returnFocusTo ? document.getElementById(returnFocusTo) : null;
           if (!el) return;
           event.preventDefault();
           el.focus();
         }}
       >
-        <DialogHeader>
+        <div className="max-h-[85dvh] overflow-y-auto pr-1"><DialogHeader>
           <DialogTitle>Brokerage engagement</DialogTitle>
           <DialogDescription>
             Before marking this contact as {target ? (target === "active_client" ? "an " : "in ") : ""}
@@ -51,15 +62,18 @@ export function EngagementNotice({
             place. An executed engagement should be attached to the contact record.
           </DialogDescription>
         </DialogHeader>
-        <p className="text-[13px] text-muted-foreground">FortMark does not yet store or check engagement documents. Continuing records that you confirmed this.</p>
+        {children}
+        <p className="mt-3 text-[13px] text-muted-foreground">{ENGAGEMENT_WARNING}</p>
+        <label className="mt-4 flex min-h-11 cursor-pointer items-start gap-3 rounded-panel border border-border p-3 text-sm"><Checkbox checked={acknowledged} disabled={busy||!engagementReady} onCheckedChange={value=>setAcknowledgedFor(value===true?proofKey:null)}/><span>I confirm that the current engagement PDF is attached and I have reviewed and understood it.</span></label>
+        {!engagementReady&&<p role="note" className="mt-2 text-xs text-muted-foreground">Attach a current PDF before continuing.</p>}
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button type="button" onClick={onContinue} disabled={busy}>
-            {busy ? "Saving…" : "Continue"}
+          <Button type="button" onClick={onContinue} disabled={busy||!engagementReady||!acknowledged}>
+            {busy ? "Saving…" : "Confirm and start transaction"}
           </Button>
-        </DialogFooter>
+        </DialogFooter></div>
       </DialogContent>
     </Dialog>
   );

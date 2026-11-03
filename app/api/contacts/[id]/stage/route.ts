@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCaller } from "@/lib/auth/require-caller";
-import { getSampleLead, updateSampleLeadStage } from "@/lib/data/sample-leads";
+import { getSampleLead } from "@/lib/data/sample-leads";
 import { contactStageChangeSchema } from "@/lib/contacts/domain";
 import { actorOrResponse, contactsSource, failure, ID_SHAPE, NO_STORE, unexpected } from "@/lib/contacts/http";
 import { changeStage } from "@/lib/contacts/service";
-import { canTransition } from "@/lib/contacts/stages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,17 +32,17 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (contactsSource() === "sample") {
     const current = getSampleLead(id);
     if (!current) return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
-    if (parsed.data.expectedStage && current.stage !== parsed.data.expectedStage) return NextResponse.json({ error: "conflict" }, { status: 409, headers: NO_STORE });
-    if (!canTransition(current.stage, parsed.data.stage)) return failure("invalid_transition");
-    return NextResponse.json({ contact: updateSampleLeadStage(id, parsed.data.stage) }, { headers: NO_STORE });
+    return NextResponse.json({ error:"sample_read_only" }, { status:403,headers:NO_STORE });
   }
 
   const actor = await actorOrResponse(caller.clerkUserId);
   if (!actor.ok) return actor.response;
+  if(!parsed.data.expectedUpdatedAt)return failure("invalid_revision");
   try {
     const result = await changeStage(actor.ctx, id, parsed.data.stage, new Date(), {
       engagementAcknowledged: parsed.data.engagementAcknowledged,
       expectedStage: parsed.data.expectedStage,
+      expectedUpdatedAt:parsed.data.expectedUpdatedAt,
     });
     if (!result.ok) {
       if (result.reason === "conflict") return NextResponse.json({ error: "conflict" }, { status: 409, headers: NO_STORE });

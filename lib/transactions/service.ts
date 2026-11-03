@@ -19,7 +19,7 @@ import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb, type Db } from "../db/client.ts";
 import {
   auditEvents,
-  contacts, dashboardUsers, transactionWriteRequests, transactionChecklistItems, transactionChecklistAttachments,
+  contacts, dashboardUsers, transactionWriteRequests, transactionChecklistItems, transactionChecklistAttachments,transactionPrivateNotes,
   professionalProfiles,
   transactionDeadlines,
   transactionEvents,
@@ -36,7 +36,10 @@ import { calendarDayKey } from "./calendar-days.ts";
 import { createTransactionSchema } from "./validation.ts";
 import { loadContact } from "../contacts/access.ts";
 import { displayName as contactDisplayName } from "../contacts/domain.ts";
-import { ELIGIBLE_STAGE } from "../contacts/eligible.ts";
+import { ELIGIBLE_STAGES } from "../contacts/eligible.ts";
+import { activeEngagementGuard } from "../contacts/engagement-guard.ts";
+import { closeAcknowledgementSchema, CLOSE_ACKNOWLEDGEMENT_VERSION, type CloseAcknowledgement } from "./close-acknowledgement.ts";
+import { isListingSide } from "./workflow-domain.ts";
 import {
   canCreateFor,
   canSee,
@@ -74,7 +77,8 @@ export type ServiceFailure =
   | "invalid_contact"
   | "conflict" | "request_conflict" | "invalid_transaction" | "closing_deadline_conflict" | "invalid_deadline_transition" | "checklist_incomplete" | "checklist_not_ready" | "invalid_checklist_transition"
   | "invalid_attachment" | "file_too_large" | "attachment_required" | "attachment_requires_reopen" | "attachment_not_configured" | "attachment_unavailable" | "attachment_limit" | "vendor_unavailable" | "invalid_vendor_details" | "vendor_detail_not_current"
-  | "invalid_property" | "property_changed" | "property_linked" | "property_import_unavailable" | "property_not_found" | "property_ambiguous" | "property_not_configured" | "property_unavailable" | "invalid_tour_link" | "tour_link_contact_conflict" | "gc_not_configured";
+  | "invalid_property" | "property_changed" | "property_linked" | "property_import_unavailable" | "property_not_found" | "property_ambiguous" | "property_not_configured" | "property_unavailable" | "invalid_tour_link" | "tour_link_contact_conflict" | "gc_not_configured"
+  | "invalid_workflow" | "workflow_not_allowed" | "workflow_limit" | "reopen_pending" | "close_ack_required" | "terminal_reason_required";
 
 /** The role a contact takes on the deal, by which side FortMark represents. */
 const CLIENT_PARTY_ROLE: Record<TransactionSideKey, "seller" | "buyer" | "landlord" | "tenant"> = {
@@ -101,8 +105,8 @@ export async function resolveActor(
 /** The visibility predicate, as SQL. Mirrors `canSee` for a query.
  *  Exported so aggregates (lib/transactions/metrics.ts) count exactly the
  *  rows this actor may list — a total is a disclosure like any other. */
-export function visibleTo(actor: Actor) {
-  const tenant = eq(transactions.brokerageKey, actor.brokerageKey);
+export function visibleTo(actor: Actor, includeDeleted = false) {
+  const tenant = and(eq(transactions.brokerageKey, actor.brokerageKey), includeDeleted ? undefined : isNull(transactions.deletedAt));
   return isPrivileged(actor) ? tenant : and(tenant, eq(transactions.agentUserId, actor.userId));
 }
 /** A resolved request actor can become stale while dependent reads are awaiting. */
@@ -110,9 +114,9 @@ export function transactionActorGuard(actor: Actor) {
   return sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${actor.userId}::uuid and ${dashboardUsers.role}=${actor.role} and ${dashboardUsers.status}='active')`;
 }
 
-async function stillReadable(ctx: { actor: Actor; db: Db }, rows: TransactionRow[]): Promise<Set<string>> {
+async function stillReadable(ctx: { actor: Actor; db: Db }, rows: TransactionRow[], includeDeleted=false): Promise<Set<string>> {
   if (!rows.length) return new Set();
-  const current = await ctx.db.select({ id: transactions.id, updatedAt: transactions.updatedAt }).from(transactions).where(and(inArray(transactions.id, rows.map(row => row.id)), visibleTo(ctx.actor), transactionActorGuard(ctx.actor)));
+  const current = await ctx.db.select({ id: transactions.id, updatedAt: transactions.updatedAt }).from(transactions).where(and(inArray(transactions.id, rows.map(row => row.id)), visibleTo(ctx.actor,includeDeleted), transactionActorGuard(ctx.actor)));
   const revisions = new Map(rows.map(row => [row.id, row.updatedAt.getTime()]));
   return new Set(current.filter(row => revisions.get(row.id) === row.updatedAt.getTime()).map(row => row.id));
 }
@@ -165,7 +169,8 @@ export async function listTransactions(
   range?: DateRange,
   now: Date = new Date()
 ): Promise<Transaction[]> {
-  const clauses = [visibleTo(ctx.actor), transactionActorGuard(ctx.actor)];
+  const clauses = [visibleTo(ctx.actor, Boolean(filters.deleted)), transactionActorGuard(ctx.actor)];
+  if (filters.deleted) clauses.push(sql`${transactions.deletedAt} is not null`);
   if (filters.stage?.length) clauses.push(inArray(transactions.stage, filters.stage));
   if (filters.side?.length) clauses.push(inArray(transactions.side, filters.side));
   if (filters.agentId && isPrivileged(ctx.actor)) clauses.push(eq(transactions.agentUserId, filters.agentId));
@@ -197,7 +202,7 @@ export async function listTransactions(
     .where(and(...clauses))
     .orderBy(sql`${transactions.closingDate} asc nulls last`, desc(transactions.createdAt))
     .limit(MAX_LIST_ROWS);
-  const values = await bundle(ctx.db, rows, now), readable = await stillReadable(ctx, rows);
+  const values = await bundle(ctx.db, rows, now), readable = await stillReadable(ctx, rows, Boolean(filters.deleted));
   return values.filter(value => readable.has(value.id));
 }
 
@@ -205,16 +210,18 @@ export async function getTransaction(
   ctx: { actor: Actor; db: Db },
   id: string,
   now: Date = new Date()
+  , options: { includeDeleted?: boolean } = {}
 ): Promise<Transaction | null> {
   if (!isRecordId(id)) return null;
   const rows = await ctx.db
     .select()
     .from(transactions)
-    .where(and(eq(transactions.id, id), visibleTo(ctx.actor), transactionActorGuard(ctx.actor)))
+    .where(and(eq(transactions.id, id), visibleTo(ctx.actor, options.includeDeleted), transactionActorGuard(ctx.actor)))
     .limit(1);
   const row = rows[0];
   if (!row || !canSee(ctx.actor, row)) return null;
   const values = await bundle(ctx.db, [row], now);
+  if (options.includeDeleted) { const [current] = await ctx.db.select({ updatedAt: transactions.updatedAt }).from(transactions).where(and(eq(transactions.id,id),visibleTo(ctx.actor,true),transactionActorGuard(ctx.actor))).limit(1);return current?.updatedAt.getTime()===row.updatedAt.getTime()?values[0]??null:null; }
   return (await stillReadable(ctx, [row])).has(id) ? values[0] ?? null : null;
 }
 
@@ -223,9 +230,9 @@ type TransactionWrite = Parameters<Db["batch"]>[0][number];
 export function transactionRevisionGuard(ctx: TransactionContext, row: TransactionRow, expected: string) {
   return and(eq(transactions.id, row.id), sql`${transactions.side}<>'gc'`, sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${ctx.actor.userId}::uuid and ${dashboardUsers.role}=${ctx.actor.role} and ${dashboardUsers.status}='active')`, visibleTo(ctx.actor), eq(transactions.agentUserId, row.agentUserId), eq(transactions.brokerageKey, row.brokerageKey), eq(transactions.stage, row.stage), sql`date_trunc('milliseconds',${transactions.updatedAt})=${expected}::timestamptz`);
 }
-export function transactionWriteLocks(ctx: TransactionContext, id?: string): TransactionWrite[] {
+export function transactionWriteLocks(ctx: TransactionContext, id?: string, includeDeleted = false): TransactionWrite[] {
   const locks: TransactionWrite[] = [ctx.db.select({ id: dashboardUsers.id }).from(dashboardUsers).where(eq(dashboardUsers.id, ctx.actor.userId)).for("no key update")];
-  if (id) locks.push(ctx.db.select({ id: transactions.id }).from(transactions).where(and(eq(transactions.id, id), visibleTo(ctx.actor))).for("update"));
+  if (id) locks.push(ctx.db.select({ id: transactions.id }).from(transactions).where(and(eq(transactions.id, id), visibleTo(ctx.actor, includeDeleted))).for("update"));
   return locks;
 }
 export function nextTransactionRevision(row: TransactionRow, now: Date) { return new Date(Math.max(row.updatedAt.getTime() + 1, now.getTime())); }
@@ -264,10 +271,11 @@ export async function createTransaction(ctx: TransactionContext, input: CreateTr
   const parsed = createTransactionSchema.safeParse(input); if (!parsed.success) return { ok: false, reason: "invalid_transaction" };
   input = parsed.data;
   if (input.side === "gc") return createGeneralContractorTransaction(ctx, input, now);
+  if((input.listingGoLiveDate||input.listingExpirationDate)&&!isListingSide(input.side)||input.listingGoLiveDate&&input.listingExpirationDate&&input.listingExpirationDate<input.listingGoLiveDate)return {ok:false,reason:"invalid_transaction"};
   const requestId = input.requestId ?? randomUUID(), hash = createPayloadHash({ ...input }), replay = () => transactionWriteReplay(ctx, requestId, hash, "create", now);
   const previous = await replay(); if (previous) return previous;
   let contact: Awaited<ReturnType<typeof loadContact>> & { ok: true } | undefined;
-  if (input.contactId) { const access = await loadContact(ctx, input.contactId); if (!access.ok || access.row.stage !== ELIGIBLE_STAGE) return await replay() ?? { ok: false, reason: "invalid_contact" }; contact = access; }
+  if (input.contactId) { const access = await loadContact(ctx, input.contactId); if (!access.ok || !ELIGIBLE_STAGES.includes(access.row.stage as never)) return await replay() ?? { ok: false, reason: "invalid_contact" }; const [eligible] = await ctx.db.select({id:contacts.id}).from(contacts).where(and(eq(contacts.id,input.contactId),visibleContacts(ctx.actor),activeEngagementGuard(input.contactId))).limit(1);if(!eligible)return {ok:false,reason:"invalid_contact"};contact = access; }
   const agentUserId = input.agentUserId && isPrivileged(ctx.actor) ? input.agentUserId : contact && isBrokerageAdmin(ctx.actor) ? contact.row.assignedAgentUserId : ctx.actor.userId;
   if (!canCreateFor(ctx.actor, agentUserId)) return { ok: false, reason: "forbidden" };
   if (contact && agentUserId !== contact.row.assignedAgentUserId && !isBrokerageAdmin(ctx.actor)) return { ok: false, reason: "invalid_contact" };
@@ -276,7 +284,7 @@ export async function createTransaction(ctx: TransactionContext, input: CreateTr
   // A closing date and its entered Closing milestone cannot disagree from the first save.
   if (deadlines.filter(d => d.kind === "closing").length > 1 || input.closingDate && deadlines.some(d => d.kind === "closing" && d.dueDate !== input.closingDate)) return { ok: false, reason: "closing_deadline_conflict" };
   const selectedClosing = input.closingDate ?? deadlines.find(d => d.kind === "closing")?.dueDate ?? null;
-  const guard = sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${agentUserId}::uuid and ${dashboardUsers.status}='active' and ${dashboardUsers.role}<>'member') ${contact ? sql`and exists(select 1 from ${contacts} where ${contacts.id}=${contact.row.id}::uuid and ${visibleContacts(ctx.actor)} and ${contacts.stage}=${ELIGIBLE_STAGE} and ${contacts.assignedAgentUserId}=${contact.row.assignedAgentUserId}::uuid and date_trunc('milliseconds',${contacts.updatedAt})=${contact.row.updatedAt.toISOString()}::timestamptz)` : sql``}`;
+  const guard = sql`${transactionActorGuard(ctx.actor)} and exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${agentUserId}::uuid and ${dashboardUsers.status}='active' and ${dashboardUsers.role}<>'member') ${contact ? sql`and exists(select 1 from ${contacts} where ${contacts.id}=${contact.row.id}::uuid and ${visibleContacts(ctx.actor)} and ${inArray(contacts.stage,[...ELIGIBLE_STAGES])} and ${activeEngagementGuard(contact.row.id)} and ${contacts.assignedAgentUserId}=${contact.row.assignedAgentUserId}::uuid and date_trunc('milliseconds',${contacts.updatedAt})=${contact.row.updatedAt.toISOString()}::timestamptz)` : sql``}`;
   const clientRole = CLIENT_PARTY_ROLE[input.side], parties = [
     ...(contact ? [{ role: clientRole, displayName: contactDisplayName(contact.row), company: null, email: contact.row.email, phone: contact.row.phoneE164, isPrimary: true, contactId: contact.row.id }] : []),
     ...(input.parties ?? []).filter(p => !contact || p.role !== clientRole).map(p => ({ ...p, company: p.company ?? null, email: p.email ?? null, phone: p.phone ?? null, isPrimary: p.isPrimary ?? false, contactId: null })),
@@ -286,7 +294,7 @@ export async function createTransaction(ctx: TransactionContext, input: CreateTr
   writes.push(ctx.db.insert(transactions).values({ id, brokerageKey: ctx.actor.brokerageKey, agentUserId: sql`case when ${guard} then ${agentUserId}::uuid else null end`, createdByUserId: ctx.actor.userId, updatedByUserId: ctx.actor.userId,
     transactionType: input.transactionType, side: input.side, stage, addressLine1: input.addressLine1, addressLine2: input.addressLine2 ?? null, city: input.city, state: input.state?.toUpperCase() ?? "FL", postalCode: input.postalCode ?? null,
     listingKey: input.listingKey ?? null, mlsNumber: input.mlsNumber ?? null, contractPriceCents: input.contractPriceCents ?? null, listPriceCents: input.listPriceCents ?? null, commissionRateBps: input.commissionRateBps ?? null, commissionFlatCents: input.commissionFlatCents ?? null, agentSplitBps: input.agentSplitBps ?? null,
-    contractExecutionDate: input.contractExecutionDate ?? null, closingDate: selectedClosing, notes: input.notes ?? null, createdAt: now, updatedAt: now }));
+    contractExecutionDate: input.contractExecutionDate ?? null, closingDate: selectedClosing, notes: input.notes ?? null,listingPlan:{goLiveDate:input.listingGoLiveDate??null,expirationDate:input.listingExpirationDate??null,status:input.listingGoLiveDate?"active":"draft",reason:null}, createdAt: now, updatedAt: now }));
   writes.push(ctx.db.insert(transactionWriteRequests).values({ actorUserId: ctx.actor.userId, requestId, transactionId: id, action: "create", payloadHash: hash, result: { transactionId: id, updatedAt: now.toISOString() }, createdAt: now }));
   if (parties.length) writes.push(ctx.db.insert(transactionParties).values(parties.map(p => ({ transactionId: id, role: p.role, displayName: p.displayName, company: p.company, email: p.email, phoneE164: p.phone, isPrimary: p.isPrimary, contactId: p.contactId, createdAt: now }))));
   if (deadlines.length) writes.push(ctx.db.insert(transactionDeadlines).values(deadlines.map((d, sortOrder) => ({ transactionId: id, kind: d.kind, label: d.label, dueDate: d.dueDate, note: d.note ?? null, sortOrder, createdAt: now, updatedAt: now }))));
@@ -294,7 +302,7 @@ export async function createTransaction(ctx: TransactionContext, input: CreateTr
   writes.push(ctx.db.insert(transactionEvents).values({ transactionId: id, actorUserId: ctx.actor.userId, eventType: "transaction_created", safeMetadata: safe, createdAt: now }), ctx.db.insert(auditEvents).values({ eventType: "transaction_created", actorUserId: ctx.actor.userId, safeMetadata: { transactionId: id, ...safe }, createdAt: now }));
   if (contact) writes.push(ctx.db.insert(auditEvents).values({ eventType: "contact_transaction_linked", actorUserId: ctx.actor.userId, safeMetadata: { contactId: contact.row.id, transactionId: id, mechanism: "create" }, createdAt: now }));
   try { await ctx.db.batch(writes as unknown as Parameters<Db["batch"]>[0]); }
-  catch { const recovered = await replay(); if (recovered) return recovered; if (contact) { const latest = await loadContact(ctx, contact.row.id); if (!latest.ok || latest.row.stage !== ELIGIBLE_STAGE || !revisionMatches(latest.row.updatedAt, contact.row.updatedAt.toISOString())) return { ok: false, reason: "invalid_contact" }; } return { ok: false, reason: "unavailable" }; }
+  catch { const recovered = await replay(); if (recovered) return recovered; if (contact) { const latest = await loadContact(ctx, contact.row.id); if (!latest.ok || !ELIGIBLE_STAGES.includes(latest.row.stage as never) || !revisionMatches(latest.row.updatedAt, contact.row.updatedAt.toISOString())) return { ok: false, reason: "invalid_contact" }; } return { ok: false, reason: "unavailable" }; }
   return await replay() ?? { ok: false, reason: "unavailable" };
 }
 
@@ -343,7 +351,7 @@ export async function planStageChange(
   ctx: { actor: Actor; db: Db },
   id: string,
   to: TransactionStage,
-  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date; requestId?: string; expectedUpdatedAt?: string } = {}
+  options: { mechanism?: StageChangeMechanism; metadata?: Record<string, unknown>; now?: Date; requestId?: string; expectedUpdatedAt?: string; closeAcknowledgement?:CloseAcknowledgement; reason?:string } = {}
 ): Promise<ServiceResult<StageChangePlan>> {
   if (!isRecordId(id)) return { ok: false, reason: "not_found" };
   const now = options.now ?? new Date();
@@ -361,18 +369,20 @@ export async function planStageChange(
   const from = row.stage as TransactionStage;
   if (!isStage(to)) return { ok: false, reason: "invalid_transition" };
   if (!canTransition(from, to)) return { ok: false, reason: "invalid_transition" };
+  if(to==="closed"&&!closeAcknowledgementSchema.safeParse(options.closeAcknowledgement).success)return {ok:false,reason:"close_ack_required"};
+  if(["cancelled","fell_through","withdrawn"].includes(to)&&!options.reason?.trim())return {ok:false,reason:"terminal_reason_required"};
 
   const expected = options.expectedUpdatedAt ?? row.updatedAt.toISOString();
   if (!revisionMatches(row.updatedAt, expected)) return { ok: false, reason: "conflict" };
   const checklist = await transactionChecklistGate(ctx, id, from, to); if (!checklist.ok) return checklist;
   const requestId = options.requestId ?? randomUUID(), next = nextTransactionRevision(row, now);
-  const hash = createPayloadHash({ id, stage: to, expectedUpdatedAt: options.expectedUpdatedAt });
+  const hash = createPayloadHash({ id, stage: to, expectedUpdatedAt: options.expectedUpdatedAt,...options.closeAcknowledgement?{closeAcknowledgement:options.closeAcknowledgement}:{},...options.reason?{reason:options.reason}:{}});
   const guard = transactionRevisionGuard(ctx, row, expected);
   const today = calendarDayKey(now);
   // A manual change records exactly what it always recorded, so existing
   // history stays comparable.
   const extra = mechanism === "manual" ? {} : { mechanism, ...(options.metadata ?? {}) };
-  const safe = scrub({ from, to, ...extra });
+  const safe = {...scrub({ from, to, ...extra }),...(to==="closed"?{mockAcknowledgementVersion:CLOSE_ACKNOWLEDGEMENT_VERSION,acknowledgedAt:now.toISOString()}:{}),...(options.reason?{fields:["terminalReason"]}:{})};
 
   return {
     ok: true,
@@ -407,6 +417,7 @@ export async function planStageChange(
           targetUserId: null,
           safeMetadata: safe ? { transactionId: row.id, ...safe } : { transactionId: row.id },
         }),
+        ...(options.reason?[ctx.db.insert(transactionPrivateNotes).values({transactionId:id,authorUserId:ctx.actor.userId,body:`${to}: ${options.reason.trim()}`,createdAt:now,updatedAt:next})]:[]),
       ],
     },
   };
@@ -439,9 +450,9 @@ export async function changeStage(
   id: string,
   to: TransactionStage,
   now: Date = new Date(),
-  options: { requestId?: string; expectedUpdatedAt?: string } = {}
+  options: { requestId?: string; expectedUpdatedAt?: string; closeAcknowledgement?:CloseAcknowledgement; reason?:string } = {}
 ): Promise<ServiceResult<Transaction>> {
-  const hash = createPayloadHash({ id, stage: to, expectedUpdatedAt: options.expectedUpdatedAt });
+  const hash = createPayloadHash({ id, stage: to, expectedUpdatedAt: options.expectedUpdatedAt,...options.closeAcknowledgement?{closeAcknowledgement:options.closeAcknowledgement}:{},...options.reason?{reason:options.reason}:{}});
   const replay = () => options.requestId ? transactionWriteReplay(ctx, options.requestId, hash, "stage", now) : Promise.resolve(null);
   const previous = await replay(); if (previous) return previous;
   const planned = await planStageChange(ctx, id, to, { mechanism: "manual", now, ...options });

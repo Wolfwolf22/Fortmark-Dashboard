@@ -15,7 +15,6 @@ import {
   markSampleLeadContacted,
   setSampleLeadFollowUp,
   listSampleLeads,
-  updateSampleLeadStage,
   type LeadFilters,
 } from "../sample-leads";
 import { bumpDataVersion } from "../store";
@@ -30,11 +29,13 @@ import type { CreateNeedInput, NeedView, UpdateNeedInput } from "../../contacts/
 import type { LinkedTransaction } from "../../contacts/linked.ts";
 import type { Birthday } from "../../contacts/birthday.ts";
 import type { NextActionInput } from "../../contacts/next-action.ts";
+import type {ContactEngagementState,EngagementUploadInput,EngagementRemoveInput,ContactLifecycleInput}from"../../contacts/engagement.ts";
+import type {ContactLifecycleState,DeletedContactsPage}from"../../contacts/lifecycle-service.ts";
 import type { ImportCommitInput, ImportPreview, ImportPreviewInput, ImportResult } from "../../contacts/import.ts";
 import type { DuplicateSuggestionsPage } from "../../contacts/duplicates.ts";
 import type { ContactMergeInput, ContactMergeResult, MergeReview } from "../../contacts/merge.ts";
 import type { AddPropertyInput, PropertyLookup, PropertyPage, PropertyView } from "../../contacts/properties.ts";
-import type { CreatePropertyListInput, PropertyListsPage, PropertyListView, RenamePropertyListInput } from "../../contacts/property-lists.ts";
+import type { AssociatePropertyListInput, SharePropertyListInput, PropertyListSharing, PropertyListShareUser, CreatePropertyListInput, PropertyListsPage, PropertyListView, RenamePropertyListInput } from "../../contacts/property-lists.ts";
 import type { PropertyResearchInput, PropertyReviewFilter, PropertySort, PropertyTransferInput, PropertyTransferResult } from "../../contacts/property-research.ts";
 import { HISTORY_PAGE_SIZE, type HistoryPage } from "../../contacts/history.ts";
 
@@ -206,17 +207,16 @@ export async function mergeContacts(input: ContactMergeInput): Promise<ContactMe
 export async function updateLeadStage(
   id: string,
   stage: LeadStage,
-  options: { engagementAcknowledged?: boolean; expectedStage?: LeadStage } = {}
+  options: { engagementAcknowledged?: boolean; expectedStage?: LeadStage;expectedUpdatedAt?:string } = {}
 ): Promise<Lead | undefined> {
   if ((await getLeadSource()) === "sample") {
-    await delay(150);
-    if (options.expectedStage && getSampleLead(id)?.stage !== options.expectedStage) throw new LeadsError("conflict", 409);
-    return updateSampleLeadStage(id, stage);
+    if(!getSampleLead(id))throw new LeadsError("not_found",404);
+    throw new LeadsError("sample_read_only",403);
   }
   try {
     const { contact } = await request<{ contact: Lead }>(
       `/api/contacts/${encodeURIComponent(id)}/stage`,
-      { method: "POST", body: JSON.stringify({ stage, ...(options.expectedStage ? { expectedStage: options.expectedStage } : {}), ...(options.engagementAcknowledged ? { engagementAcknowledged: true } : {}) }) }
+      { method: "POST", body: JSON.stringify({ stage, ...(options.expectedStage ? { expectedStage: options.expectedStage } : {}),...(options.expectedUpdatedAt?{expectedUpdatedAt:options.expectedUpdatedAt}:{}), ...(options.engagementAcknowledged ? { engagementAcknowledged: true } : {}) }) }
     );
     return contact;
   } finally {
@@ -329,7 +329,7 @@ export async function logTouch(id: string, input: LogTouchInput): Promise<Lead |
   return contact;
 }
 
-export type FollowUpChange = { action: "schedule"; day: string } | { action: "complete" };
+export type FollowUpChange = ({ action: "schedule"; day: string } | { action: "complete" })&{expectedUpdatedAt?:string};
 
 /**
  * Schedule, reschedule or complete the follow-up WITHOUT logging a touch.
@@ -454,6 +454,17 @@ export async function getTimelinePage(id: string, cursor?: string): Promise<Hist
   const query = new URLSearchParams({ pageSize: String(HISTORY_PAGE_SIZE), ...(cursor ? { cursor } : {}) });
   return request<HistoryPage<TimelineItem>>(`/api/contacts/${encodeURIComponent(id)}/timeline?${query}`);
 }
+export async function getTouchHistoryPage(id:string,cursor?:string):Promise<HistoryPage<TimelineItem>>{const q=new URLSearchParams({pageSize:String(HISTORY_PAGE_SIZE)});if(cursor)q.set("cursor",cursor);return request(`/api/contacts/${encodeURIComponent(id)}/touches?${q}`);}
+export async function getContactEngagement(id:string):Promise<ContactEngagementState>{return request(`/api/contacts/${encodeURIComponent(id)}/engagement`);}
+export async function getDeletedContacts(page=1):Promise<DeletedContactsPage>{if(await getLeadSource()!=="db")throw new LeadsError("not_found",404);return request(`/api/contacts/deleted?page=${page}`);}
+export async function deleteContact(id:string,input:ContactLifecycleInput):Promise<ContactLifecycleState>{if(await getLeadSource()!=="db")throw new LeadsError("not_found",404);try{return await request(`/api/contacts/${encodeURIComponent(id)}`,{method:"DELETE",body:JSON.stringify(input)});}finally{bumpDataVersion();}}
+export async function restoreContact(id:string,input:ContactLifecycleInput):Promise<ContactLifecycleState>{if(await getLeadSource()!=="db")throw new LeadsError("not_found",404);try{return await request(`/api/contacts/${encodeURIComponent(id)}/restore`,{method:"POST",body:JSON.stringify(input)});}finally{bumpDataVersion();}}
+export async function uploadContactEngagement(id:string,input:EngagementUploadInput,file:File):Promise<ContactEngagementState>{
+ if(await getLeadSource()!=="db")throw new LeadsError("not_found",404);const form=new FormData();form.set("file",file);form.set("requestId",input.requestId);form.set("expectedUpdatedAt",input.expectedUpdatedAt);form.set("expectedEngagementId",input.expectedEngagementId??"");form.set("expectedEngagementUpdatedAt",input.expectedEngagementUpdatedAt??"");
+ try{const result=await fetch(apiPath(`/api/contacts/${encodeURIComponent(id)}/engagement`),{method:"POST",body:form,credentials:"same-origin",cache:"no-store",headers:{Accept:"application/json"}});if(!result.ok){const body=await result.json().catch(()=>({}));throw new LeadsError(body.error??"engagement_unavailable",result.status);}return result.json();}finally{bumpDataVersion();}
+}
+export async function removeContactEngagement(id:string,input:EngagementRemoveInput):Promise<ContactEngagementState>{if(await getLeadSource()!=="db")throw new LeadsError("not_found",404);try{return await request(`/api/contacts/${encodeURIComponent(id)}/engagement`,{method:"DELETE",body:JSON.stringify(input)});}finally{bumpDataVersion();}}
+export async function downloadContactEngagement(id:string,fileId:string):Promise<Blob>{if(await getLeadSource()!=="db")throw new LeadsError("not_found",404);const result=await fetch(apiPath(`/api/contacts/${encodeURIComponent(id)}/engagement/${encodeURIComponent(fileId)}`),{credentials:"same-origin",cache:"no-store"});if(!result.ok){const body=await result.json().catch(()=>({}));throw new LeadsError(body.error??"engagement_unavailable",result.status);}return result.blob();}
 
 // --- Contacts V3: notes, client needs, eligible contacts, linked deals ---------------------
 
@@ -576,9 +587,9 @@ export async function removeContactProperty(id: string, propertyId: string): Pro
 
 // --- Named property lists, private to their creator --------------------------
 
-export async function getPropertyLists(query: { contactId?: string; page?: number } = {}): Promise<PropertyListsPage> {
+export async function getPropertyLists(query: { contactId?: string; page?: number; scope?: "owned" | "shared" | "all" } = {}): Promise<PropertyListsPage> {
   if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
-  const params = new URLSearchParams({ page: String(query.page ?? 1), ...(query.contactId ? { contactId: query.contactId } : {}) });
+  const params = new URLSearchParams({ page: String(query.page ?? 1), ...(query.contactId ? { contactId: query.contactId } : {}), ...(query.scope ? { scope: query.scope } : {}) });
   return request<PropertyListsPage>(`/api/property-lists?${params}`);
 }
 export async function createPropertyList(input: CreatePropertyListInput): Promise<PropertyListView> {
@@ -594,6 +605,26 @@ export async function renamePropertyList(id: string, input: RenamePropertyListIn
   if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
   try { return (await request<{ list: PropertyListView }>(`/api/property-lists/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) })).list; }
   finally { bumpDataVersion(); }
+}
+export async function associatePropertyList(id: string, input: AssociatePropertyListInput): Promise<PropertyListView> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try { return (await request<{ list: PropertyListView }>(`/api/property-lists/${encodeURIComponent(id)}/association`, { method: "PATCH", body: JSON.stringify(input) })).list; } finally { bumpDataVersion(); }
+}
+export async function getPropertyListSharing(id: string): Promise<PropertyListSharing> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  return request(`/api/property-lists/${encodeURIComponent(id)}/sharing`);
+}
+export async function updatePropertyListSharing(id: string, input: SharePropertyListInput): Promise<PropertyListSharing> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  try { return await request(`/api/property-lists/${encodeURIComponent(id)}/sharing`, { method: "PUT", body: JSON.stringify(input) }); } finally { bumpDataVersion(); }
+}
+export async function getPropertyListShareCandidates(page = 1): Promise<{ items: PropertyListShareUser[]; page: number; hasMore: boolean }> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  return request(`/api/property-lists/share-candidates?${new URLSearchParams({ page: String(page) })}`);
+}
+export async function getPropertyListSummary(id: string): Promise<import("../../contacts/property-list-summary").PropertyListSummary> {
+  if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);
+  return request(`/api/property-lists/${encodeURIComponent(id)}/summary`);
 }
 export async function getPropertyListProperties(id: string, page = 1, options: { reviewStatus?: PropertyReviewFilter; sort?: PropertySort } = {}): Promise<PropertyPage> {
   if ((await getLeadSource()) === "sample") throw new LeadsError("sample_read_only", 403);

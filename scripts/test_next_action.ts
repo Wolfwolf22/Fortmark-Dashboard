@@ -105,7 +105,7 @@ try {
     check("mutation enforces future-time and maximum-horizon rules", !badDate.ok && badDate.reason === "invalid_date" && !(await row(id)).nextActionId);
   }
   const eligible = await listNextActionAssignees(ctx, id);
-  check("only active existing readers can be assigned", eligible.ok && eligible.value.map(user => user.id).sort().join() === [owner.userId, admin.userId].sort().join());
+  check("only the current active dashboard actor is the task assignee", eligible.ok && eligible.value.map(user => user.id).join() === owner.userId);
   check("assignee names are safe display names", eligible.ok && eligible.value.every(user => user.name.startsWith("Synthetic")));
   const foreignList = await listNextActionAssignees({ actor: other, db }, id);
   const memberList = await listNextActionAssignees({ actor: { ...owner, role: "member" }, db }, id);
@@ -120,7 +120,7 @@ try {
   check("identical set writes no history or revision", noOp.ok && await revision(id) === unchangedRevision && await count("contact_activities") === 1);
   const oldId = stored.nextActionId!;
   const edited = await set(id, { ...draft, kind: "email", purpose: "Edited private purpose", assigneeId: admin.userId }); stored = await row(id);
-  check("editing preserves the action identity and supports an existing admin reader", edited.ok && stored.nextActionId === oldId && stored.nextActionAssignedUserId === admin.userId);
+  check("editing preserves the action identity and derives current actor despite supplied admin ID", edited.ok && stored.nextActionId === oldId && stored.nextActionAssignedUserId === owner.userId);
   const rescheduled = await set(id, { ...draft, dueAt: "2026-10-30T03:00:00.000Z" });
   check("same-day time changes are reschedules and retain ID", rescheduled.ok && (await row(id)).nextActionId === oldId && (await row(id)).nextFollowUpAt?.toISOString() === "2026-10-29T12:00:00.000Z");
   const events = (await db.select().from(contactActivities)).map(activity => activity.safeMetadata?.event);
@@ -129,8 +129,8 @@ try {
   const staleRevision = await set(id, draft, { expectedUpdatedAt: now.toISOString() });
   check("both stale IDs and stale contact revisions are refused", !staleId.ok && staleId.reason === "conflict" && !staleRevision.ok && staleRevision.reason === "conflict");
   for (const assignee of [other, broker, member, suspended]) {
-    const refused = await set(id, { ...draft, assigneeId: assignee.userId });
-    check("an ineligible assignee never gains contact access", !refused.ok && refused.reason === "invalid_assignee");
+    const refused = await set(id, { ...draft, dueAt:"2026-10-30T03:00:00.000Z", assigneeId: assignee.userId });
+    check("supplied assignee IDs cannot delegate or grant contact access", refused.ok && (await row(id)).nextActionAssignedUserId === owner.userId);
   }
   const completed = await mutateNextAction(ctx, id, { action: "complete", expectedUpdatedAt: await revision(id), actionId: oldId, outcome: "Private result for authorized contact readers", next: { ...draft, kind: "meeting", dueAt: "2026-11-02T17:00:00Z" } }, now);
   stored = await row(id);
@@ -193,17 +193,19 @@ try {
   const concurrentEnds = await Promise.all([mutateNextAction(ctx, id, { action: "complete", actionId: pendingId, expectedUpdatedAt: pendingRevision, outcome: "Completed once" }, now), mutateNextAction(ctx, id, { action: "cancel", actionId: pendingId, expectedUpdatedAt: pendingRevision, reason: "Cancelled once" }, now)]);
   check("completion/cancellation race resolves once without duplicate history", concurrentEnds.filter(result => result.ok).length === 1 && concurrentEnds.some(result => !result.ok && result.reason === "conflict") && await count("contact_activities") === 2 && !(await row(id)).nextActionId);
   await reset(); id = await seed();
-  const eligibilityRace = beforeExecute(async () => { await db.update(dashboardUsers).set({ status: "suspended" }).where(eq(dashboardUsers.id, admin.userId)); });
+  const eligibilityRace = beforeExecute(async () => { await db.update(dashboardUsers).set({ status: "suspended" }).where(eq(dashboardUsers.id, owner.userId)); });
   const ineligible = await set(id, { ...draft, assigneeId: admin.userId }, {}, { actor: owner, db: eligibilityRace });
   check("assignment eligibility race is a recoverable field refusal when contact identity stayed unchanged", !ineligible.ok && ineligible.reason === "invalid_assignee" && !(await row(id)).nextActionId && await count("contact_activities") === 0 && await revision(id) === now.toISOString());
+  await db.update(dashboardUsers).set({ status: "active" }).where(eq(dashboardUsers.id, owner.userId));
   const retryEligible = await set(id, draft, { expectedUpdatedAt: now.toISOString(), expectedActionId: null });
   check("a preserved draft can select an eligible owner without adopting a fictitious newer revision", retryEligible.ok && (await row(id)).nextActionAssignedUserId === owner.userId);
   await db.update(dashboardUsers).set({ status: "active" }).where(eq(dashboardUsers.id, admin.userId));
   await reset(); id = await seed(); await set(id, { ...draft, assigneeId: admin.userId });
   const beforeNoOp = await row(id);
-  const noOpEligibilityRace = beforeNoOpRead(async () => { await db.update(dashboardUsers).set({ status: "suspended" }).where(eq(dashboardUsers.id, admin.userId)); });
+  const noOpEligibilityRace = beforeNoOpRead(async () => { await db.update(dashboardUsers).set({ status: "suspended" }).where(eq(dashboardUsers.id, owner.userId)); });
   const refusedNoOp = await set(id, { ...draft, assigneeId: admin.userId }, {}, { actor: owner, db: noOpEligibilityRace });
   check("a no-op eligibility race is a recoverable field refusal without a fictitious contact conflict", !refusedNoOp.ok && refusedNoOp.reason === "invalid_assignee" && await revision(id) === beforeNoOp.updatedAt.toISOString() && (await row(id)).nextActionId === beforeNoOp.nextActionId && await count("contact_activities") === 1 && await count("audit_events") === 1);
+  await db.update(dashboardUsers).set({ status: "active" }).where(eq(dashboardUsers.id, owner.userId));
   const recoverNoOp = await set(id, draft, { expectedUpdatedAt: beforeNoOp.updatedAt.toISOString(), expectedActionId: beforeNoOp.nextActionId });
   check("an unchanged draft can recover by selecting an eligible person after the no-op refusal", recoverNoOp.ok && (await row(id)).nextActionAssignedUserId === owner.userId);
   await db.update(dashboardUsers).set({ status: "active" }).where(eq(dashboardUsers.id, admin.userId));

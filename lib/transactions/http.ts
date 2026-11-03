@@ -30,6 +30,9 @@ export function failure(reason: ServiceFailure): NextResponse {
       return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: NO_STORE });
     case "no_identity":
       return NextResponse.json({ error: "no_identity" }, { status: 403, headers: NO_STORE });
+    case "workflow_not_allowed":case "workflow_limit":case "reopen_pending":case "close_ack_required":case "terminal_reason_required":
+      return NextResponse.json({error:reason},{status:409,headers:NO_STORE});
+    case "invalid_workflow":return NextResponse.json({error:reason},{status:400,headers:NO_STORE});
     case "invalid_transition":
       return NextResponse.json({ error: "invalid_transition" }, { status: 409, headers: NO_STORE });
     case "conflict": case "request_conflict": case "closing_deadline_conflict": case "invalid_deadline_transition": case "checklist_incomplete": case "checklist_not_ready": case "invalid_checklist_transition": case "attachment_required": case "attachment_requires_reopen": case "attachment_limit": case "vendor_unavailable": case "vendor_detail_not_current": case "property_changed": case "property_linked": case "property_import_unavailable": case "property_ambiguous": case "tour_link_contact_conflict": case "gc_not_configured":

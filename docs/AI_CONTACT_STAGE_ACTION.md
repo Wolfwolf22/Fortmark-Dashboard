@@ -647,3 +647,14 @@ deliberate decision, so it was not made. Reported, not worked around.
 The boundary, stated exactly: **API live certified; rendered confirmation not
 certified.** The execute route, its payload, its refusals and its consequences
 are proven live; the button and its rendering remain covered offline only.
+
+## Current engagement boundary — 2026-11-03
+
+The shared contact stage planner now requires a current private engagement PDF
+and explicit acknowledgement before entering Representation, Active client or
+Under contract. AI preparation/execution uses that same planner and cannot
+substitute its proposal or a stage label for a file or human acknowledgement.
+Unsupported represented-stage proposals are refused. Existing represented
+contacts without a PDF retain their saved stage and receive the same warning
+as the manual UI. The system checks attachment existence, not the agreement's
+contents, signatures or legal sufficiency. See [current Contacts behavior](./CONTACTS_V3.md).

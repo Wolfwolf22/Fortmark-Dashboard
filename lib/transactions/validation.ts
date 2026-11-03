@@ -2,6 +2,8 @@ import { z } from "zod";
 import { isValidCalendarDay } from "./calendar-days.ts";
 import { ALL_STAGES } from "./stages.ts";
 import type { TransactionStage } from "../data/types.ts";
+import { closeAcknowledgementSchema } from "./close-acknowledgement.ts";
+import { isListingSide, confirmedListingDatesSchema } from "./listing-term.ts";
 
 const SIDES = ["listing", "buyer", "dual", "landlord", "tenant"] as const;
 const TYPES = ["residential_sale", "residential_lease", "commercial_sale", "commercial_lease", "land"] as const;
@@ -54,6 +56,7 @@ export const realEstateCreateTransactionSchema = z.object({
   agentSplitBps: bps.optional(),
   contractExecutionDate: isoDate.optional(),
   closingDate: isoDate.optional(),
+  listingGoLiveDate:isoDate.optional(),listingExpirationDate:isoDate.optional(),
   notes: z.string().trim().max(5000).optional(),
   agentUserId: z.string().uuid().optional(),
   /**
@@ -65,6 +68,11 @@ export const realEstateCreateTransactionSchema = z.object({
   contactId: z.string().uuid().optional(),
   parties: z.array(partyInputSchema).max(20).optional(),
   deadlines: z.array(deadlineInputSchema).max(30).optional(),
+}).superRefine((value,ctx)=>{
+  if(isListingSide(value.side)) {
+    const dates=confirmedListingDatesSchema.safeParse({goLiveDate:value.listingGoLiveDate,expirationDate:value.listingExpirationDate});
+    if(!dates.success)for(const issue of dates.error.issues)ctx.addIssue({code:"custom",path:[issue.path[0]==="expirationDate"?"listingExpirationDate":"listingGoLiveDate"],message:issue.message});
+  } else if(value.listingGoLiveDate||value.listingExpirationDate) ctx.addIssue({code:"custom",path:["listingGoLiveDate"],message:"Listing dates apply to listing-side files only."});
 });
 
 /** GC starts with only the entered property address and client identity. */
@@ -97,4 +105,5 @@ export const stageChangeSchema = z.object({
   stage: z.enum(ALL_STAGES as [TransactionStage, ...TransactionStage[]]),
   requestId: z.string().uuid().optional(),
   expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
+  closeAcknowledgement:closeAcknowledgementSchema.optional(),reason:z.string().trim().min(1).max(2000).optional(),
 });

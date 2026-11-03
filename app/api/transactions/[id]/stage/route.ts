@@ -43,7 +43,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const actor = await actorOrResponse(caller.clerkUserId);
   if (!actor.ok) return actor.response;
   try {
-    const result = await changeStage(actor.ctx, id, parsed.data.stage, new Date(), { requestId: parsed.data.requestId, expectedUpdatedAt: parsed.data.expectedUpdatedAt });
+    const result = await changeStage(actor.ctx, id, parsed.data.stage, new Date(), { requestId: parsed.data.requestId, expectedUpdatedAt: parsed.data.expectedUpdatedAt,closeAcknowledgement:parsed.data.closeAcknowledgement,reason:parsed.data.reason });
     if (!result.ok) return failure(result.reason);
     return NextResponse.json({ transaction: result.value }, { headers: NO_STORE });
   } catch (error) {

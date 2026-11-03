@@ -218,6 +218,27 @@
       "when": 1794031200000,
       "tag": "0030_personal_calendar_labels",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1794031200001,
+      "tag": "0031_contact_engagement_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794031200002,
+      "tag": "0032_transaction_workflow_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794031200003,
+      "tag": "0033_property_list_sharing",
+      "breakpoints": true
     }
   ]
 }

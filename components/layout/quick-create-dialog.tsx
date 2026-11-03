@@ -33,6 +33,8 @@ import { useQuery } from "@/lib/data/hooks";
 import { SUBSYSTEM_COPY, unavailableSubsystem } from "@/components/common/subsystem-state";
 import { Lead, LEAD_SOURCES_ORDER, LEAD_SOURCE_LABELS, PropertyType } from "@/lib/data/types";
 import { transactionCreateAttempt, transactionCreateUncertain, type TransactionCreateAttempt } from "@/lib/transactions/create-attempt";
+import { ListingDateFields } from "@/components/transactions/listing-date-fields";
+import { isListingSide,confirmedListingDatesSchema } from "@/lib/transactions/listing-term";
 import { closeDateFromInput } from "@/lib/transactions/close-date";
 import { isValidBirthday, MONTH_NAMES } from "@/lib/contacts/birthday";
 import { contactCreateAttempt,contactCreateAttemptAfterClose,contactCreateUncertain,type ContactCreateAttempt } from "@/lib/contacts/create-attempt";
@@ -80,7 +82,7 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
   const setKind = useUiStore((s) => s.setQuickCreate);
   const fromContact = useUiStore((s) => s.quickCreateContact);
   // A side is suggested only when the chosen contact's active need states one explicitly.
-  const [side, setSide] = React.useState<"listing" | "buyer" | "gc">("listing");
+  const [side, setSide] = React.useState<"listing" | "buyer" | "landlord" | "tenant" | "dual" | "gc">("listing");
   const suggestSide = React.useCallback((s: "listing" | "buyer" | null) => setSide(current=>current==="gc"?current:s??"listing"), []);
   const router = useRouter();
   const [busy, setBusy] = React.useState(false);
@@ -120,12 +122,13 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
           sqft: Number(get("sqft")) || 0,
         });
       } else if (kind === "transaction") {
-        const chosenSide=(get("side")||side) as "listing"|"buyer"|"gc";
+        const chosenSide=(get("side")||side) as "listing"|"buyer"|"landlord"|"tenant"|"dual"|"gc";
+        if(isListingSide(chosenSide)&&!confirmedListingDatesSchema.safeParse({goLiveDate:get("listingGoLiveDate"),expirationDate:get("listingExpirationDate")}).success){setError("Confirm the go-live date and contract expiration. Expiration must be on or after go-live.");return;}
         const clientName=get("client")||fromContact?.name||"";
         const input:QuickCreateTransactionInput=chosenSide==="gc"?{
           address:get("address"),clientName,contactId:get("contactId")||undefined,side:"gc"
         }:{
-          address:get("address"),city:get("city")||"Fort Lauderdale",clientName,contactId:get("contactId")||undefined,side:chosenSide,contractPrice:Number(get("price"))||0,closeDate:closeDateFromInput(get("closeDate"))
+          address:get("address"),city:get("city")||"Fort Lauderdale",clientName,contactId:get("contactId")||undefined,side:chosenSide,contractPrice:Number(get("price"))||0,closeDate:closeDateFromInput(get("closeDate")),...(isListingSide(chosenSide)?{listingGoLiveDate:get("listingGoLiveDate")||undefined,listingExpirationDate:get("listingExpirationDate")||undefined}:{})
         };
         const attempt = transactionCreateAttempt(transactionRequest.current, input, transactionUncertain);
         transactionRequest.current = attempt;
@@ -289,10 +292,10 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
   );
 }
 
-export function TransactionCreateFields({side,onSideChange,preselected,onSuggestSide,disabled}:{side:"listing"|"buyer"|"gc";onSideChange:(side:"listing"|"buyer"|"gc")=>void;preselected?:{id:string;name:string}|null;onSuggestSide?:(side:"listing"|"buyer"|null)=>void;disabled?:boolean}){return <fieldset disabled={disabled} className="grid gap-3">
-                <div className="grid gap-1.5"><Label htmlFor="qc-side">Side</Label><Select name="side" value={side} onValueChange={value=>{if(value==="listing"||value==="buyer"||value==="gc")onSideChange(value);}}><SelectTrigger id="qc-side"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="listing">Listing side</SelectItem><SelectItem value="buyer">Buyer side</SelectItem><SelectItem value="gc">GC / General contractor</SelectItem></SelectContent></Select></div>
+export function TransactionCreateFields({side,onSideChange,preselected,onSuggestSide,disabled}:{side:"listing"|"buyer"|"landlord"|"tenant"|"dual"|"gc";onSideChange:(side:"listing"|"buyer"|"landlord"|"tenant"|"dual"|"gc")=>void;preselected?:{id:string;name:string}|null;onSuggestSide?:(side:"listing"|"buyer"|null)=>void;disabled?:boolean}){return <fieldset disabled={disabled} className="grid gap-3">
+                <div className="grid gap-1.5"><Label htmlFor="qc-side">Side</Label><Select name="side" value={side} onValueChange={value=>{if(value==="listing"||value==="buyer"||value==="landlord"||value==="tenant"||value==="dual"||value==="gc")onSideChange(value);}}><SelectTrigger id="qc-side"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="listing">Listing side</SelectItem><SelectItem value="buyer">Buyer side</SelectItem><SelectItem value="landlord">Landlord side</SelectItem><SelectItem value="tenant">Tenant side</SelectItem><SelectItem value="dual">Dual representation</SelectItem><SelectItem value="gc">GC / General contractor</SelectItem></SelectContent></Select></div>
                 <Field label="Property address" name="address" required placeholder="2416 NE 26th St" />
-                {side==="gc"?<>{preselected?<div className="space-y-2"><Label>Client</Label><input type="hidden" name="contactId" value={preselected.id}/><p className="break-words text-sm">{preselected.name}</p></div>:<Field label="Client" name="client" required placeholder="Client name"/>}<p className="text-xs leading-relaxed text-muted-foreground">Open a GC file with its property and client. The project checklist starts empty.</p></>:<><Field label="City" name="city" placeholder="Fort Lauderdale"/><ContactPicker preselected={preselected} onSuggestSide={onSuggestSide}/><div className="grid grid-cols-2 gap-3"><Field label="Contract price" name="price" type="number" required placeholder="1185000"/><Field label="Close date (optional)" name="closeDate" type="date"/></div></>}
+                {side==="gc"?<>{preselected?<div className="space-y-2"><Label>Client</Label><input type="hidden" name="contactId" value={preselected.id}/><p className="break-words text-sm">{preselected.name}</p></div>:<Field label="Client" name="client" required placeholder="Client name"/>}<p className="text-xs leading-relaxed text-muted-foreground">Open a GC file with its property and client. The project checklist starts empty.</p></>:<><Field label="City" name="city" placeholder="Fort Lauderdale"/><ContactPicker preselected={preselected} onSuggestSide={onSuggestSide}/><div className="grid grid-cols-2 gap-3"><Field label="Contract price" name="price" type="number" required placeholder="1185000"/><Field label="Close date (optional)" name="closeDate" type="date"/></div>{isListingSide(side)&&<ListingDateFields/>}</>}
               </fieldset>;}
 
 function Field({

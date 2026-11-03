@@ -5,6 +5,20 @@ import type { TransactionChecklistAttachment } from "./attachment-domain.ts";
 import { checklistItemSatisfied } from "./attachment-domain.ts";
 
 export const TRANSACTION_CHECKLIST_VERSION = "brokerage-starter-v1";
+export const DEFAULT_CHECKLIST_HELP:Record<string,string>={
+ "opportunity.client":"Confirm the client identity, who you represent and the agreed scope of representation. Record the supporting information in this file.",
+ "opportunity.scope":"Check the property address and transaction type against the work you agreed to perform.",
+ "offer.terms":"Record the material offer terms and any supporting offer documents before advancing.",
+ "offer.decision":"Record the client’s reviewed decision. A checklist tick does not accept or send an offer.",
+ "contract.agreement":"Review and retain the executed agreement required for this transaction. Check that it is the correct, complete version.",
+ "contract.responsibilities":"Confirm the entered contract dates, contingencies and the people responsible for the next actions.",
+ "diligence.review":"Record the relevant inspection and disclosure review, including any required evidence or unresolved issues.",
+ "diligence.decision":"Record the client’s decision following due diligence and any agreed follow-up.",
+ "financing.funding":"Confirm the applicable funding requirements and review the recorded lender or cash-funding information.",
+ "financing.contingencies":"Review outstanding contingencies and record their disposition before preparing to close.",
+ "closing.review":"Review the full file and required documents. This operational checklist does not certify legal or brokerage compliance.",
+ "closing.arrangements":"Confirm closing arrangements and client instructions. Use the separate Close transaction review to record the actual closing.",
+};
 export interface TransactionChecklistTemplateItem {
   templateKey: string;
   label: string;
@@ -31,6 +45,7 @@ export const DEFAULT_TRANSACTION_CHECKLIST: readonly TransactionChecklistTemplat
 
 export interface TransactionChecklistItem extends TransactionChecklistTemplateItem {
   id: string;
+  helpText?: string;
   completedAt: string | null;
   updatedAt: string;
   attachments: TransactionChecklistAttachment[];
@@ -66,6 +81,14 @@ export function checklistMissingStages(items: readonly Pick<TransactionChecklist
 export function checklistProgress(items: readonly { required: boolean; completedAt: string | Date | null; attachmentRequired?: boolean; attachments?: readonly unknown[]; attachmentCount?: number }[]): TransactionChecklist["progress"] {
   const required = items.filter(item => item.required);
   return { completed: required.filter(checklistItemSatisfied).length, required: required.length };
+}
+
+/** Checklist edits can move the active workflow, but never close or resume a paused file. */
+export function checklistAutomaticStage<T extends { stage: ActiveStage; required: boolean; completedAt: string | Date | null; attachmentRequired?: boolean; attachments?: readonly unknown[]; attachmentCount?: number }>(current:TransactionStage,items:readonly T[],action:"complete"|"reopen"):TransactionStage {
+  const position=stageIndex(current);if(position<0)return current;
+  if(ACTIVE_STAGES.some(stage=>!items.some(item=>item.stage===stage)))return current;
+  const target=ACTIVE_STAGES.find(stage=>items.some(item=>item.stage===stage&&item.required&&!checklistItemSatisfied(item)))??"closing_prep",next=stageIndex(target);
+  return action==="complete"?next>position?target:current:next<position?target:current;
 }
 
 /** Intentionally empty until a GC-specific workflow is agreed. */

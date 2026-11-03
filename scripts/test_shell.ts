@@ -68,9 +68,9 @@ const pt = src("components/layout/page-transition.tsx");
 const css = src("app/globals.css");
 check("navigation is a real router.push, never local state", pt.includes("router.push(href)"));
 check("only the page content transitions, keyed by pathname", pt.includes("key={pathname}"));
-check("exit fits the brief (180–250 ms)", /EXIT_MS = (1[89]\d|2[0-4]\d|250);/.test(pt) &&
-  /fm-page-exit (1[89]\d|2[0-4]\d|250)ms/.test(css));
-check("enter fits the brief (300–450 ms)", /fm-page-enter (3\d\d|4[0-4]\d|450)ms/.test(css));
+check("navigation exits promptly and matches its CSS duration", /EXIT_MS = 90;/.test(pt) &&
+  /fm-page-exit 90ms/.test(css));
+check("entry stays lightweight (220 ms)", /fm-page-enter 220ms/.test(css));
 check("a navigation that never lands cannot leave the page invisible", pt.includes("EXIT_SAFETY_MS"));
 check("the arriving page never inherits the exit state", pt.includes("leavingFrom === pathname"));
 check("reduced motion skips the exit entirely", pt.includes("prefers-reduced-motion: reduce") &&
@@ -80,7 +80,7 @@ check("modifier-clicks and new tabs keep native behaviour",
 check("a settled page has no transform (no fixed-position trap)",
   /@keyframes fm-page-enter[\s\S]{0,200}transform: none/.test(css));
 check("phones get shorter, vertical-only motion",
-  /max-width: 767px[\s\S]{0,120}fm-page-enter[\s\S]{0,60}animation-duration: 300ms/.test(css) &&
+  /max-width: 767px[\s\S]{0,120}fm-page-enter[\s\S]{0,60}animation-duration: 180ms/.test(css) &&
     !/translateX/.test(css));
 check("⌘K navigates through the same path",
   src("components/layout/command-palette.tsx").includes("navigate(href)"));

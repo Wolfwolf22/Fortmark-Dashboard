@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { Db } from "../lib/db/client.ts";
-import { aiPreparedActions, auditEvents, contactActivities, contacts, dashboardUsers, transactionParties, transactions } from "../lib/db/schema.ts";
+import { aiPreparedActions, auditEvents, contactActivities, contactEngagementFiles, contacts, dashboardUsers, transactionParties, transactions } from "../lib/db/schema.ts";
 import { ALL_CONTACT_STAGES, ACTIVE_CLIENT_STAGES, OPEN_PIPELINE_STAGES, allowedStageTransitions, canTransition, requiresEngagementNotice, type ContactStage } from "../lib/contacts/stages.ts";
 import { changeStage, commitStageChange, contactSnapshot, getContact, listContactsPage, planStageChange, StageChangeConflict, type Ctx } from "../lib/contacts/service.ts";
 import { contactAttention, contactMetrics } from "../lib/contacts/metrics.ts";
@@ -23,11 +23,12 @@ let checks = 0;
 function check(name: string, value: unknown) { assert.ok(value, name); checks++; }
 const count = async (table: string) => Number((await pg.query<{ n: number }>(`select count(*)::int n from ${table}`)).rows[0].n);
 async function reset() { await pg.exec("truncate contacts, audit_events, ai_prepared_actions, transactions cascade"); }
-async function seed(stage: ContactStage = "lead", owner = actor, tenant = owner.brokerageKey) {
+async function seed(stage: ContactStage = "lead", owner = actor, tenant = owner.brokerageKey, withPdf=true) {
   const id = randomUUID();
   await db.insert(contacts).values({ id, brokerageKey: tenant, assignedAgentUserId: owner.userId,
     createdByUserId: owner.userId, updatedByUserId: owner.userId, firstName: "Stage fixture", stage,
     nextFollowUpAt: due, createdAt, updatedAt: now });
+  if(withPdf)await db.insert(contactEngagementFiles).values({contactId:id,storagePath:`contact-engagements/${id}/${randomUUID()}.pdf`,filename:"Synthetic stage fixture.pdf",contentType:"application/pdf",sizeBytes:100,sha256:"a".repeat(64),uploadedByUserId:owner.userId});
   return id;
 }
 function beforeBatch(work: () => Promise<void>): Db {
@@ -67,7 +68,7 @@ try {
   for (const from of ALL_CONTACT_STAGES) {
     await reset(); const id = await seed(from);
     for (const to of ALL_CONTACT_STAGES) {
-      const plan = await planStageChange(ctx, id, to, { now, expectedStage: from });
+      const plan = await planStageChange(ctx, id, to, { now, expectedStage: from,engagementAcknowledged:true });
       check(`${from} -> ${to}: graph, choices and authorized plan agree`, plan.ok === canTransition(from, to) && plan.ok === allowedStageTransitions(from).includes(to));
     }
     check(`${from}: planning never mutates stage or history`, (await getContact(ctx, id))?.stage === from && await count("contact_activities") === 0 && await count("audit_events") === 0);
@@ -112,7 +113,9 @@ try {
   const [event] = (await pg.query<{ safe_metadata: Record<string, unknown> }>("select safe_metadata from contact_activities")).rows;
   check("engagement history records the explicit acknowledgement", event.safe_metadata.engagementAcknowledged === true && event.safe_metadata.from === "qualified" && event.safe_metadata.to === "representation");
   const optedOut = await changeStage(ctx, id, "active_client", now, { expectedStage: "representation" });
-  check("acknowledgement remains a recorded fact rather than a new document gate", optedOut.ok);
+  check("a current PDF does not waive the next represented-stage acknowledgement", !optedOut.ok&&optedOut.reason==="engagement_acknowledgement_required");
+  await reset();id=await seed("qualified",actor,actor.brokerageKey,false);
+  const noPdf=await changeStage(ctx,id,"under_contract",now,{engagementAcknowledged:true});check("acknowledgement cannot substitute for an actual PDF",!noPdf.ok&&noPdf.reason==="engagement_required"&&(await getContact(ctx,id))?.stage==="qualified");
 
   // Stale UI and stale plans must not restore an archive or invent from-history.
   await reset(); id = await seed("archived");

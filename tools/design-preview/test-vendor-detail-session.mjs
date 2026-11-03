@@ -149,7 +149,7 @@ replacementDetail = await api.getTransactionVendorDetail(created.id, currentId);
 const removeInput = Object.freeze({ ...detailInput(replacementDetail), detailId: currentId, expectedAttachmentUpdatedAt: removable.updatedAt });
 replacementDetail = await api.removeTransactionVendorFile(created.id, removable.id, removeInput); assert.deepEqual(replacementDetail.attachments, []);
 assert.equal((await api.removeTransactionVendorFile(created.id, removable.id, removeInput)).updatedAt, replacementDetail.updatedAt); await refused(() => api.downloadTransactionVendorFile(created.id, removable.id), 404, "not_found");
-file = await api.getTransactionWorkspace(created.id); await api.updateTransactionStage(created.id, "cancelled", { requestId: crypto.randomUUID(), expectedUpdatedAt: file.updatedAt });
+file = await api.getTransactionWorkspace(created.id); await api.updateTransactionStage(created.id, "cancelled", { requestId: crypto.randomUUID(), expectedUpdatedAt: file.updatedAt,reason:"Synthetic terminal file review" });
 replacementDetail = await api.getTransactionVendorDetail(created.id, currentId); assert.equal(replacementDetail.isCurrent, true); assert.equal(replacementDetail.canEdit, false);
 await refused(() => api.updateTransactionVendorDetail(created.id, currentId, patch(replacementDetail)), 409, "invalid_transition");
 assert.deepEqual(new Uint8Array(await (await api.downloadTransactionVendorFile(created.id, report.id)).arrayBuffer()), pdfBytes); assert.equal((await api.updateTransactionVendorDetail(created.id, firstId, lost)).canEdit, false); groups++;

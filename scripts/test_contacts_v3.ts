@@ -19,6 +19,9 @@
  * specs. This file does not pretend to.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { createLocalContactDb } from "./helpers/contact-test-db.ts";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { Actor } from "../lib/auth/actor.ts";
 import { birthdayChangeState, birthdaySchema, daysInMonth, formatBirthday, isValidBirthday } from "../lib/contacts/birthday.ts";
@@ -44,7 +47,7 @@ import { listEligibleContacts } from "../lib/contacts/eligible.ts";
 import { changeStage, listAgents } from "../lib/contacts/service.ts";
 import { createTransaction } from "../lib/transactions/service.ts";
 import { createTransactionSchema } from "../lib/transactions/domain.ts";
-import { RELEASE_1_AUDIT_EVENTS, auditEvents, contactActivities, contactNeeds, contactNotes, contacts, professionalProfiles } from "../lib/db/schema.ts";
+import { RELEASE_1_AUDIT_EVENTS, auditEvents, dashboardUsers, contactEngagementFiles, contactActivities, contactNeeds, contactNotes, contacts, professionalProfiles } from "../lib/db/schema.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -457,31 +460,36 @@ const ROLES: [string, Actor][] = [["agent (owner)", AGENT], ["admin", ADMIN], ["
 
 // --- Contacts: creating and the stage warning ----------------------------------------------------
 {
-  check("the stages the engagement notice gates are exactly representation and active_client", ENGAGEMENT_STAGES.join() === "representation,active_client");
+  check("the stages the engagement notice gates are representation, active_client and under_contract", ENGAGEMENT_STAGES.join() === "representation,active_client,under_contract");
   for (const from of ALL_CONTACT_STAGES) for (const to of ALL_CONTACT_STAGES) {
-    const expect = from !== to && (to === "representation" || to === "active_client");
+    const expect = from !== to && (to === "representation" || to === "active_client" || to === "under_contract");
     if (requiresEngagementNotice(from, to) !== expect) check(`notice rule: ${from} → ${to}`, false);
   }
   check("notice rule: qualified → representation and qualified → active_client warn", requiresEngagementNotice("qualified", "representation") && requiresEngagementNotice("qualified", "active_client"));
   check("notice rule: representation → active_client warns too; leaving them does not; a same-stage move is nothing", requiresEngagementNotice("representation", "active_client") && !requiresEngagementNotice("representation", "closed") && !requiresEngagementNotice("active_client", "past_client") && !requiresEngagementNotice("lead", "contacted") && !requiresEngagementNotice("representation", "representation"));
 
-  const stage = async (to: "representation" | "contacted", ack?: boolean, from = "qualified") => {
-    const t = world([], contactRow({ stage: from }));
-    const w = ctxFor(AGENT, t);
-    const r = await changeStage(w.ctx, CID, to as never, NOW, { engagementAcknowledged: ack });
-    return { r, m: w.m };
-  };
-  const acked = await stage("representation", true);
-  const unacked = await stage("representation");
-  const plain = await stage("contacted");
-  const metaOf = (x: { m: ReturnType<typeof memory> }) => audits(x.m)[0]?.safeMetadata ?? {};
-  check("stage: a confirmed move records engagementAcknowledged: true", acked.r.ok && metaOf(acked).engagementAcknowledged === true);
-  check("stage: an unconfirmed move (an API caller, an assistant) records false — never a claim it was confirmed", unacked.r.ok && metaOf(unacked).engagementAcknowledged === false);
-  check("stage: the record never says an engagement was attached or verified", !JSON.stringify([metaOf(acked), metaOf(unacked)]).match(/attached|verified|document|engagementAttached/i));
-  check("stage: a move that is not gated carries no acknowledgement field at all", plain.r.ok && !("engagementAcknowledged" in metaOf(plain)));
-  const activity = acked.m.applied.find((w) => w.table === contactActivities)!.values.safeMetadata as Record<string, unknown>;
-  check("stage: the history line carries the same flag", activity.engagementAcknowledged === true && activity.to === "representation");
-  check("stage: an existing Representation contact is not forced backwards or blocked from anything", (await stage("contacted", undefined, "representation")).r.ok);
+  // Stage guards now include actor locks and real PDF metadata: exercise PostgreSQL, not the old recording double.
+  const isolated = await createLocalContactDb();
+  try {
+    await isolated.db.insert(dashboardUsers).values({id:AGENT.userId,clerkUserId:"v3-stage-owner",primaryEmail:"v3@example.test",role:"agent",status:"active"});
+    const stage = async (to: "representation" | "contacted", ack?: boolean, from = "qualified", withPdf = true) => {
+      const id=randomUUID();
+      await isolated.db.insert(contacts).values({id,assignedAgentUserId:AGENT.userId,brokerageKey:"fortmark",firstName:"Stage fixture",stage:from as never,updatedAt:NOW});
+      if(withPdf)await isolated.db.insert(contactEngagementFiles).values({contactId:id,storagePath:`contact-engagements/${id}/${randomUUID()}.pdf`,filename:"broker-engagement.pdf",contentType:"application/pdf",sizeBytes:100,sha256:"f".repeat(64),uploadedByUserId:AGENT.userId});
+      const r=await changeStage({db:isolated.db,actor:AGENT},id,to,NOW,{engagementAcknowledged:ack});
+      const events=(await isolated.db.select().from(contactActivities).where(eq(contactActivities.contactId,id)));
+      const audit=(await isolated.db.select().from(auditEvents)).filter(row=>row.safeMetadata?.contactId===id);
+      return {r,events,audit};
+    };
+    const acked=await stage("representation",true),unacked=await stage("representation"),missing=await stage("representation",true,"qualified",false),plain=await stage("contacted");
+    check("stage: confirmed PDF-backed entry records acknowledgement",acked.r.ok&&acked.audit[0]?.safeMetadata?.engagementAcknowledged===true);
+    check("stage: an unchecked acknowledgement cannot enter representation",!unacked.r.ok&&unacked.r.reason==="engagement_acknowledgement_required"&&unacked.events.length===0);
+    check("stage: acknowledgement without a PDF cannot enter representation",!missing.r.ok&&missing.r.reason==="engagement_required"&&missing.events.length===0);
+    check("stage: audit records an attachment identity without claiming content verification",Boolean(acked.audit[0]?.safeMetadata?.engagementId)&&!JSON.stringify(acked.audit).includes("engagementVerified"));
+    check("stage: ungated move carries no engagement acknowledgement",plain.r.ok&&!('engagementAcknowledged' in (plain.audit[0]?.safeMetadata??{})));
+    check("stage: activity and audit agree on the confirmed move",acked.events[0]?.safeMetadata?.engagementAcknowledged===true&&acked.events[0]?.safeMetadata?.to==="representation");
+    check("stage: legacy represented contact may leave without an invented PDF",(await stage("contacted",undefined,"representation",false)).r.ok);
+  } finally {await isolated.pg.close();}
   check("stage: the request schema accepts the flag as a boolean only", src("lib/contacts/domain.ts").includes("engagementAcknowledged: z.boolean().optional()"));
   check("stage: the route passes the flag through", src("app/api/contacts/[id]/stage/route.ts").includes("engagementAcknowledged: parsed.data.engagementAcknowledged"));
 }
@@ -526,7 +534,7 @@ const ROLES: [string, Actor][] = [["agent (owner)", AGENT], ["admin", ADMIN], ["
     return { sql: parts[0].sql, params: parts[0].params, limit: m.limits[0] };
   };
   const agentQ = await sqlFor(AGENT, "Ann");
-  check("selector: Representation only", agentQ.sql.includes('"stage" = $') && agentQ.params.includes("representation"));
+  check("selector: represented stages require an actual current engagement PDF", ["representation","active_client","under_contract"].every(stage=>agentQ.params.includes(stage)) && agentQ.sql.includes("contact_engagement_files"));
   check("selector: a regular user is limited to their own book in SQL", agentQ.sql.includes('"assigned_agent_user_id"') && agentQ.params.includes(AGENT.userId));
   check("selector: the brokerage boundary is in the query", /"brokerage_key" = \$\d+/.test(agentQ.sql) && agentQ.params.includes("fortmark"));
   check("selector: an admin is not narrowed to a book", !(await sqlFor(ADMIN)).sql.includes('"assigned_agent_user_id"'));
@@ -544,11 +552,13 @@ const ROLES: [string, Actor][] = [["agent (owner)", AGENT], ["admin", ADMIN], ["
 
   // Revalidation on create — the early refusals write nothing.
   const dealBase = { transactionType: "residential_sale", side: "buyer", addressLine1: "1 Test St", city: "Miami" } as never;
+  const createDb=await createLocalContactDb();
+  for(const actor of [AGENT,ADMIN,BROKER,COORD,OTHER,OUTSIDER])await createDb.db.insert(dashboardUsers).values({id:actor.userId,clerkUserId:`v3-create-${actor.userId}`,primaryEmail:`${actor.userId}@example.test`,role:actor.role,status:"active"});
   const attempt = async (actor: Actor, contactOver: Record<string, unknown> | null, extra: Record<string, unknown> = {}) => {
-    const t = new Map<unknown, Record<string, unknown>[]>(contactOver ? [[contacts, [contactRow({ stage: "representation", ...contactOver })]]] : [[contacts, []]]);
-    const w = ctxFor(actor, t);
-    const r = await createTransaction(w.ctx, { ...(dealBase as object), contactId: CID, ...extra } as never, NOW);
-    return { r, n: w.m.applied.length };
+    await createDb.db.delete(contacts);
+    if(contactOver)await createDb.db.insert(contacts).values({id:CID,assignedAgentUserId:AGENT.userId,firstName:"Create fixture",stage:"representation",brokerageKey:"fortmark",...contactOver} as never);
+    const r=await createTransaction({actor,db:createDb.db},{...(dealBase as object),contactId:CID,...extra} as never,NOW);
+    return {r,n:(await createDb.db.select({id:auditEvents.id}).from(auditEvents)).length};
   };
   const stranger = await attempt(OTHER, {});
   check("create: a colleague's contact id is refused, and it reads exactly like an unknown id", !stranger.r.ok && stranger.r.reason === "invalid_contact" && stranger.n === 0);
@@ -568,6 +578,7 @@ const ROLES: [string, Actor][] = [["agent (owner)", AGENT], ["admin", ADMIN], ["
   check("create: a broker's own contact cannot be put on another agent's deal", !brokerNamesAgent.r.ok && brokerNamesAgent.r.reason === "invalid_contact" && brokerNamesAgent.n === 0);
   check("create: the request may carry a contact id and nothing more about the client", createTransactionSchema.safeParse({ ...(dealBase as object), contactId: CID }).success && !createTransactionSchema.safeParse({ ...(dealBase as object), contactId: "not-a-uuid" }).success);
 
+  await createDb.pg.close();
   const svc = strip(src("lib/transactions/service.ts"));
   check("create: the contact is loaded and stage-checked BEFORE the deal is inserted", svc.indexOf("loadContact(ctx, input.contactId)") > 0 && svc.indexOf("loadContact(ctx, input.contactId)") < svc.indexOf(".insert(transactions)") && svc.indexOf("ELIGIBLE_STAGE") < svc.indexOf(".insert(transactions)"));
   check("create: the client party is built from the STORED contact — name, email, phone", svc.includes("contactDisplayName(contact.row)") && svc.includes("email: contact.row.email") && svc.includes("phone: contact.row.phoneE164"));
@@ -630,7 +641,7 @@ function readMigrations(): string {
   check("ui notes: refusals move focus back to the composer", notesUi.includes("composer.current?.focus()"));
   const drawer = strip(src("components/leads/lead-drawer.tsx"));
   check("ui drawer: notes are in the drawer itself, not behind Edit contact", drawer.includes("<LeadNotes") && !strip(src("components/leads/lead-edit-form.tsx")).includes("notes"));
-  check("ui drawer: the hierarchy — details, needs, notes, activity, representation, transactions", (() => { const at = ["lead-details-heading", "<LeadNeeds", "<LeadNotes", "<LeadTimeline", "lead-representation-heading", "lead-transactions-heading"].map((n) => drawer.indexOf(n)); return at.every((v, i) => v > 0 && (i === 0 || v > at[i - 1])); })());
+  check("ui drawer: details, needs, notes, activity, engagement and transactions retain a clear hierarchy", (() => { const at = ["lead-details-heading", "<LeadNeeds", "<LeadNotes", "<LeadTimeline", "<ContactEngagement", "lead-transactions-heading"].map((n) => drawer.indexOf(n)); return at.every((v, i) => v > 0 && (i === 0 || v > at[i - 1])); })());
   check("ui drawer: the four quick actions", ["Log touch", "Follow-up", "Change stage", "Edit contact"].every((l) => drawer.includes(`"${l}"`) || drawer.includes(`>${l}<`) || drawer.includes(`, "${l}"`)));
   check("ui drawer: quick actions announce and control their panel", drawer.includes("aria-expanded={panel === id}") && drawer.includes("aria-controls={`lead-panel-${id}`}"));
   check("ui drawer: an admin's view of a colleague's contact names the owner, read-only", (() => {
@@ -638,17 +649,17 @@ function readMigrations(): string {
     return drawer.includes("lead.ownedByViewer === false") && owner.includes("Owner:") && !/<(?:Select|Input|Button)|onChange|onClick/.test(owner);
   })());
   check("ui drawer: no reassign control, picker or modal anywhere in the leads components", !/reassign/i.test(["lead-drawer", "lead-edit-form", "leads-table", "leads-filters", "lead-shared", "lead-timeline"].map((f) => strip(src(`components/leads/${f}.tsx`.replace("lead-shared.tsx", "lead-shared.ts")))).join("\n")));
-  check("ui drawer: 'Create transaction' only at Representation, only for someone who can write, opens the existing dialog with this contact", /lead\.stage === "representation" && abilities\.canWrite && !sample/.test(drawer) && drawer.includes('setQuickCreate("transaction", { id: lead.id, name: lead.name })') && drawer.includes("Create transaction"));
-  check("ui drawer: nothing is auto-created from a stage move", !/setQuickCreate\("transaction"[^;]*updateLeadStage|updateLeadStage[^;]*setQuickCreate\("transaction"/.test(drawer));
+  check("ui drawer: represented stages offer the existing contact-linked wizard only with write access and a current PDF", /engaged && abilities\.canWrite && !sample/.test(drawer) && drawer.includes('disabled={!engagement?.file}') && /setQuickCreate\("transaction",\s*\{\s*id:\s*lead.id,\s*name:\s*lead.name\s*\}\)/.test(drawer) && ['representation','active_client','under_contract'].every(stage=>drawer.includes(`lead?.stage${stage==='under_contract'?'===':' === '}"${stage}"`)));
+  check("ui drawer: acknowledged stage success opens a wizard without directly creating a transaction", drawer.includes('if (ok){setNotice(') && drawer.includes('setQuickCreate("transaction",{id:lead.id,name:lead.name})') && !/\bcreateTransaction\(/.test(drawer));
   check("ui drawer: Transactions only when there are some; each opens the transaction", drawer.includes("linkedDeals.length > 0") && drawer.includes("/transactions?open="));
   check("ui drawer: the engagement notice gates a move into a formal stage, and Cancel changes nothing", drawer.includes("requiresEngagementNotice(lead.stage, stage)") && drawer.includes("setPendingStage(stage);") && drawer.includes("onCancel={() => setPendingStage(null)}") && drawer.includes("engagementAcknowledged: true") && drawer.includes('returnFocusTo="lead-stage-select"'));
   check("ui drawer: opening an existing Representation contact shows no modal — the notice is only ever set by a stage change", (drawer.match(/setPendingStage\(/g) ?? []).length === 4 && !/useEffect[^;]*setPendingStage/.test(drawer));
   const notice = strip(src("components/leads/engagement-notice.tsx"));
   check("ui notice: the specified title and words, Cancel and Continue", notice.includes("Brokerage engagement") && notice.includes("confirm that an active brokerage engagement is in") && notice.includes("An executed engagement should be attached to the contact record.") && notice.includes("Cancel") && notice.includes("Continue"));
-  check("ui notice: it never claims a document is verified, attached or sufficient", !/verified|is attached|legally sufficient|has been attached/i.test(notice) && notice.includes("does not yet store or check engagement documents"));
+  check("ui notice: an actual PDF and explicit acknowledgement are required without claiming contents are verified", notice.includes('ENGAGEMENT_WARNING') && notice.includes('disabled={busy||!engagementReady||!acknowledged}') && src('lib/contacts/engagement.ts').includes('does not verify its contents, signatures, legal sufficiency, or whether it is the correct agreement'));
   const timelineUi = strip(src("components/leads/lead-timeline.tsx"));
   check("ui activity: collapsed to the latest five by default", timelineUi.includes("const COLLAPSED = 5") && timelineUi.includes("data.slice(0, COLLAPSED)"));
-  check("ui activity: an accessible disclosure — aria-expanded, aria-controls, a real button", timelineUi.includes("aria-expanded={all}") && timelineUi.includes('aria-controls="lead-activity-list"') && timelineUi.includes("<button") && timelineUi.includes('type="button"') && timelineUi.includes('id="lead-activity-list"'));
+  check("ui activity: disclosure controls its own distinct Activity or touch-history list", timelineUi.includes("aria-expanded={all}") && timelineUi.includes('aria-controls={listId}') && timelineUi.includes("<button") && timelineUi.includes('type="button"') && timelineUi.includes('id={listId}') && timelineUi.includes('touchesOnly?"lead-touch-history-list":"lead-activity-list"'));
   check("ui activity: local expansion and explicit older-history loading are separate", timelineUi.includes("onClick={() => setAll((v) => !v)}") && timelineUi.includes("Show all activity") && timelineUi.includes("Show fewer") && timelineUi.includes("Load older activity") && timelineUi.includes("onClick={() => void loadOlder()}"));
   check("ui activity: every contact opens collapsed", timelineUi.includes("setAll(false)") && timelineUi.includes("forLead !== leadId"));
 
@@ -684,15 +695,15 @@ function readMigrations(): string {
 
   // No M4, no M5.
   const journal = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] };
-  check("migrations: contact migrations remain additive and never make client identifiers unique", journal.entries.slice(11).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces,0015_contact_create_requests,0016_contact_details_and_need_other,0017_contact_next_action,0018_contact_import_merge,0019_contact_properties,0020_property_lists,0021_property_research_transfer,0022_showings,0023_saved_showing_tours,0024_transaction_workspace,0025_transaction_checklists,0026_transaction_files_and_vendors,0027_transaction_vendor_details,0028_transaction_mls_and_tours,0029_gc_transactions,0030_personal_calendar_labels" && !/engagement/i.test(readMigrations()) && !/CREATE\s+UNIQUE\s+INDEX[^;]*\bON\s+"?contacts"?\s*\(/i.test(readMigrations()));
+  check("migrations: contact migrations remain additive and never make client identifiers unique", journal.entries.slice(11,31).map((e) => e.tag).join() === "0011_contact_notes,0012_contact_birthday,0013_contact_needs,0014_personal_workspaces,0015_contact_create_requests,0016_contact_details_and_need_other,0017_contact_next_action,0018_contact_import_merge,0019_contact_properties,0020_property_lists,0021_property_research_transfer,0022_showings,0023_saved_showing_tours,0024_transaction_workspace,0025_transaction_checklists,0026_transaction_files_and_vendors,0027_transaction_vendor_details,0028_transaction_mls_and_tours,0029_gc_transactions,0030_personal_calendar_labels" && !/engagement/i.test(readMigrations()) && !/CREATE\s+UNIQUE\s+INDEX[^;]*\bON\s+"?contacts"?\s*\(/i.test(readMigrations()));
   check("migrations: additive only — nothing dropped or altered destructively", !/DROP\s+(TABLE|COLUMN|TYPE)/i.test(readMigrations()) && !/ALTER TABLE "[a-z_]+" (DROP|ALTER COLUMN)/i.test(readMigrations()) && !/ALTER TYPE/i.test(readMigrations()));
   check("migrations: the contact stage enum is untouched", !/contact_stage/.test(readMigrations()));
   check("migrations: nothing backfills a legacy note or a legacy transaction", !/(^|-->\s*statement-breakpoint\s*)\s*(UPDATE|INSERT)\s/i.test(readMigrations()));
   check("migrations: a deleted note's body is nulled by a database rule, not by convention", readMigrations().includes('"contact_notes"."deleted_at" is not null and "contact_notes"."body" is null'));
 
-  // The engagement store: none configured, and the public store is never used for it.
-  check("engagement: no code writes contact engagements anywhere (M4 is unbuilt)", !/contact_engagements|contactEngagements|ENGAGEMENT_BLOB/i.test(src("lib/db/schema.ts") + src("lib/flags.ts") + src("lib/profile/image-storage.ts")));
-  check("engagement: the only Blob writer is still the profile-photo one, and it is the public store", (() => { const files = ["lib/profile/image-storage.ts"]; return files.every((f) => src(f).includes('access: "public"')); })());
+  // Engagements use the approved private store, with one current PDF per contact.
+  check("engagement: a dedicated private namespace is used, never profile or generic fallback",src("lib/contacts/engagement-storage.ts").includes('access:"private"')||src("lib/contacts/engagement-storage.ts").includes('access: "private"'));
+  check("engagement: the database allows only one current PDF while retaining history",src("lib/db/migrations/0031_contact_engagement_lifecycle.sql").includes("contact_engagement_files_active_idx")&&src("lib/db/migrations/0031_contact_engagement_lifecycle.sql").includes("WHERE removed_at IS NULL"));
 
   // Rename.
   const config = src("next.config.ts");

@@ -27,7 +27,7 @@
  */
 import Link from "next/link";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, ArrowRightLeft, CalendarClock, Pencil, Phone, ShieldCheck, UserCheck, UserRound, Workflow, type LucideIcon } from "lucide-react";
+import { ArrowRight, ArrowRightLeft, CalendarClock, Pencil, Phone, ShieldCheck, UserCheck, UserRound, Workflow,History, type LucideIcon } from "lucide-react";
 import { useSessionUser } from "@/components/layout/session-user";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -76,6 +76,10 @@ import { LeadNeeds } from "./lead-needs";
 import { ContactProperties } from "./contact-properties";
 import { LeadNotes } from "./lead-notes";
 import { LeadTimeline } from "./lead-timeline";
+import{ContactEngagement}from"./contact-engagement";
+import{DeleteContactButton}from"./contact-delete";
+import{Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription}from"@/components/ui/dialog";
+import type{ContactEngagementState}from"@/lib/contacts/engagement";
 
 const TOUCH_KINDS: { value: TouchKind; label: string }[] = [
   { value: "call", label: "Call" },
@@ -195,6 +199,8 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
   const [confirmArchiveFrom, setConfirmArchiveFrom] = useState<LeadStage | null>(null);
   const [pendingStage, setPendingStage] = useState<LeadStage | null>(null);
   const [pendingStageFrom, setPendingStageFrom] = useState<LeadStage | null>(null);
+  const[engagementState,setEngagementState]=useState<{id:string;value:ContactEngagementState}|null>(null),[touchHistoryOpen,setTouchHistoryOpen]=useState(false),[launchingTransaction,setLaunchingTransaction]=useState(false);
+  const engagement=engagementState?.id===lead?.id?engagementState?.value:null;
   const [stageFocusTarget, setStageFocusTarget] = useState<LeadStage | null>(null);
 
   useEffect(() => {
@@ -263,20 +269,22 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
   function changeStage(stage: LeadStage) {
     if (!lead || saving || !canTransition(lead.stage, stage)) return;
     if (requiresEngagementNotice(lead.stage, stage)) {
+      setLaunchingTransaction(false);
       setPendingStage(stage);
       setPendingStageFrom(lead.stage);
       return;
     }
-    void run(() => updateLeadStage(lead.id, stage, { expectedStage: lead.stage }));
+    void run(() => updateLeadStage(lead.id, stage, { expectedStage: lead.stage,expectedUpdatedAt:lead.updatedAt }));
   }
 
   async function confirmEngagement() {
-    if (!lead || !pendingStage || !pendingStageFrom) return;
+    if (!lead || !pendingStage || !pendingStageFrom||!engagement?.file) return;
     const stage = pendingStage;
-    const ok = await run(() => updateLeadStage(lead.id, stage, { engagementAcknowledged: true, expectedStage: pendingStageFrom }));
+    const ok = await run(() => updateLeadStage(lead.id, stage, { engagementAcknowledged: true, expectedStage: pendingStageFrom,expectedUpdatedAt:engagement.contactUpdatedAt }));
+    if(ok)setLaunchingTransaction(true);
     setPendingStage(null);
     setPendingStageFrom(null);
-    if (ok) setNotice(`Stage changed to ${LEAD_STAGE_LABELS[stage]}.`);
+    if (ok){setNotice(`Stage changed to ${LEAD_STAGE_LABELS[stage]}.`);setQuickCreate("transaction",{id:lead.id,name:lead.name});}
   }
 
   async function saveEdit(patch: ContactEdit): Promise<boolean> {
@@ -348,7 +356,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
       setStageFocusTarget(lead.stage);
       return;
     }
-    const ok = await run(() => updateLeadStage(lead.id, to, { expectedStage }));
+    const ok = await run(() => updateLeadStage(lead.id, to, { expectedStage,expectedUpdatedAt:lead.updatedAt }));
     if (!ok) return;
     setConfirmArchive(false);
     setConfirmArchiveFrom(null);
@@ -416,7 +424,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
   const stageChoices = lead?.stage === "archived" ? [lead.stage] : LEAD_STAGES.filter(stage =>
     lead && (stage === lead.stage || allowedStageTransitions(lead.stage).includes(stage)));
   const linkedDeals = linked.data ?? [];
-  const engaged = lead?.stage === "representation" || lead?.stage === "active_client";
+  const engaged = lead?.stage === "representation" || lead?.stage === "active_client"||lead?.stage==="under_contract";
 
   const actionButton = (id: Exclude<Panel, null>, label: string) => {
     const ActionIcon = ACTION_ICONS[id];
@@ -497,11 +505,13 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
               </p>
             )}
 
+              {!abilities.canWrite && <Button type="button" variant="outline" className="min-h-10" onClick={()=>setTouchHistoryOpen(true)}><History aria-hidden/>Touch history</Button>}
               {/* --- Quick actions -------------------------------------------- */}
               {abilities.canWrite && (
                 <div role="group" aria-label="Contact actions">
                   <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                     {actionButton("touch", "Log touch")}
+                    <Button type="button" variant="outline" className="min-h-10" onClick={()=>setTouchHistoryOpen(true)}><History aria-hidden/>History</Button>
                     {!hasStructuredAction && actionButton("followUp", "Follow-up")}
                     {actionButton("stage", "Change stage")}
                     {actionButton("edit", "Edit contact")}
@@ -684,22 +694,8 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
               {/* --- Activity --------------------------------------------------- */}
               <LeadTimeline key={`timeline-${lead.id}`} leadId={lead.id} refreshKey={refreshKey} />
 
-              {/* --- Representation -------------------------------------------- */}
-              {engaged && (
-                <section aria-labelledby="lead-representation-heading" data-testid="lead-representation">
-                  <SectionHeading id="lead-representation-heading" icon={ShieldCheck}>Representation</SectionHeading>
-                  <div className="mt-3 rounded-panel border border-border p-4">
-                  <p className="text-[13px] leading-relaxed text-muted-foreground">
-                    Engagement documents are not stored in FortMark yet. Confirm an active brokerage engagement is in place before you open a deal.
-                  </p>
-                  {lead.stage === "representation" && abilities.canWrite && !sample && (
-                    <Button type="button" size="sm" className="mt-3" onClick={() => setQuickCreate("transaction", { id: lead.id, name: lead.name })}>
-                      Create transaction
-                    </Button>
-                  )}
-                  </div>
-                </section>
-              )}
+              {!sample && <ContactEngagement key={"engagement-"+lead.id} contactId={lead.id} stage={lead.stage} canWrite={abilities.canWrite} refreshKey={refreshKey} onState={value=>setEngagementState({id:lead.id,value})} onChanged={refetch}/>}
+              {engaged && abilities.canWrite && !sample && <Button type="button" size="sm" className="min-h-11" disabled={!engagement?.file} onClick={()=>setQuickCreate("transaction",{id:lead.id,name:lead.name})}>Create transaction</Button>}
 
               {/* --- Transactions ----------------------------------------------- */}
               {linkedDeals.length > 0 && (
@@ -735,6 +731,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
               <div className="shrink-0 border-t border-border bg-card px-5 py-4 sm:px-6">
                 {error && <p role="alert" className="mb-3 text-sm text-destructive">{error}</p>}
                 {notice && <p role="status" className="mb-3 text-sm text-muted-foreground">{notice}</p>}
+                {!sample && <div className="mb-2"><DeleteContactButton id={lead.id} name={lead.name} updatedAt={lead.updatedAt} onDeleted={()=>onOpenChange(false)}/></div>}
                 <Button variant="outline" className="min-h-11 w-full" onClick={() => void run(() => markContacted(lead.id))} disabled={saving}>
                   <UserCheck aria-hidden />
                   Mark contacted today
@@ -742,7 +739,8 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
                 <p className="mt-2 text-center text-[11px] leading-relaxed text-muted-foreground">Sets last contact to now. The follow-up is kept.</p>
               </div>
             )}
-            <EngagementNotice target={pendingStage} busy={saving} onCancel={() => setPendingStage(null)} onContinue={() => void confirmEngagement()} returnFocusTo="lead-stage-select" />
+            <EngagementNotice target={pendingStage} busy={saving} onCancel={() => setPendingStage(null)} onContinue={() => void confirmEngagement()} returnFocusTo="lead-stage-select" engagementReady={Boolean(engagement?.file)} engagementRevision={engagement?.file?`${engagement.file.id}:${engagement.file.updatedAt}`:undefined} skipReturnFocus={launchingTransaction}>{!sample && pendingStage && <ContactEngagement key={"engagement-confirm-"+lead.id} contactId={lead.id} stage={lead.stage} canWrite={abilities.canWrite} refreshKey={refreshKey} compact onState={value=>setEngagementState({id:lead.id,value})} onChanged={refetch}/>}</EngagementNotice>
+            <Dialog open={touchHistoryOpen} onOpenChange={setTouchHistoryOpen}><DialogContent className="max-w-xl"><DialogHeader><DialogTitle>Touch history · {lead.name}</DialogTitle><DialogDescription>Calls, emails, texts, meetings, showings and explicit contacted marks for this contact.</DialogDescription></DialogHeader><div className="max-h-[65dvh] overflow-y-auto pr-1"><LeadTimeline key={"touch-history-"+lead.id} leadId={lead.id} refreshKey={refreshKey} touchesOnly/></div></DialogContent></Dialog>
           </>
         ) : loading && leadId ? (
           <DrawerSkeleton />

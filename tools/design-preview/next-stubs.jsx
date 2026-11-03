@@ -52,7 +52,7 @@ export function useParams() {
 }
 export function useRouter() {
   const navigation = useContext(NavigationContext);
-  return { push: navigation.navigate, replace: (href) => navigation.navigate(href, true), back: () => window.history.back(), refresh: () => window.location.reload() };
+  return { push: navigation.navigate, replace: (href) => navigation.navigate(href, true), prefetch: () => {}, back: () => window.history.back(), refresh: () => window.location.reload() };
 }
 export function useSearchParams() {
   const route = useContext(NavigationContext)?.route || "/";

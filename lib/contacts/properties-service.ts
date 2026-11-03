@@ -15,7 +15,7 @@ import {
 } from "./properties.ts";
 import { applyPropertyPriceOrder, PROPERTY_REVIEW_STATUSES, PROPERTY_SORTS, type PropertyReadOptions, type PropertyReviewStatus } from "./property-research.ts";
 
-export type PropertyFailure = ServiceFailure | "invalid_property" | "invalid_property_list" | "invalid_property_research" | "invalid_property_transfer" | "target_has_property" | "listing_not_found" | "ambiguous" | "not_configured" | "listing_changed";
+export type PropertyFailure = ServiceFailure | "invalid_property" | "invalid_property_list" | "invalid_property_research" | "invalid_property_transfer" | "invalid_share_recipient" | "list_in_use" | "target_has_property" | "listing_not_found" | "ambiguous" | "not_configured" | "listing_changed";
 export type PropertyServiceResult<T> = { ok: true; value: T } | { ok: false; reason: PropertyFailure };
 type BatchInput = Parameters<Ctx["db"]["batch"]>[0];
 
@@ -95,7 +95,9 @@ export async function getPropertyListProperties(ctx: Ctx, listId: string, provid
     const direction = sort === "added_asc" ? asc : desc;
     rows = await ctx.db.select().from(contactProperties).where(where).orderBy(direction(contactProperties.createdAt), direction(contactProperties.id)).limit(pageSize).offset((actualPage - 1) * pageSize);
   }
-  return { ok: true, value: { items: await hydrate(rows, provider, now), total, totalAll: count?.totalAll ?? 0, page: actualPage, pageSize } };
+  const hydrated = await hydrate(rows, provider, now), current = await loadPropertyList(ctx, listId);
+  if (!current.ok) return current;
+  return { ok: true, value: { items: hydrated.map(item => current.value.contact ? item : { ...item, contactId: null }), total, totalAll: count?.totalAll ?? 0, page: actualPage, pageSize } };
 }
 
 /** A scoped single research read stays available when the feed is offline or the grid filter changed. */
@@ -103,7 +105,7 @@ export async function getPropertyListProperty(ctx: Ctx, listId: string, property
   const access = await loadPropertyList(ctx, listId); if (!access.ok) return access;
   if (!isRecordId(propertyId)) return { ok: false, reason: "not_found" };
   const [row] = await ctx.db.select().from(contactProperties).where(and(eq(contactProperties.id, propertyId), eq(contactProperties.listId, listId), isNull(contactProperties.removedAt))).limit(1);
-  return row ? { ok: true, value: propertyReferenceView(row) } : { ok: false, reason: "not_found" };
+  return row ? { ok: true, value: { ...propertyReferenceView(row), contactId: access.value.contact ? row.contactId : null } } : { ok: false, reason: "not_found" };
 }
 
 /** Lookup is an explicit write-capable workflow step, not a broad MLS search. */

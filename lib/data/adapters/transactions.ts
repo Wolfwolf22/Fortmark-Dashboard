@@ -22,6 +22,7 @@ import type {
   TransactionStage,
 } from "../types";
 import { delay } from "./latency";
+import type { CloseAcknowledgement } from "../../transactions/close-acknowledgement";
 
 /** A failed call, carrying the server's coarse reason for the UI to name. */
 export class TransactionsError extends Error {
@@ -78,11 +79,13 @@ export async function getTransactions(
 ): Promise<Transaction[]> {
   if ((await getTransactionSource()) === "sample") {
     await delay();
+    if(filters?.deleted)return [];
     return listSampleTransactions(filters, range);
   }
   const fields: Record<string, string> = {};
   if (filters?.stage?.length) fields.stage = filters.stage.join(",");
   if (filters?.side?.length) fields.side = filters.side.join(",");
+  if(filters?.deleted)fields.deleted="1";
   if (filters?.query) fields.q = filters.query;
   if (range) {
     fields.from = range.from.toISOString();
@@ -127,7 +130,7 @@ export async function getTransaction(id: string): Promise<Transaction | undefine
 export async function updateTransactionStage(
   id: string,
   stage: TransactionStage,
-  options?: { requestId: string; expectedUpdatedAt: string }
+  options?: { requestId: string; expectedUpdatedAt: string; closeAcknowledgement?:CloseAcknowledgement; reason?:string }
 ): Promise<Transaction | undefined> {
   if ((await getTransactionSource()) === "sample") {
     throw new TransactionsError("sample_read_only", 403);
@@ -145,7 +148,7 @@ export async function updateTransactionStage(
 interface TransactionCreateBase { requestId?:string; address:string; clientName:string; contactId?:string }
 export type QuickCreateTransactionInput=TransactionCreateBase & (
  | {side:"gc";city?:never;contractPrice?:never;closeDate?:never}
- | {side:Exclude<Transaction["side"],"gc">;city:string;contractPrice:number;closeDate?:string}
+ | {side:Exclude<Transaction["side"],"gc">;city:string;contractPrice:number;closeDate?:string;listingGoLiveDate?:string;listingExpirationDate?:string}
 );
 
 export async function createTransaction(input: QuickCreateTransactionInput): Promise<Transaction> {
@@ -171,6 +174,7 @@ export async function createTransaction(input: QuickCreateTransactionInput): Pro
       city: input.city,
       contractPriceCents: Math.round(input.contractPrice * 100),
       closingDate,
+      ...(input.listingGoLiveDate?{listingGoLiveDate:input.listingGoLiveDate}:{}),...(input.listingExpirationDate?{listingExpirationDate:input.listingExpirationDate}:{}),
       ...(input.contactId ? { contactId: input.contactId } : {}),
       parties:
         !input.contactId && input.clientName.trim()

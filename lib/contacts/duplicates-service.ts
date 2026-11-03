@@ -16,11 +16,11 @@ import {
   type DuplicateSuggestionsPage, type ExactDuplicateMatch,
 } from "./duplicates.ts";
 
-type DuplicateTable = { [K in "id" | "brokerageKey" | "assignedAgentUserId" | "mergedIntoContactId" | "email" | "phoneE164" | "firstName" | "lastName" | "preferredName"]: SQLWrapper };
+type DuplicateTable = { [K in "id" | "brokerageKey" | "assignedAgentUserId" | "mergedIntoContactId" | "deletedAt" | "email" | "phoneE164" | "firstName" | "lastName" | "preferredName"]: SQLWrapper };
 
 /** Shared with the import's atomic commit guard. Never substitute admin visibility. */
 export function ownDuplicateBookPredicate(actor: Actor, table: DuplicateTable = contacts, options: { includeMerged?: boolean } = {}): SQL {
-  return sql`${table.brokerageKey} = ${actor.brokerageKey} and ${table.assignedAgentUserId} = ${actor.userId}::uuid ${options.includeMerged ? sql`` : sql`and ${table.mergedIntoContactId} is null`}`;
+  return sql`${table.brokerageKey} = ${actor.brokerageKey} and ${table.assignedAgentUserId} = ${actor.userId}::uuid and ${table.deletedAt} is null ${options.includeMerged ? sql`` : sql`and ${table.mergedIntoContactId} is null`}`;
 }
 
 function emailKey(column: SQLWrapper): SQL {

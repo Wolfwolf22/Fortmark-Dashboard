@@ -31,7 +31,7 @@ globalThis.fetch = async (input, init = {}) => { calls.push({ path: String(input
 const mode = value => { window.location.search = `?scenario=${value}&view=%2Ftransactions`; };
 const refused = (fn, status, code) => assert.rejects(fn, error => error.status === status && (!code || error.code === code));
 const mutation = (workspace, item, action = "complete") => ({ requestId: crypto.randomUUID(), expectedUpdatedAt: workspace.updatedAt, itemId: item.id, expectedItemUpdatedAt: item.updatedAt, action });
-const advance = (workspace, stage) => api.updateTransactionStage(workspace.transaction.id, stage, { requestId: crypto.randomUUID(), expectedUpdatedAt: workspace.updatedAt });
+const advance = (workspace, stage) => api.updateTransactionStage(workspace.transaction.id, stage, { requestId: crypto.randomUUID(), expectedUpdatedAt: workspace.updatedAt,...stage==="closed"?{closeAcknowledgement:{version:"fortmark-close-mock-v1",reviewedToEnd:true,acknowledged:true}}:{},...(["cancelled","fell_through","withdrawn"].includes(stage)?{reason:"Synthetic exit review"}:{}) });
 async function completeRequired(workspace, target) {
   for (const item of checklistBlockers(workspace.checklist.items, workspace.transaction.stage, target)) workspace = await api.mutateTransactionChecklist(workspace.transaction.id, mutation(workspace, item));
   return workspace;
@@ -95,9 +95,9 @@ assert.equal(JSON.stringify(readPreviewTransactionBundles()), beforeInvalid); gr
 
 offer = await completeRequired(offer, "financing");
 assert(offer.checklist.items.filter(item => item.stage === "financing").every(item => item.completedAt === null));
-await advance(offer, "financing"); offer = await api.getTransactionWorkspace(offer.transaction.id);
+assert.equal(offer.transaction.stage,"financing");
 await refused(() => advance(offer, "closing_prep"), 409, "checklist_incomplete");
-offer = await completeRequired(offer, "closing_prep"); await advance(offer, "closing_prep"); offer = await api.getTransactionWorkspace(offer.transaction.id);
+offer = await completeRequired(offer, "closing_prep"); assert.equal(offer.transaction.stage,"closing_prep");
 await refused(() => advance(offer, "closed"), 409, "checklist_incomplete");
 offer = await completeRequired(offer, "closed"); assert.deepEqual(offer.checklist.progress, { completed: 12, required: 12 });
 await advance(offer, "closed"); offer = await api.getTransactionWorkspace(offer.transaction.id); assert.equal(offer.canEdit, false); assert.equal(offer.deadlines.length, 0);

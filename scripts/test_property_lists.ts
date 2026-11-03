@@ -92,9 +92,11 @@ try {
 
   await db.update(contacts).set({ assignedAgentUserId: other.userId }).where(eq(contacts.id, contactId));
   const beforeRevoked = providerCalls;
-  check("own linked list becomes unavailable when contact access is lost", !(await getPropertyList(ctx, linked.id)).ok && !(await getPropertyListProperties(ctx, linked.id, provider)).ok && providerCalls === beforeRevoked);
-  check("create replay rechecks current linked-contact access", !(await createPropertyList(ctx, request, now)).ok);
-  check("index suppresses inaccessible contact-linked lists and their counts", (await getPropertyLists(ctx) as { ok: true; value: { items: { id: string }[] } }).value.items.every(item => ![linked.id, another.id].includes(item.id)));
+  const retained = await getPropertyList(ctx, linked.id), retainedProperties = await getPropertyListProperties(ctx, linked.id, provider);
+  check("own research survives contact reassignment with contact identity redacted", retained.ok && retained.value.contactId === null && !retained.value.contactName && retainedProperties.ok && retainedProperties.value.items.every(item => item.contactId === null) && providerCalls >= beforeRevoked);
+  const replayedOwned = await createPropertyList(ctx, request, now);
+  check("create replay returns canonical owner research without revealing a reassigned contact", replayedOwned.ok && replayedOwned.value.contactId === null);
+  check("global owner index keeps owned lists while contact-specific filters still refuse access", (await getPropertyLists(ctx) as { ok: true; value: { items: { id: string }[] } }).value.items.some(item => item.id === linked.id) && !(await getPropertyLists(ctx, { contactId })).ok);
   check("personal list remains available independently", (await getPropertyList(ctx, personal.id)).ok);
   await db.update(contacts).set({ assignedAgentUserId: actor.userId }).where(eq(contacts.id, contactId));
 

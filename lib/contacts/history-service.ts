@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray,or, sql } from "drizzle-orm";
 import { auditEvents, contactActivities } from "../db/schema.ts";
 import { loadContact } from "./access.ts";
 import { contactFamilyIds } from "./visibility.ts";
@@ -8,6 +8,7 @@ import { agentNames, type Ctx, type ServiceResult } from "./service.ts";
 import { TIMELINE_DOMAIN_EVENTS } from "./events.ts";
 import { toTimeline, type TimelineItem } from "./timeline.ts";
 import { HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE, historyPage, type HistoryCursor, type HistoryPage } from "./history.ts";
+import { lifecycleScope } from "./lifecycle-service.ts";
 
 /** Merge three scoped streams without hiding older history behind a fixed cap. */
 export async function getTimelinePage(ctx: Ctx, contactId: string, options: { pageSize?: number; cursor?: HistoryCursor } = {}): Promise<ServiceResult<HistoryPage<TimelineItem>>> {
@@ -50,4 +51,12 @@ export async function getTimelinePage(ctx: Ctx, contactId: string, options: { pa
   const names = await agentNames(ctx.db, [...userIds]);
   const items = toTimeline({ activities, followUpEvents: followUps, domainEvents, names, limit: Number.MAX_SAFE_INTEGER });
   return { ok: true, value: historyPage(items, pageSize, item => ({ at: item.at, id: item.id }), cursor) };
+}
+
+/** Only recorded outreach/visits and explicit contacted marks for this contact. */
+export async function getTouchHistoryPage(ctx:Ctx,contactId:string,options:{pageSize?:number;cursor?:HistoryCursor}={}):Promise<ServiceResult<HistoryPage<TimelineItem>>>{
+ const access=await lifecycleScope(ctx,contactId);if(!access.ok)return access;const pageSize=Math.min(Math.max(options.pageSize??HISTORY_PAGE_SIZE,1),MAX_HISTORY_PAGE_SIZE),cursor=options.cursor,stamp=sql`date_trunc('milliseconds',${contactActivities.occurredAt})`,id=sql`${contactActivities.id}::text`;
+ const rows=await ctx.db.select().from(contactActivities).where(and(eq(contactActivities.contactId,contactId),or(inArray(contactActivities.kind,["call","email","sms","meeting","showing"]),sql`${contactActivities.safeMetadata}->>'event'='contact_marked'`),cursor?sql`(${stamp}<${cursor.at}::timestamptz or (${stamp}=${cursor.at}::timestamptz and ${id}<${cursor.id}))`:undefined)).orderBy(desc(stamp),desc(id)).limit(pageSize+1);
+ const names=await agentNames(ctx.db,[...new Set(rows.flatMap(row=>row.actorUserId?[row.actorUserId]:[]))]),current=await lifecycleScope(ctx,contactId);if(!current.ok)return current;
+ const items=toTimeline({activities:rows,followUpEvents:[],names,limit:Number.MAX_SAFE_INTEGER}).filter(item=>["call","email","text","meeting","showing","contacted"].includes(item.type));return{ok:true,value:historyPage(items,pageSize,item=>({id:item.id,at:item.at}),cursor)};
 }

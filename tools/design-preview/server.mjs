@@ -12,7 +12,7 @@ const repo = path.resolve(folder, "../..");
 const dist = path.join(folder, "dist");
 const port = Number(process.env.PREVIEW_PORT || 4173);
 const aliases = new Map([
-  ["next/link", "link.jsx"], ["next/image", "image.jsx"], ["next/navigation", "next-stubs.jsx"],
+  ["next/link", "link.jsx"], ["next/image", "image.jsx"], ["next/navigation", "next-stubs.jsx"], ["next/dynamic", "dynamic.jsx"],
   ["@/components/profile/profile-drawer", "preview-dialogs.jsx"],
   ["@/components/layout/quick-create-dialog", "preview-dialogs.jsx"],
   ["@/lib/data/adapters/listings", "visual-adapters.mjs"],
@@ -74,7 +74,7 @@ function responsiveHtml(width, height, view, scenario) {
 }
 const mime = { ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".map": "application/json" };
 
-await compile();
+if (process.env.PREVIEW_DEFER_BUILD !== "1") await compile();
 createServer(async (request, response) => {
   try {
     if (request.method !== "GET") { response.writeHead(405); response.end("Read-only design preview"); return; }
@@ -95,6 +95,11 @@ createServer(async (request, response) => {
     if (pathname === "/" || pathname === "/preview") {
       await compile();
       response.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" }); response.end(html); return;
+    }
+    if (pathname === "/numeric-check") {
+      await build({ entryPoints: [path.join(folder,"numeric-check.jsx")], outfile: path.join(dist,"numeric-check.js"), bundle:true, format:"esm", platform:"browser", jsx:"automatic", tsconfig:path.join(repo,"tsconfig.json"), define:{"process.env.NODE_ENV":'"development"'} });
+      response.writeHead(200,{"Content-Type":"text/html","Cache-Control":"no-store"});
+      response.end('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local numeric input check</title><body><div id="root"></div><script type="module" src="/numeric-check.js"></script></body></html>');return;
     }
     const relative = pathname.replace(/^\/dashboard/, "").replace(/^\//, "");
     const asset = relative.startsWith("fonts/") ? path.join(repo, "lib", relative) : relative.startsWith("brand/") || relative.startsWith("photos/") ? path.join(repo, "public", relative) : path.join(dist, relative);

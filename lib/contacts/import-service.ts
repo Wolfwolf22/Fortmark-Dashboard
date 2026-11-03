@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, notInArray, sql, type SQL } from "drizzle-orm";
-import { auditEvents, contactActivities, contactImportRequests, contactNotes, contacts, type ContactRow } from "../db/schema.ts";
+import { auditEvents, contactActivities, contactEngagementFiles, contactImportRequests, contactNotes, contacts, dashboardUsers, type ContactRow } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 import { canCreateFor } from "./domain.ts";
 import type { Ctx, ServiceFailure } from "./service.ts";
@@ -9,6 +9,8 @@ import { canTransition, requiresEngagementNotice } from "./stages.ts";
 import { contactRevision, createPayloadHash, nextContactUpdatedAt, revisionMatches } from "./reliability.ts";
 import { findExactContactDuplicates, findImportContactDuplicates, exactDuplicatePredicate, ownDuplicateBookPredicate } from "./duplicates-service.ts";
 import { importCommitInputSchema, importPreviewInputSchema, normalizeImportRow, IMPORT_LIMITS, type ImportCommitInput, type ImportPreview, type ImportPreviewRow, type ImportRawRow, type ImportResult, type ImportValues } from "./import.ts";
+import { activeEngagementGuard } from "./engagement-guard.ts";
+import { currentContactActor } from "./lifecycle-service.ts";
 
 export type ImportServiceResult<T> = { ok: true; value: T } | { ok: false; reason: ServiceFailure | "invalid_import" };
 type BatchWrite = Parameters<Db["batch"]>[0][number];
@@ -68,6 +70,8 @@ export async function commitContactImport(ctx: Ctx, input: unknown, now = new Da
   async function replay(): Promise<ImportServiceResult<ImportResult> | null> {
     const [receipt] = await ctx.db.select().from(contactImportRequests).where(receiptWhere).limit(1);
     if (!receipt) return null;
+    const [actor] = await ctx.db.select({id:dashboardUsers.id}).from(dashboardUsers).where(and(eq(dashboardUsers.id,ctx.actor.userId),currentContactActor(ctx))).limit(1);
+    if(!actor || ctx.actor.role === "member") return {ok:false,reason:"forbidden"};
     return receipt.payloadHash === hash ? { ok: true, value: receipt.result as unknown as ImportResult } : { ok: false, reason: "request_conflict" };
   }
   const prior = await replay(); if (prior) return prior;
@@ -108,7 +112,15 @@ export async function commitContactImport(ctx: Ctx, input: unknown, now = new Da
       if ((exact.value.count || fileDuplicates.length) && row.createSeparate !== true) return { ok: false, reason: "conflict" };
     }
     const stage = values.stage ?? target?.stage ?? "lead";
-    if (requiresEngagementNotice(target?.stage ?? "lead", stage) && !d.engagementAcknowledged) return { ok: false, reason: "invalid_import" };
+    if (requiresEngagementNotice(target?.stage ?? "lead", stage)) {
+      // A CSV cannot attach or substitute an agreement. Existing contacts may
+      // enter these stages only against the exact PDF reviewed at commit time.
+      if (!target) return { ok: false, reason: "engagement_required" };
+      const [engagement] = await ctx.db.select({id:contactEngagementFiles.id,updatedAt:contactEngagementFiles.updatedAt}).from(contactEngagementFiles).where(and(eq(contactEngagementFiles.contactId,target.id),isNull(contactEngagementFiles.removedAt))).limit(1);
+      if (!engagement) return { ok:false,reason:"engagement_required" };
+      if (!d.engagementAcknowledged) return { ok:false,reason:"engagement_acknowledgement_required" };
+      guards.push(sql`${activeEngagementGuard(target.id)} and exists(select 1 from ${contactEngagementFiles} where ${contactEngagementFiles.id}=${engagement.id}::uuid and ${contactEngagementFiles.contactId}=${target.id}::uuid and ${contactEngagementFiles.removedAt} is null and date_trunc('milliseconds',${contactEngagementFiles.updatedAt})=${engagement.updatedAt.toISOString()}::timestamptz)`);
+    }
     const id = target?.id ?? randomUUID(), set = columns(values);
     const changed = Object.entries(set).filter(([key, value]) => !target || (target as unknown as Record<string, unknown>)[key] !== value).map(([key]) => key);
     if (target && !changed.length && !values.notes) { result.rows.push({ rowNumber: row.rowNumber, status: "skipped", contactId: id }); result.counts.skipped++; continue; }
@@ -130,9 +142,9 @@ export async function commitContactImport(ctx: Ctx, input: unknown, now = new Da
   }
   // The first statement both serializes identical retries and rechecks every
   // reviewed match/target while locking existing rows for the whole batch.
-  const checkedHash = guards.length ? sql`case when ${and(...guards)} then ${hash} else null end` : hash;
+  const checkedHash = sql`case when ${and(currentContactActor(ctx),...guards)} then ${hash} else null end`;
   const receipt = ctx.db.insert(contactImportRequests).values({ actorUserId: ctx.actor.userId, requestId: d.requestId, payloadHash: checkedHash, result: result as unknown as Record<string, unknown>, createdAt: now });
-  try { await ctx.db.batch([receipt, ...writes] as unknown as Parameters<Db["batch"]>[0]); }
+  try { await ctx.db.batch([ctx.db.select({id:dashboardUsers.id}).from(dashboardUsers).where(eq(dashboardUsers.id,ctx.actor.userId)).for("no key update"), receipt, ...writes] as unknown as Parameters<Db["batch"]>[0]); }
   catch (error) {
     try { const recovered = await replay(); if (recovered) return recovered; } catch { return { ok: false, reason: "unavailable" }; }
     return { ok: false, reason: guardViolation(error) ? "conflict" : "unavailable" };

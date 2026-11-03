@@ -27,6 +27,7 @@ export function parseTransactionFilters(
   };
   const q = read("q")?.trim().slice(0, 120);
   const filters: TransactionFilters = {
+    ...(read("deleted")==="1"?{deleted:true}:{}),
     stage: list(read("stage"), ALL_STAGES as readonly TransactionStage[]),
     side: list(read("side"), SIDES),
     query: q && q.length > 0 ? q : undefined,

@@ -2,7 +2,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import { auditEvents, contactActivities, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, propertyLists, savedShowingTours, savedTourStops, showings, contacts, transactionParties, transactions, type ContactRow } from "../db/schema.ts";
+import { auditEvents, contactActivities, contactEngagementFiles, contactMergeRequests, contactNeeds, contactNotes, contactOpportunities, contactProperties, propertyLists, savedShowingTours, savedTourStops, showings, contacts, transactionParties, transactions, type ContactRow } from "../db/schema.ts";
 import { visibleTo as visibleTransactions } from "../transactions/service.ts";
 import { canWrite, displayName } from "./domain.ts";
 import { agentNames, getContact, type Ctx, type ServiceFailure, type ServiceResult } from "./service.ts";
@@ -13,6 +13,8 @@ import { chooseMergedAction, chooseMergedFollowUp, contactMergeInputSchema, defa
 import { contactNextAction } from "./domain.ts";
 import { isRecordId } from "../db/ids.ts";
 import { CONTACT_NOTE_MAX_LENGTH } from "./notes.ts";
+import { activeEngagementGuard } from "./engagement-guard.ts";
+import { ENGAGEMENT_REQUIRED_STAGES } from "./engagement.ts";
 
 type BatchWrite = Parameters<Db["batch"]>[0][number];
 const valuesOf = (row: ContactRow): MergeValues => ({
@@ -25,6 +27,7 @@ const valuesOf = (row: ContactRow): MergeValues => ({
 /** A concurrency token, not an exported copy of private history. Every row is included. */
 function fingerprintSql(ctx: Ctx, id: string): SQL<string> {
   return sql<string>`md5(
+    coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from contact_engagement_files n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from contact_notes n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from contact_needs n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
     coalesce((select jsonb_agg(to_jsonb(n) order by n.id) from contact_activities n where n.contact_id=${id}::uuid),'[]'::jsonb)::text || '|' ||
@@ -130,14 +133,22 @@ export async function mergeContacts(ctx: Ctx, input: unknown, now = new Date()):
   const selected = mergeValues(review, d.choices), action = chooseMergedAction(review, d.nextActionChoice), follow = chooseMergedFollowUp(review, d.nextActionChoice);
   if (selected.stage !== raw.primary.stage && !canTransition(raw.primary.stage, selected.stage)) return { ok: false, reason: "invalid_transition" };
   if (requiresEngagementNotice(raw.primary.stage, selected.stage) && !d.engagementAcknowledged) return { ok: false, reason: "invalid_merge" };
+  const enteringRepresentation = selected.stage !== raw.primary.stage && (ENGAGEMENT_REQUIRED_STAGES as readonly string[]).includes(selected.stage);
+  const engagementGuard = sql`(${activeEngagementGuard(d.primaryId)} or ${activeEngagementGuard(d.duplicateId)})`;
+  if (enteringRepresentation) {
+    if (!d.engagementAcknowledged) return { ok: false, reason: "invalid_merge" };
+    const proof = await ctx.db.execute<{present:boolean}>(sql`select ${engagementGuard} as present`);
+    if (!proof.rows[0]?.present) return { ok: false, reason: "engagement_required" };
+  }
   const ids = [d.primaryId, d.duplicateId].sort();
   const expected = (id: string, revision: string, fingerprint: string) => sql`exists(select 1 from ${contacts} where ${and(eq(contacts.id, id), eq(contacts.assignedAgentUserId, raw.primary.assignedAgentUserId), visibleTo(ctx.actor), contactRevision(revision))}) and ${fingerprintSql(ctx, id)}=${fingerprint}`;
-  const guard = sql`${expected(d.primaryId, d.expectedPrimaryUpdatedAt, d.expectedPrimaryHistoryFingerprint)} and ${expected(d.duplicateId, d.expectedDuplicateUpdatedAt, d.expectedDuplicateHistoryFingerprint)}`;
+  const guard = sql`${expected(d.primaryId, d.expectedPrimaryUpdatedAt, d.expectedPrimaryHistoryFingerprint)} and ${expected(d.duplicateId, d.expectedDuplicateUpdatedAt, d.expectedDuplicateHistoryFingerprint)} and ${enteringRepresentation ? engagementGuard : sql`true`}`;
   const receiptId = randomUUID();
   const writes: BatchWrite[] = [
     ctx.db.select({ id: contacts.id }).from(contacts).where(and(inArray(contacts.id, ids), visibleTo(ctx.actor))).orderBy(contacts.id).for("update"),
     ctx.db.select({ id: propertyLists.id }).from(propertyLists).where(inArray(propertyLists.contactId, ids)).orderBy(propertyLists.id).for("update"),
     ctx.db.select({ id: contactNotes.id }).from(contactNotes).where(inArray(contactNotes.contactId, ids)).orderBy(contactNotes.id).for("update"),
+    ctx.db.select({ id: contactEngagementFiles.id }).from(contactEngagementFiles).where(inArray(contactEngagementFiles.contactId, ids)).orderBy(contactEngagementFiles.id).for("update"),
     ctx.db.select({ id: contactNeeds.id }).from(contactNeeds).where(inArray(contactNeeds.contactId, ids)).orderBy(contactNeeds.id).for("update"),
     ctx.db.select({ id: contactActivities.id }).from(contactActivities).where(inArray(contactActivities.contactId, ids)).orderBy(contactActivities.id).for("update"),
     ctx.db.select({ id: contactOpportunities.id }).from(contactOpportunities).where(inArray(contactOpportunities.contactId, ids)).orderBy(contactOpportunities.id).for("update"),
@@ -150,6 +161,9 @@ export async function mergeContacts(ctx: Ctx, input: unknown, now = new Date()):
     ctx.db.insert(contactMergeRequests).values({ id: receiptId, actorUserId: ctx.actor.userId, requestId: d.requestId, payloadHash,
       keeperId: sql`case when ${guard} then ${d.primaryId}::uuid else null end`, sourceId: d.duplicateId,
       result: { primaryId: d.primaryId, mergedContactId: d.duplicateId, preservedCounts: review.preservedCounts }, createdAt: now }),
+    // Keep one current PDF. Both original files remain in retained metadata, never moved in storage.
+    ctx.db.update(contactEngagementFiles).set({ removedAt: now, updatedAt: now }).where(and(eq(contactEngagementFiles.contactId, d.duplicateId), isNull(contactEngagementFiles.removedAt), sql`exists(select 1 from contact_engagement_files keeper where keeper.contact_id=${d.primaryId}::uuid and keeper.removed_at is null)`)),
+    ctx.db.update(contactEngagementFiles).set({ contactId: d.primaryId, updatedAt: sql`greatest(date_trunc('milliseconds',${contactEngagementFiles.updatedAt})+interval '1 millisecond',${now.toISOString()}::timestamptz)` }).where(eq(contactEngagementFiles.contactId,d.duplicateId)),
     ctx.db.update(contactNotes).set({ contactId: d.primaryId }).where(eq(contactNotes.contactId, d.duplicateId)),
     ctx.db.update(contactNeeds).set({ contactId: d.primaryId }).where(eq(contactNeeds.contactId, d.duplicateId)),
     ctx.db.update(contactActivities).set({ contactId: d.primaryId }).where(eq(contactActivities.contactId, d.duplicateId)),

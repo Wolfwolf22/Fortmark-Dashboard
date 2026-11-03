@@ -169,7 +169,7 @@ await refused(() => api.getTransactionWorkspace(vendorFile.transaction.id), 404,
 Object.assign(SAMPLE_ACTOR, actor); groups++;
 
 // Terminal files retain readable evidence and exact already-committed receipts, but accept no new edits.
-recoverFile = await api.getTransactionWorkspace(recoverFile.transaction.id); await api.updateTransactionStage(recoverFile.transaction.id, "cancelled", { requestId: crypto.randomUUID(), expectedUpdatedAt: recoverFile.updatedAt }); recoverFile = await api.getTransactionWorkspace(recoverFile.transaction.id);
+recoverFile = await api.getTransactionWorkspace(recoverFile.transaction.id); await api.updateTransactionStage(recoverFile.transaction.id, "cancelled", { requestId: crypto.randomUUID(), expectedUpdatedAt: recoverFile.updatedAt,reason:"Synthetic terminal file review" }); recoverFile = await api.getTransactionWorkspace(recoverFile.transaction.id);
 assert.equal(recoverFile.canEdit, false); const retained = recoverFile.checklist.items[0].attachments[0]; assert.deepEqual(new Uint8Array(await (await api.downloadTransactionAttachment(recoverFile.transaction.id, retained.id)).arrayBuffer()), pdfBytes);
 await refused(() => api.uploadTransactionAttachment(recoverFile.transaction.id, itemInput(recoverFile, recoverFile.checklist.items[0]), pdf), 409, "invalid_transition");
 await refused(() => api.removeTransactionAttachment(recoverFile.transaction.id, retained.id, { ...itemInput(recoverFile, recoverFile.checklist.items[0]), expectedAttachmentUpdatedAt: retained.updatedAt }), 409, "invalid_transition");

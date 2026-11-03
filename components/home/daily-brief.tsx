@@ -79,7 +79,7 @@ export function figures(metrics: BrokerageMetrics): Figure[] {
           : "Contract prices on active deals",
     },
     {
-      label: "Projected commission",
+      label: "Projected gross commission",
       value: deals
         ? formatCurrencyCompact(centsToDollars(deals.projectedCommissionCents))
         : null,
@@ -87,7 +87,7 @@ export function figures(metrics: BrokerageMetrics): Figure[] {
         ? reason(t.availability)
         : deals.projectedCommissionUntermedCount > 0
           ? `${deals.projectedCommissionUntermedCount} without terms entered`
-          : "Projected, not earned",
+          : "Active files · before split and fees",
     },
     {
       label: "Active clients",

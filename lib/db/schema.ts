@@ -469,6 +469,11 @@ export const transactions = pgTable(
 
     notes: text("notes"),
 
+    /** Recoverable removal preserves the file, links, evidence and terminal stage. */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedReason: text("deleted_reason"),
+    listingPlan: jsonb("listing_plan").$type<import("../transactions/workflow-domain.ts").ListingPlan>().notNull().default({ goLiveDate: null, expirationDate: null, status: "draft", reason: null }),
+
     /** The operational template selected when this file was initialized. */
     checklistTemplateVersion: text("checklist_template_version").notNull().default("brokerage-starter-v1"),
 
@@ -481,6 +486,7 @@ export const transactions = pgTable(
     index("transactions_closing_date_idx").on(t.closingDate),
     index("transactions_listing_key_idx").on(t.listingKey),
     index("transactions_mls_number_idx").on(t.mlsNumber),
+    check("transactions_deleted_terminal_check", sql`${t.deletedAt} is null or ${t.stage} in ('closed','cancelled','fell_through')`),
   ]
 );
 
@@ -574,13 +580,13 @@ export const transactionWriteRequests = pgTable("transaction_write_requests", {
   requestId: uuid("request_id").notNull(),
   transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "restrict" }),
   action: text("action").notNull(), payloadHash: text("payload_hash").notNull(),
-  result: jsonb("result").$type<{ transactionId: string; updatedAt: string; deadlineId?: string; attachmentId?: string; vendorSelectionId?: string; vendorDetailId?: string }>().notNull(),
+  result: jsonb("result").$type<{ transactionId: string; updatedAt: string; deadlineId?: string; attachmentId?: string; vendorSelectionId?: string; vendorDetailId?: string; recordId?: string }>().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => [
   primaryKey({ name: "transaction_write_requests_pkey", columns: [t.actorUserId, t.requestId] }),
   index("transaction_write_requests_transaction_idx").on(t.transactionId),
   check("transaction_write_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`),
-  check("transaction_write_requests_action_check", sql`${t.action} in ('create','edit','stage','add_deadline','edit_deadline','complete_deadline','reopen_deadline','remove_deadline','complete_checklist','reopen_checklist','upload_attachment','remove_attachment','set_attachment_requirement','set_vendor','edit_vendor_details','upload_vendor_attachment','remove_vendor_attachment','link_property','unlink_property','link_tour','unlink_tour')`),
+  check("transaction_write_requests_action_check", sql`${t.action} in ('create','edit','stage','add_deadline','edit_deadline','complete_deadline','reopen_deadline','remove_deadline','complete_checklist','reopen_checklist','upload_attachment','remove_attachment','set_attachment_requirement','set_vendor','edit_vendor_details','upload_vendor_attachment','remove_vendor_attachment','link_property','unlink_property','link_tour','unlink_tour','workflow')`),
 ]);
 export type TransactionWriteRequestRow = typeof transactionWriteRequests.$inferSelect;
 
@@ -588,7 +594,7 @@ export type TransactionWriteRequestRow = typeof transactionWriteRequests.$inferS
 export const transactionChecklistItems = pgTable("transaction_checklist_items", {
   id: uuid("id").primaryKey().defaultRandom(),
   transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "cascade" }),
-  templateKey: text("template_key").notNull(), label: text("label").notNull(),
+  templateKey: text("template_key").notNull(), label: text("label").notNull(), helpText: text("help_text").notNull().default(""),
   stage: transactionStage("stage").notNull(), required: boolean("required").notNull().default(true),
   attachmentRequired: boolean("attachment_required").notNull().default(false),
   sortOrder: integer("sort_order").notNull(),
@@ -605,6 +611,23 @@ export const transactionChecklistItems = pgTable("transaction_checklist_items", 
   check("transaction_checklist_items_completion_check", sql`${t.completedAt} is not null or ${t.completedByUserId} is null`),
 ]);
 export type TransactionChecklistItemRow = typeof transactionChecklistItems.$inferSelect;
+
+/** Append-retained work records. Removal hides a row; it never removes its audit history. */
+export const transactionPrivateNotes = pgTable("transaction_private_notes", {
+  id: uuid("id").primaryKey().defaultRandom(), transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "restrict" }),
+  authorUserId: uuid("author_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }), body: text("body").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(), removedAt: timestamp("removed_at", { withTimezone: true }),
+}, t => [index("transaction_private_notes_file_idx").on(t.transactionId, t.createdAt), check("transaction_private_notes_body_check", sql`char_length(btrim(${t.body})) between 1 and 5000`)]);
+export const transactionOpenHouses = pgTable("transaction_open_houses", {
+  id: uuid("id").primaryKey().defaultRandom(), transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "restrict" }),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(), endsAt: timestamp("ends_at", { withTimezone: true }).notNull(), attendance: integer("attendance"), notes: text("notes").notNull().default(""), status: text("status").notNull().default("planned"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(), removedAt: timestamp("removed_at", { withTimezone: true }),
+}, t => [index("transaction_open_houses_file_idx").on(t.transactionId, t.startsAt), check("transaction_open_houses_values_check", sql`${t.endsAt}>${t.startsAt} and ${t.endsAt}<=${t.startsAt}+interval '1 day' and (${t.attendance} is null or ${t.attendance} between 0 and 100000) and ${t.status} in ('planned','completed','cancelled') and char_length(${t.notes})<=5000`)]);
+export const transactionReopenRequests = pgTable("transaction_reopen_requests", {
+  id: uuid("id").primaryKey().defaultRandom(), transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "restrict" }), requestedByUserId: uuid("requested_by_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  reason: text("reason").notNull(), status: text("status").notNull().default("pending"), decidedByUserId: uuid("decided_by_user_id").references(() => dashboardUsers.id, { onDelete: "restrict" }), decisionReason: text("decision_reason"), previousClosedDate: date("previous_closed_date"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [index("transaction_reopen_requests_file_idx").on(t.transactionId, t.createdAt), uniqueIndex("transaction_reopen_requests_pending_idx").on(t.transactionId).where(sql`${t.status}='pending'`), check("transaction_reopen_requests_values_check", sql`char_length(btrim(${t.reason})) between 1 and 2000 and ${t.status} in ('pending','approved','denied') and (${t.status}='pending' or (${t.decidedByUserId} is not null and ${t.decisionReason} is not null and char_length(btrim(${t.decisionReason})) between 1 and 2000))`)]);
 
 export const transactionChecklistAttachments = pgTable("transaction_checklist_attachments", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -782,6 +805,9 @@ export const contacts = pgTable(
     /** Merged sources remain archived tombstones; normal reads use the keeper. */
     mergedIntoContactId: uuid("merged_into_contact_id").references((): AnyPgColumn => contacts.id, { onDelete: "restrict" }),
     mergedAt: timestamp("merged_at", { withTimezone: true }),
+    /** Recoverable deletion never removes this contact or its linked records. */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedByUserId: uuid("deleted_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -792,6 +818,7 @@ export const contacts = pgTable(
     index("contacts_email_idx").on(t.email),
     index("contacts_next_action_due_idx").on(t.nextActionDueAt),
     index("contacts_merged_into_idx").on(t.mergedIntoContactId),
+    index("contacts_deleted_idx").on(t.brokerageKey,t.assignedAgentUserId,t.deletedAt),
     check("contacts_merge_pointer_check", sql`(${t.mergedIntoContactId} is null and ${t.mergedAt} is null) or (${t.mergedIntoContactId} is not null and ${t.mergedAt} is not null and ${t.mergedIntoContactId} <> ${t.id} and ${t.stage} = 'archived')`),
     check("contacts_next_action_check", sql`(
       (${t.nextActionId} is null and ${t.nextActionKind} is null and ${t.nextActionPurpose} is null and ${t.nextActionDueAt} is null and ${t.nextActionAssignedUserId} is null)
@@ -809,6 +836,36 @@ export const contacts = pgTable(
     ),
   ]
 );
+
+/** One active private PDF; replacements remain as soft-retained history. */
+export const contactEngagementFiles = pgTable("contact_engagement_files", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "restrict" }),
+  storagePath: text("storage_path").notNull(), filename: text("filename").notNull(),
+  contentType: text("content_type").notNull(), sizeBytes: integer("size_bytes").notNull(), sha256: text("sha256").notNull(),
+  uploadedByUserId: uuid("uploaded_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(), removedAt: timestamp("removed_at", { withTimezone: true }),
+}, t => [
+  uniqueIndex("contact_engagement_files_path_idx").on(t.storagePath),
+  uniqueIndex("contact_engagement_files_active_idx").on(t.contactId).where(sql`${t.removedAt} is null`),
+  index("contact_engagement_files_contact_idx").on(t.contactId,t.createdAt),
+  check("contact_engagement_files_type_check", sql`${t.contentType}='application/pdf'`),
+  check("contact_engagement_files_size_check", sql`${t.sizeBytes} between 1 and 4194304`),
+  check("contact_engagement_files_filename_check", sql`char_length(${t.filename}) between 1 and 180`),
+  check("contact_engagement_files_hash_check", sql`${t.sha256} ~ '^[0-9a-f]{64}$'`),
+]);
+export type ContactEngagementFileRow = typeof contactEngagementFiles.$inferSelect;
+export const contactLifecycleRequests = pgTable("contact_lifecycle_requests", {
+  actorUserId: uuid("actor_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }), requestId: uuid("request_id").notNull(),
+  brokerageKey: text("brokerage_key").notNull(), contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "restrict" }),
+  action: text("action").notNull(), payloadHash: text("payload_hash").notNull(),
+  result: jsonb("result").$type<{ contactId: string; updatedAt: string; engagementId?: string }>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.actorUserId,t.requestId] }),
+  check("contact_lifecycle_requests_action_check", sql`${t.action} in ('delete','restore','upload_engagement','remove_engagement')`),
+  check("contact_lifecycle_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`),
+]);
 
 export const contactOpportunities = pgTable(
   "contact_opportunities",
@@ -1256,6 +1313,14 @@ export const propertyLists = pgTable("property_lists", {
   check("property_lists_request_check", sql`(${t.createRequestId} is null and ${t.createPayloadHash} is null) or (${t.createRequestId} is not null and ${t.createPayloadHash} is not null and ${t.createPayloadHash} ~ '^[0-9a-f]{64}$')`),
 ]);
 export type PropertyListRow = typeof propertyLists.$inferSelect;
+
+/** Explicit read-only grants. Owning or administering a contact grants no list access. */
+export const propertyListShares = pgTable("property_list_shares", {
+  listId: uuid("list_id").notNull().references(() => propertyLists.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => dashboardUsers.id, { onDelete: "cascade" }),
+  sharedByUserId: uuid("shared_by_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.listId, t.userId] }), index("property_list_shares_user_idx").on(t.userId, t.listId), check("property_list_shares_not_self", sql`${t.userId} <> ${t.sharedByUserId}`)]);
 
 /** Saved MLS references only. Display fields/media are hydrated afresh, never copied into CRM storage. */
 export const contactProperties = pgTable("contact_properties", {

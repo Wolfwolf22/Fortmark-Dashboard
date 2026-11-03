@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
-import { auditEvents, contacts, contactActivities, contactProperties, dashboardUsers, propertyLists, showings, showingMutationRequests, type ShowingRow, type ContactRow } from "../db/schema.ts";
+import { auditEvents, contacts, contactActivities, contactProperties, dashboardUsers, propertyLists, savedShowingTours, savedTourStops, showings, showingMutationRequests, type ShowingRow, type ContactRow } from "../db/schema.ts";
 import { isRecordId } from "../db/ids.ts";
 import { loadContact } from "../contacts/access.ts";
 import type { NextActionKind } from "../contacts/next-action.ts";
@@ -43,10 +43,12 @@ async function views(ctx: Ctx, rows: ShowingRow[], provider?: PropertyMlsProvide
   const contactRows = await ctx.db.select({ id: contacts.id, firstName: contacts.firstName, lastName: contacts.lastName, preferredName: contacts.preferredName }).from(contacts)
     .where(and(inArray(contacts.id, [...new Set(rows.map(row => row.contactId))]), visibleTo(ctx.actor)));
   const names = new Map(contactRows.map(row => [row.id, row.preferredName?.trim() || [row.firstName, row.lastName].filter(Boolean).join(" ").trim() || "Unnamed contact"]));
-  const sources = await ctx.db.select({ id: contactProperties.id, listId: contactProperties.listId, listName: propertyLists.name, removedAt: contactProperties.removedAt, reviewStatus: contactProperties.reviewStatus, updatedAt: contactProperties.updatedAt })
+  const sources = await ctx.db.select({ id: contactProperties.id, listId: contactProperties.listId, listName: propertyLists.name, listOwnerId: propertyLists.ownerUserId, removedAt: contactProperties.removedAt, reviewStatus: contactProperties.reviewStatus, updatedAt: contactProperties.updatedAt })
     .from(contactProperties).innerJoin(propertyLists, eq(propertyLists.id, contactProperties.listId))
     .where(and(inArray(contactProperties.id, [...new Set(rows.map(row => row.sourcePropertyId))]), propertyListVisibility(ctx)));
   const sourceById = new Map(sources.map(row => [row.id, row]));
+  const tourRows = await ctx.db.select({ showingId: savedTourStops.linkedShowingId, id: savedShowingTours.id, name: savedShowingTours.name, contactId: savedShowingTours.contactId }).from(savedTourStops).innerJoin(savedShowingTours, eq(savedShowingTours.id, savedTourStops.tourId)).where(and(inArray(savedTourStops.linkedShowingId, rows.map(row => row.id)), eq(savedShowingTours.ownerUserId, ctx.actor.userId), eq(savedShowingTours.brokerageKey, ctx.actor.brokerageKey), isNull(savedShowingTours.archivedAt))).orderBy(savedShowingTours.id);
+  const tourByShowing = new Map(tourRows.filter(tour => rows.some(row => row.id === tour.showingId && row.contactId === tour.contactId)).map(tour => [tour.showingId, { id: tour.id, name: tour.name }]));
   const items: ShowingView[] = rows.filter(row => names.has(row.contactId)).map(row => {
     const source = sourceById.get(row.sourcePropertyId), writable = ctx.actor.role !== "member", scheduled = row.status === "scheduled";
     return { id: row.id, contactId: row.contactId, contactName: names.get(row.contactId)!, sourcePropertyId: row.sourcePropertyId,
@@ -54,7 +56,8 @@ async function views(ctx: Ctx, rows: ShowingRow[], provider?: PropertyMlsProvide
       feedbackLikes: row.feedbackLikes, feedbackConcerns: row.feedbackConcerns, feedbackSummary: row.feedbackSummary, visitedAt: row.visitedAt?.toISOString() ?? null, cancelReason: row.cancelReason,
       createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
       sourceProperty: source ? { id: source.id, listId: source.listId, listName: source.listName, removed: Boolean(source.removedAt), reviewStatus: source.reviewStatus as PropertyReviewStatus, updatedAt: source.updatedAt.toISOString() } : null,
-      canEdit: writable && scheduled, canComplete: writable && scheduled, canCancel: writable && scheduled, canUpdatePropertyReview: writable && scheduled && Boolean(source && !source.removedAt),
+      linkedTour: tourByShowing.get(row.id) ?? null,
+      canEdit: writable && scheduled, canComplete: writable && scheduled, canCancel: writable && scheduled, canUpdatePropertyReview: writable && scheduled && Boolean(source && !source.removedAt && source.listOwnerId === ctx.actor.userId),
       listing: null, syncStatus: "unavailable", checkedAt: null };
   });
   if (provider) {
@@ -113,7 +116,7 @@ async function sourceFor(ctx: Ctx, id: string): Promise<ShowingResult<SavedSourc
   const [property] = await ctx.db.select({ id: contactProperties.id, listId: contactProperties.listId, dataset: contactProperties.dataset, listingId: contactProperties.listingId, mlsNumber: contactProperties.mlsNumber, updatedAt: contactProperties.updatedAt, reviewStatus: contactProperties.reviewStatus, removedAt: contactProperties.removedAt })
     .from(contactProperties).where(eq(contactProperties.id, id)).limit(1);
   if (!property || property.removedAt) return { ok: false, reason: "not_found" };
-  const loaded = await loadPropertyList(ctx, property.listId); if (!loaded.ok) return { ok: false, reason: loaded.reason === "invalid_property_list" ? "not_found" : loaded.reason };
+  const loaded = await loadPropertyList(ctx, property.listId); if (!loaded.ok) return { ok: false, reason: loaded.reason };
   if (!loaded.value.writable) return { ok: false, reason: "forbidden" };
   return { ok: true, value: { property, scope: loaded.value } };
 }

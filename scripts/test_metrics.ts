@@ -394,7 +394,7 @@ check("the removed KPI cards are really gone", (() => {
 })());
 check("the brief carries the four headline figures", (() => {
   const src = readFileSync("components/home/daily-brief.tsx", "utf8");
-  return ["Active transactions", "Pipeline value", "Projected commission", "Active clients"].every(
+  return ["Active transactions", "Pipeline value", "Projected gross commission", "Active clients"].every(
     (label) => src.includes(`label: "${label}"`)
   );
 })());

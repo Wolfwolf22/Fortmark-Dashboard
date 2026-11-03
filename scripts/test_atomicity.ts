@@ -25,6 +25,7 @@ import { auditEvents, contactActivities, contacts, transactionEvents, transactio
 import { DEFAULT_TRANSACTION_CHECKLIST } from "../lib/transactions/checklist-domain.ts";
 import { changeStage as changeTransactionStage, planStageChange } from "../lib/transactions/service.ts";
 import { ALL_STAGES, canTransition, isTerminalStage } from "../lib/transactions/stages.ts";
+import { CLOSE_ACKNOWLEDGEMENT_VERSION } from "../lib/transactions/close-acknowledgement.ts";
 import type { TransactionStage } from "../lib/data/types.ts";
 
 let passed = 0;
@@ -46,6 +47,8 @@ const ADMIN: Actor = { userId: "55555555-5555-4555-8555-555555555555", role: "ad
 const COORDINATOR: Actor = { userId: "66666666-6666-4666-8666-666666666666", role: "transaction_coordinator", brokerageKey: "fortmark" };
 const OUTSIDER: Actor = { userId: "44444444-4444-4444-8444-444444444444", role: "admin", brokerageKey: "elsewhere" };
 const ID = "5b8f6a1e-3c2d-4e5f-8a9b-0c1d2e3f4a5b";
+const reviewedClose={version:CLOSE_ACKNOWLEDGEMENT_VERSION,reviewedToEnd:true,acknowledged:true} as const;
+const stageReview=(to:string)=>({...to==="closed"?{closeAcknowledgement:reviewedClose}:{},...(["cancelled","fell_through","withdrawn"].includes(to)?{reason:"Synthetic explicit terminal reason"}:{})});
 
 // --- An in-memory database that models transactions ----------------------------------
 type Applied = { table: unknown; kind: "insert" | "update"; values: Record<string, unknown> };
@@ -110,7 +113,7 @@ function txnRow(stage: string, over: Record<string, unknown> = {}) {
 }
 const txn = (actor: Actor, from: string, to: string, opts: { failOn?: unknown; row?: Record<string, unknown> } = {}) => {
   const m = memoryDb({ table: transactions, row: txnRow(from, opts.row) }, opts.failOn);
-  return changeTransactionStage({ actor, db: m.db as never }, ID, to as TransactionStage, NOW).then((result) => ({ m, result }));
+  return changeTransactionStage({ actor, db: m.db as never }, ID, to as TransactionStage, NOW,stageReview(to)).then((result) => ({ m, result }));
 };
 
 {
@@ -120,7 +123,7 @@ const txn = (actor: Actor, from: string, to: string, opts: { failOn?: unknown; r
   check("txn: exactly one event and one audit are written", count(ok.m, transactionEvents) === 1 && count(ok.m, auditEvents) === 1 && count(ok.m, transactions) === 1);
   check("txn: all three commit in one batch", ok.m.batchCount() === 1);
   check("txn: the actor is the caller", ok.m.applied.find((w) => w.table === transactionEvents)?.values.actorUserId === AGENT.userId);
-  check("txn: audit metadata is ids and stages only", Object.keys(ok.m.applied.find((w) => w.table === auditEvents)?.values.safeMetadata as object).sort().join(",") === "from,to,transactionId");
+  check("txn: close audit records ids/stages and controlled acknowledgement version/time only", Object.keys(ok.m.applied.find((w) => w.table === auditEvents)?.values.safeMetadata as object).sort().join(",") === "acknowledgedAt,from,mockAcknowledgementVersion,to,transactionId");
 
   for (const [label, table] of [["the event", transactionEvents], ["the audit", auditEvents], ["the stage update", transactions]] as const) {
     const bad = await txn(AGENT, "closing_prep", "closed", { failOn: table });
@@ -157,7 +160,7 @@ const txn = (actor: Actor, from: string, to: string, opts: { failOn?: unknown; r
   for (const from of ALL_STAGES) {
     for (const to of ALL_STAGES) {
       const m = memoryDb({ table: transactions, row: txnRow(from) });
-      const plan = await planStageChange({ actor: BROKER, db: m.db as never }, ID, to as TransactionStage, { now: NOW });
+      const plan = await planStageChange({ actor: BROKER, db: m.db as never }, ID, to as TransactionStage, { now: NOW,...stageReview(to) });
       if (plan.ok !== canTransition(from as TransactionStage, to as TransactionStage)) mismatches++;
       if (plan.ok) allowed++;
       if (!plan.ok && m.applied.length > 0) refusedWithWrites++;

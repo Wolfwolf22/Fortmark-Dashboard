@@ -25,7 +25,7 @@ import { useUiStore } from "@/lib/stores/ui";
 import { cn } from "@/lib/utils";
 
 /** Long enough to read as a departure, short enough not to feel like a wait. */
-export const EXIT_MS = 190;
+export const EXIT_MS = 90;
 /** If a navigation never lands (same URL, error), the page comes back. */
 const EXIT_SAFETY_MS = 1600;
 
@@ -58,6 +58,7 @@ export function useShellNavigate() {
         return;
       }
       setLeavingFrom(pathname);
+      router.prefetch(href);
       window.setTimeout(() => router.push(href), EXIT_MS);
     },
     [router, pathname, setLeavingFrom]

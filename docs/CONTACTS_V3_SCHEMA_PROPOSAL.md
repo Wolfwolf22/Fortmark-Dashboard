@@ -1,6 +1,12 @@
 # Contacts V3 — architecture and schema proposal
 
-Status: **APPROVED / APPLIED TO PREVIEW** (M1, M2, M3). M4 is not applied and is its own gate. **Nothing is in Production.**
+**Historical proposal — 2026-09-30.** The status, environment observations and
+M4 blockers below describe the proposal when reviewed; they are not current
+release statements. The current implementation, including single private PDF,
+represented-stage gates and recoverable contact deletion in migration0031,
+is documented in [`CONTACTS_V3.md`](./CONTACTS_V3.md).
+
+Original status: **APPROVED / APPLIED TO PREVIEW** (M1, M2, M3); M4 was deferred.
 Implementation, behavior and certification: see [`CONTACTS_V3.md`](./CONTACTS_V3.md). What follows is the proposal as it was reviewed; the "Decisions taken" block below records how the open questions were closed.
 Date: 2026-09-30 · Branch: `claude/dashboard-status-yir55p` · Production baseline: `74ff9d4` (Leads V2)
 

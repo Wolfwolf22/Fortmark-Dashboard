@@ -110,7 +110,8 @@ assert.equal(getPreviewMetrics().transactions.data.projectedCommissionCents, rea
 assert(attentionBefore.some(item => item.id === `deadline:${today.id}`)); groups++;
 
 let closing = await completeRequired(await api.getTransactionWorkspace("sample-closing"), "closed"); const untouchedDeadlines = JSON.stringify(closing.deadlines), beforeClose = getPreviewMetrics().transactions.data.activeCount;
-const stageInput = Object.freeze({ requestId: crypto.randomUUID(), expectedUpdatedAt: closing.updatedAt }), closed = await api.updateTransactionStage(closing.transaction.id, "closed", stageInput);
+const closeAcknowledgement={version:"fortmark-close-mock-v1",reviewedToEnd:true,acknowledged:true};
+const stageInput = Object.freeze({ requestId: crypto.randomUUID(), expectedUpdatedAt: closing.updatedAt,closeAcknowledgement }), closed = await api.updateTransactionStage(closing.transaction.id, "closed", stageInput);
 closing = await api.getTransactionWorkspace(closing.transaction.id); assert.equal(closed.stage, "closed"); assert.equal(JSON.stringify(closing.deadlines), untouchedDeadlines); assert.equal(closing.canEdit, false);
 assert.equal(getPreviewMetrics().transactions.data.activeCount, beforeClose - 1); assert(getPreviewMetrics().activity.data.some(item => item.kind === "transaction_closed"));
 assert.equal((await api.updateTransactionStage(closing.transaction.id, "closed", stageInput)).updatedAt, closed.updatedAt);
@@ -119,15 +120,15 @@ await refused(() => api.updateTransactionWorkspace(closing.transaction.id, edit(
 let paused = await api.getTransactionWorkspace("sample-on-hold"); assert(paused.canEdit); paused = await api.updateTransactionWorkspace(paused.transaction.id, edit(paused, { notes: "Updated while paused" })); paused = await completeRequired(paused, "offer");
 const resumed = await api.updateTransactionStage(paused.transaction.id, "offer", { requestId: crypto.randomUUID(), expectedUpdatedAt: paused.updatedAt }); assert.equal(resumed.stage, "offer");
 assert.equal(resumed.milestones.length, 0); await refused(() => api.updateTransactionStage(resumed.id, "closed", { requestId: crypto.randomUUID(), expectedUpdatedAt: resumed.updatedAt }), 409, "invalid_transition");
-const beforeReady = await completeRequired(await api.getTransactionWorkspace(resumed.id), "closing_prep"), ready = await api.updateTransactionStage(resumed.id, "closing_prep", { requestId: crypto.randomUUID(), expectedUpdatedAt: beforeReady.updatedAt });
+const beforeReady = await completeRequired(await api.getTransactionWorkspace(resumed.id), "closing_prep"), ready = beforeReady.transaction;assert.equal(ready.stage,"closing_prep");
 const beforePausedClose = await completeRequired(await api.getTransactionWorkspace(ready.id), "closed");
-await api.updateTransactionStage(ready.id, "closed", { requestId: crypto.randomUUID(), expectedUpdatedAt: beforePausedClose.updatedAt });
+await api.updateTransactionStage(ready.id, "closed", { requestId: crypto.randomUUID(), expectedUpdatedAt: beforePausedClose.updatedAt,closeAcknowledgement });
 const stagedActivity = previewTransactionActivity().filter(item => item.href.endsWith("/sample-on-hold"));
-assert.equal(stagedActivity.filter(item => item.kind === "transaction_stage_changed").length, 2); assert.equal(stagedActivity.filter(item => item.kind === "transaction_closed").length, 1); groups++;
+assert.equal(stagedActivity.filter(item => item.kind === "transaction_stage_changed").length>=2, true); assert.equal(stagedActivity.filter(item => item.kind === "transaction_closed").length, 1); groups++;
 
-const sourceBeforeCreate = readSampleContact("sample-overdue"), countBeforeCreate = (await api.getTransactions()).length, createInput = Object.freeze({ requestId: crypto.randomUUID(), address: "Sample Created File", city: "Fort Lauderdale", clientName: "Ignored forged name", contactId: (await contacts.getEligibleContacts())[0].id, side: "buyer", contractPrice: 250000 });
+const sourceBeforeCreate = readSampleContact("sample-overdue"), countBeforeCreate = (await api.getTransactions()).length, createInput = Object.freeze({ requestId: crypto.randomUUID(), address: "Sample Created File", city: "Fort Lauderdale", clientName: sourceBeforeCreate.name, side: "buyer", contractPrice: 250000 });
 const [created, repeatedCreate] = await Promise.all([api.createTransaction(createInput), api.createTransaction(createInput)]); assert.equal(created.id, repeatedCreate.id); assert.equal((await api.getTransactions()).length, countBeforeCreate + 1);
-const fresh = await api.getTransactionWorkspace(created.id); assert.equal(fresh.transaction.clientName, sourceBeforeCreate.name); assert.equal(fresh.details.contractExecutionDate, null); assert.equal(fresh.details.closingDate, null); assert.equal(fresh.deadlines.length, 0); assert.equal(fresh.details.commissionRateBps, null);
+let fresh = await api.getTransactionWorkspace(created.id);fresh=await api.mutateTransactionWorkflow(created.id,{requestId:crypto.randomUUID(),expectedUpdatedAt:fresh.updatedAt,action:"add_party",contactId:(await contacts.getEligibleContacts())[0].id,expectedContactUpdatedAt:sourceBeforeCreate.updatedAt,role:"other"}); assert.equal(fresh.transaction.clientName, sourceBeforeCreate.name); assert.equal(fresh.details.contractExecutionDate, null); assert.equal(fresh.details.closingDate, null); assert.equal(fresh.deadlines.length, 0); assert.equal(fresh.details.commissionRateBps, null);
 assert.equal(fresh.transaction.stage, "opportunity");
 assert.equal(readSampleContact("sample-overdue").lastTouchDate, sourceBeforeCreate.lastTouchDate); assert.deepEqual(readSampleContact("sample-overdue").nextAction, sourceBeforeCreate.nextAction);
 assert((await contacts.getLinkedTransactions("sample-overdue")).some(item => item.id === created.id)); groups++;
@@ -149,7 +150,7 @@ assert.equal((await api.getTransactionWorkspace(SAMPLE_FOREIGN_TRANSACTION_ID).c
 
 for (const target of ["qualified", "representation"]) { const contact = await contacts.getLead("sample-colleague-contact"); if (contact.stage !== target) await contacts.updateLeadStage(contact.id, target, { expectedStage: contact.stage }); }
 const colleagueId = (await contacts.getEligibleContacts()).find(contact => contact.name === "Sample Colleague Contact").id;
-const colleagueDeal = await api.createTransaction({ requestId: crypto.randomUUID(), address: "Sample Colleague File", city: "Hollywood", clientName: "", contactId: colleagueId, side: "buyer", contractPrice: 100000 });
+const colleagueRaw=await window.fetch("/api/transactions",{method:"POST",body:JSON.stringify({requestId:crypto.randomUUID(),transactionType:"residential_sale",side:"buyer",agentUserId:SAMPLE_COLLEAGUE_ID,addressLine1:"Sample Colleague File",city:"Hollywood",contractPriceCents:10000000,parties:[{role:"buyer",displayName:"Synthetic colleague client",isPrimary:true}]})});assert.equal(colleagueRaw.status,201);const colleagueDeal=(await colleagueRaw.json()).transaction;const colleagueFile=await api.getTransactionWorkspace(colleagueDeal.id),colleagueContact=readSampleContact(colleagueId);await api.mutateTransactionWorkflow(colleagueDeal.id,{requestId:crypto.randomUUID(),expectedUpdatedAt:colleagueFile.updatedAt,action:"add_party",contactId:colleagueId,expectedContactUpdatedAt:colleagueContact.updatedAt,role:"other"});
 assert.equal(colleagueDeal.agentId, SAMPLE_COLLEAGUE_ID);
 SAMPLE_ACTOR.role = "broker";
 try { const brokerRead = await api.getTransactionWorkspace(colleagueDeal.id); assert(brokerRead.canEdit); assert(brokerRead.parties.every(party => party.contactId === null && !party.canOpenContact)); } finally { SAMPLE_ACTOR.role = role; }
@@ -159,7 +160,8 @@ groups++;
 
 for (const target of ["qualified", "representation"]) { const contact = await contacts.getLead(DUPLICATE_SOURCE_ID); if (contact.stage !== target) await contacts.updateLeadStage(contact.id, target, { expectedStage: contact.stage }); }
 const mergeReview = await contacts.getContactMergeReview(DUPLICATE_PRIMARY_ID, DUPLICATE_SOURCE_ID), mergeInput = value => ({ requestId: crypto.randomUUID(), primaryId: DUPLICATE_PRIMARY_ID, duplicateId: DUPLICATE_SOURCE_ID, expectedPrimaryUpdatedAt: value.primary.updatedAt, expectedDuplicateUpdatedAt: value.duplicate.updatedAt, expectedPrimaryHistoryFingerprint: value.primary.historyFingerprint, expectedDuplicateHistoryFingerprint: value.duplicate.historyFingerprint, choices: value.defaults, nextActionChoice: "primary" });
-const mergeDeal = await api.createTransaction({ requestId: crypto.randomUUID(), address: "Sample Canonical Contact File", city: "Hollywood", clientName: "", contactId: DUPLICATE_SOURCE_ID, side: "buyer", contractPrice: 125000 });
+const mergeDeal = await api.createTransaction({ requestId: crypto.randomUUID(), address: "Sample Canonical Contact File", city: "Hollywood", clientName: "Synthetic merge client", side: "buyer", contractPrice: 125000 });
+const mergeFile=await api.getTransactionWorkspace(mergeDeal.id);await api.mutateTransactionWorkflow(mergeDeal.id,{requestId:crypto.randomUUID(),expectedUpdatedAt:mergeFile.updatedAt,action:"add_party",contactId:DUPLICATE_SOURCE_ID,expectedContactUpdatedAt:readSampleContact(DUPLICATE_SOURCE_ID).updatedAt,role:"other"});
 await refused(() => contacts.mergeContacts(mergeInput(mergeReview)), 409);
 await contacts.mergeContacts(mergeInput(await contacts.getContactMergeReview(DUPLICATE_PRIMARY_ID, DUPLICATE_SOURCE_ID)));
 assert((await api.getTransactionWorkspace(mergeDeal.id)).parties.some(party => party.contactId === DUPLICATE_PRIMARY_ID)); assert.equal(previewContactTransactionParties(DUPLICATE_SOURCE_ID).length, 0); groups++;

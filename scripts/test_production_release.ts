@@ -38,11 +38,11 @@ const unsafe: { env?: Record<string, string | undefined>; options?: Partial<Prod
 ];
 for (const value of unsafe) { let refused = false; try { await runProductionRelease({ ...options, ...value.options }, value.env ?? env, noConnect); } catch (error) { refused = error instanceof ProductionReleaseError; check("refusalneverincludessecretURLorrawdriverdetails", !/synthetic-private-password|postgresql:|unapproved\.example/.test(String(error))); } check("unsafeconfigurationopensZEROconnections", refused && opens === 0); }
 
-async function baseline(legacy = false) {
+async function baseline(legacy = false, installed = 14) {
   const pg = new PGlite();
-  for (const migration of readMigrationFiles({ migrationsFolder: folder }).slice(0, 14)) for (const sql of migration.sql) await pg.exec(sql);
+  for (const migration of readMigrationFiles({ migrationsFolder: folder }).slice(0, installed)) for (const sql of migration.sql) await pg.exec(sql);
   await pg.exec("CREATE SCHEMA drizzle; CREATE TABLE drizzle.__drizzle_migrations(id serial PRIMARY KEY,hash text NOT NULL,created_at bigint NOT NULL)");
-  for (let index = 0; index < 14; index++) await pg.query("insert into drizzle.__drizzle_migrations(hash,created_at)values($1,$2)", [legacy && index === 9 ? KNOWN_0009_CRLF.recordedHash : manifest.migrations[index].hash, manifest.migrations[index].timestamp]);
+  for (let index = 0; index < installed; index++) await pg.query("insert into drizzle.__drizzle_migrations(hash,created_at)values($1,$2)", [legacy && index === 9 ? KNOWN_0009_CRLF.recordedHash : manifest.migrations[index].hash, manifest.migrations[index].timestamp]);
   const owner = randomUUID(), contact = randomUUID();
   await pg.query("insert into dashboard_users(id,clerk_user_id,primary_email,role,status)values($1,$2,'release@example.test','agent','active')", [owner, `release-${owner}`]);
   await pg.query("insert into contacts(id,assigned_agent_user_id,first_name,notes)values($1,$2,'Existing private client','Existing private notes')", [contact, owner]);
@@ -78,15 +78,23 @@ const routedEnv = { ...env, DATABASE_URL: env.DATABASE_URL.replace(".us-east-1",
 const normal = await baseline();
 try {
   const before = (await normal.pg.query<Record<string, unknown>>("select * from contacts where id=$1", [normal.contact])).rows, h = harness(normal.pg), released = await runProductionRelease(options, env, h.connector);
-  check("actualDrizzleatomicallyupgrades14to31andstrictlyverifies", released.ok && released.migrations.before === 14 && released.migrations.after === 31 && released.migrations.applied === 17 && released.verification.ok && released.verification.exactRepositoryHashes);
+  check("actualDrizzleatomicallyupgradeslegacytothelatestjournalandstrictlyverifies", released.ok && released.migrations.before === 14 && released.migrations.after === manifest.migrations.length && released.migrations.applied === manifest.migrations.length - 14 && released.verification.ok && released.verification.exactRepositoryHashes);
   check("sameadvisorylockspanprefixmigrationandpostverification", h.state().queries[0].startsWith("SELECT pg_advisory_lock") && h.state().queries.at(-1)?.startsWith("SELECT pg_advisory_unlock") && h.state().queries.filter(q => q === "ROLLBACK").length === 2 && h.state().ended === 1);
   const after = (await normal.pg.query<Record<string, unknown>>("select * from contacts where id=$1", [normal.contact])).rows;
   check("existingprivateclientfieldsunchanged", JSON.stringify(after.map(row => Object.fromEntries(Object.keys(before[0]).map(key => [key, row[key]])))) === JSON.stringify(before));
   check("safeoutputhasnoURLscredentialsuserrecordsorledgerhashes", !/synthetic-private-password|postgresql:|Existing private/.test(JSON.stringify(released)) && !manifest.migrations.some(migration => JSON.stringify(released).includes(migration.hash)));
-  const retry = await runProductionRelease(options, env, h.connector); check("exactreleaseagainisnooppreserving31ledgerrows", retry.migrations.before === 31 && retry.migrations.after === 31 && retry.migrations.applied === 0);
+  const retry = await runProductionRelease(options, env, h.connector); check("exactreleaseagainisnooppreservingthecurrentledger", retry.migrations.before === manifest.migrations.length && retry.migrations.after === manifest.migrations.length && retry.migrations.applied === 0);
   await normal.pg.query("update drizzle.__drizzle_migrations set hash=repeat('0',64)where id=9"); const beforeMigrate = h.state().migrations; await refuses(() => runProductionRelease({ ...options, allowKnown0009Crlf: true }, env, h.connector), "ledger_prefix_mismatch"); check("knownexceptiondoesnotpermitANYotherhistoricalhash", h.state().migrations === beforeMigrate);
   await normal.pg.exec("DROP TABLE drizzle.__drizzle_migrations"); await refuses(() => runProductionRelease(options, env, h.connector), "ledger_missing"); check("missingproductionledgerneverinitializesfreshdata", h.state().migrations === beforeMigrate);
 } finally { await normal.pg.close(); }
+// The currently released CRM already has migrations0000–0030. Exercise the actual new boundary too.
+const currentRelease = await baseline(true, 31);
+try {
+  const report = await runProductionRelease({ ...options, allowKnown0009Crlf: true }, env, harness(currentRelease.pg).connector);
+  check("currentlive31entrybaselineupgradesonlythenewCRMbatch", report.migrations.before === 31 && report.migrations.after === manifest.migrations.length && report.migrations.applied === manifest.migrations.length - 31 && report.verification.ok);
+  const row = (await currentRelease.pg.query<{notes:string;deleted_at:string|null}>("select notes,deleted_at from contacts where id=$1",[currentRelease.contact])).rows[0];
+  check("newlifecycledoesnotdeleteorrewritetheexistingcontact",row.notes === "Existing private notes" && row.deleted_at === null);
+} finally { await currentRelease.pg.close(); }
 const legacy = await baseline(true);
 try {
   const h = harness(legacy.pg); await refuses(() => runProductionRelease(options, env, h.connector), "known_0009_crlf_requires_explicit_option"); check("knownexceptionneversilentlyaccepted", h.state().migrations === 0);
@@ -96,7 +104,7 @@ try {
 } finally { await legacy.pg.close(); }
 const failure = await baseline(), temporary = mkdtempSync(join(tmpdir(), "fortmark-release-migrations-"));
 try {
-  cpSync(folder, temporary, { recursive: true }); const journalPath = join(temporary, "meta/_journal.json"), journal = JSON.parse(readFileSync(journalPath, "utf8")); journal.entries.push({ idx: 31, version: "7", when: journal.entries.at(-1).when + 1000, tag: "0031_synthetic_release_failure", breakpoints: true }); writeFileSync(journalPath, JSON.stringify(journal)); writeFileSync(join(temporary, "0031_synthetic_release_failure.sql"), "CREATE TABLE release_atomic_probe(id integer);\n--> statement-breakpoint\nSELECT 1/0;");
+  cpSync(folder, temporary, { recursive: true }); const journalPath = join(temporary, "meta/_journal.json"), journal = JSON.parse(readFileSync(journalPath, "utf8")); const failureTag = `${String(journal.entries.length).padStart(4,"0")}_synthetic_release_failure`; journal.entries.push({ idx: journal.entries.length, version: "7", when: journal.entries.at(-1).when + 1000, tag: failureTag, breakpoints: true }); writeFileSync(journalPath, JSON.stringify(journal)); writeFileSync(join(temporary, `${failureTag}.sql`), "CREATE TABLE release_atomic_probe(id integer);\n--> statement-breakpoint\nSELECT 1/0;");
   const h = harness(failure.pg); await refuses(() => runProductionRelease(options, env, h.connector, { migrationsFolder: temporary }), "migration_failed");
   check("lastmigrationfailureleaves14ledgerrowsandNOnewobjects", (await failure.pg.query<{ n: number }>("select count(*)::int n from drizzle.__drizzle_migrations")).rows[0].n === 14 && (await failure.pg.query<{ t: string | null }>("select to_regclass('public.calendar_labels')::text t")).rows[0].t === null && (await failure.pg.query<{ t: string | null }>("select to_regclass('public.release_atomic_probe')::text t")).rows[0].t === null);
   check("failedreleasestillunlocksendconnection", h.state().queries.at(-1)?.startsWith("SELECT pg_advisory_unlock") && h.state().ended === 1);
@@ -104,7 +112,7 @@ try {
 const uncertain = await baseline();
 try {
   const lost = harness(uncertain.pg, async migrationsFolder => { await migrateAtomically(uncertain.pg, migrationsFolder); throw Error("Synthetic response lost after committed migration"); }); await refuses(() => runProductionRelease(options, env, lost.connector), "migration_failed");
-  const replay = await runProductionRelease(options, env, harness(uncertain.pg).connector); check("committedbutunknownoutcomesrecoverasverifiednoop", replay.migrations.before === 31 && replay.migrations.applied === 0 && replay.verification.ok);
+  const replay = await runProductionRelease(options, env, harness(uncertain.pg).connector); check("committedbutunknownoutcomesrecoverasverifiednoop", replay.migrations.before === manifest.migrations.length && replay.migrations.applied === 0 && replay.verification.ok);
   await uncertain.pg.exec("ALTER TABLE contacts DROP COLUMN about"); const refused = await refuses(() => runProductionRelease(options, env, harness(uncertain.pg).connector), "verification_failed"); check("ledgeralonecannotcertifymissingruntimecolumn", refused.verification?.missingColumns.includes("public.contacts.about") && refused.verification.ok === false);
 } finally { await uncertain.pg.close(); }
 console.log(`${passed}/${passed} production release checks passed (isolated PostgreSQL + actual Drizzle atomic migrations; no live access)`);

@@ -11,6 +11,7 @@ import { transactionPropertyLookupSchema, transactionPropertyMutationSchema, typ
 import { transactionPropertyImportValues } from "./property-import.ts";
 import { visibleTo, transactionRevisionGuard, transactionWriteLocks, transactionWriteReplay, nextTransactionRevision, isTransactionGuardConflict, type TransactionContext, type ServiceResult } from "./service.ts";
 import type { TransactionWorkspace } from "./workspace-domain.ts";
+import { isListingSide } from "./listing-term.ts";
 type Batch = Parameters<TransactionContext["db"]["batch"]>[0];
 type Write = Batch[number];
 const actorGuard = (ctx: TransactionContext) => sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${ctx.actor.userId}::uuid and ${dashboardUsers.role}=${ctx.actor.role} and ${dashboardUsers.status}='active')`;
@@ -54,16 +55,17 @@ export async function mutateTransactionProperty(ctx: TransactionContext, id: str
   const loaded = await load(ctx, id, true); if (!loaded.ok) return loaded; const row = loaded.value; if (!revisionMatches(row.updatedAt, d.expectedUpdatedAt)) return { ok: false, reason: "conflict" };
   let property: Partial<typeof transactions.$inferInsert> = { listingDataset: null, listingLinkedAt: null, listingKey: null, mlsNumber: null }, fields = ["listingDataset", "listingKey", "mlsNumber", "listingLinkedAt"];
   if (d.action === "link") {
+    if(isListingSide(row.side)!==Boolean(d.listingDates))return {ok:false,reason:"invalid_property"};
     let result: PropertyResolution; try { result = await provider.lookup(d.mlsNumber); } catch { result = { ok: false, reason: "unavailable" }; }
     const current = await load(ctx, id, true); if (!current.ok) return current; if (!revisionMatches(current.value.updatedAt, d.expectedUpdatedAt)) return { ok: false, reason: "conflict" };
     if (!result.ok) return resolutionFailure(result); if (!valid(result)) return { ok: false, reason: "property_unavailable" };
     const ref = { dataset: result.value.dataset, listingId: result.value.listing.id, mlsNumber: normalizePropertyMlsNumber(result.value.listing.mlsNumber)! };
     if (ref.dataset !== d.expectedDataset || ref.listingId !== d.expectedListingId || ref.mlsNumber !== d.mlsNumber || transactionPropertyImportFingerprint(ref, result.value.listing) !== d.expectedImportFingerprint) return { ok: false, reason: "property_changed" };
     const imported = transactionPropertyImportValues(ref, result.value.listing); if (d.importAddress && !imported.address || d.importListPrice && imported.listPriceCents === null) return { ok: false, reason: "property_import_unavailable" };
-    property = { listingDataset: ref.dataset, listingKey: ref.listingId, mlsNumber: ref.mlsNumber, listingLinkedAt: now, ...(d.importAddress ? imported.address! : {}), ...(d.importListPrice ? { listPriceCents: imported.listPriceCents } : {}) };
-    fields = [...fields, ...(d.importAddress ? ["addressLine1", "addressLine2", "city", "state", "postalCode", "county"] : []), ...(d.importListPrice ? ["listPriceCents"] : [])];
+    property = { listingDataset: ref.dataset, listingKey: ref.listingId, mlsNumber: ref.mlsNumber, listingLinkedAt: now, ...(d.importAddress ? imported.address! : {}), ...(d.importListPrice ? { listPriceCents: imported.listPriceCents } : {}),...(d.listingDates?{listingPlan:{...row.listingPlan,...d.listingDates,status:row.listingPlan.status==="draft"?"active":row.listingPlan.status}}:{}) };
+    fields = [...fields, ...(d.importAddress ? ["addressLine1", "addressLine2", "city", "state", "postalCode", "county"] : []), ...(d.importListPrice ? ["listPriceCents"] : []),...(d.listingDates?["listingPlan"]:[])];
   }
-  const next = nextTransactionRevision(row, now), guard = sql`${actorGuard(ctx)} and exists(select 1 from ${transactions} where ${transactionRevisionGuard(ctx, row, d.expectedUpdatedAt)})`, safe = { action, fields };
+  const next = nextTransactionRevision(row, now), guard = sql`${actorGuard(ctx)} and exists(select 1 from ${transactions} where ${transactionRevisionGuard(ctx, row, d.expectedUpdatedAt)} and ${transactions.side}=${row.side})`, safe = { action, fields };
   const writes: Write[] = [...transactionWriteLocks(ctx, id), ctx.db.insert(transactionWriteRequests).values({ actorUserId: ctx.actor.userId, requestId: d.requestId, transactionId: id, action, payloadHash: sql`case when ${guard} then ${hash}::text else null end`, result: { transactionId: id, updatedAt: next.toISOString() }, createdAt: now }), ctx.db.update(transactions).set({ ...property, updatedAt: next, updatedByUserId: ctx.actor.userId }).where(transactionRevisionGuard(ctx, row, d.expectedUpdatedAt)), ctx.db.insert(transactionEvents).values({ transactionId: id, actorUserId: ctx.actor.userId, eventType: "transaction_updated", safeMetadata: safe, createdAt: now }), ctx.db.insert(auditEvents).values({ actorUserId: ctx.actor.userId, eventType: "transaction_updated", safeMetadata: { transactionId: id, ...safe }, createdAt: now })];
   try { await ctx.db.batch(writes as unknown as Batch); } catch (error) { const recovered = await replay(ctx, id, d.requestId, hash, action, now); if (recovered) return recovered; const current = await load(ctx, id, true); if (!current.ok) return current; return { ok: false, reason: isTransactionGuardConflict(error) ? "conflict" : "unavailable" }; }
   return getTransactionWorkspace(ctx, id, {}, now);

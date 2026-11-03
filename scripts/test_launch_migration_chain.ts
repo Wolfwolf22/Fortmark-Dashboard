@@ -9,7 +9,7 @@ let passed = 0;
 function check(name: string, value: unknown): asserts value { assert.ok(value, name); passed++; }
 const folder = new URL("../lib/db/migrations/", import.meta.url), journal = JSON.parse(readFileSync(new URL("meta/_journal.json", folder), "utf8")) as { entries: { idx: number; when: number; tag: string }[] };
 const migration = (tag: string) => readFileSync(new URL(`${tag}.sql`, folder), "utf8");
-check("all31journalentriesaretransactioncompatible", assertTransactionSafe(new URL("../lib/db/migrations/", import.meta.url).pathname) === 31);
+check("allcurrentjournalentriesaretransactioncompatible", assertTransactionSafe(new URL("../lib/db/migrations/", import.meta.url).pathname) === journal.entries.length);
 check("journalindicesandtimestampsarestrictlyordered", journal.entries.every((e, i, rows) => e.idx === i && (i === 0 || e.when > rows[i - 1].when)) && new Set(journal.entries.map(e => e.tag)).size === journal.entries.length);
 const pg = new PGlite();
 async function apply(from: number, to: number) { for (const entry of journal.entries.slice(from, to + 1)) await pg.exec(migration(entry.tag)); }
@@ -32,7 +32,7 @@ try {
   const before = new Map(await Promise.all(preservedTables.map(async table => [table, await rows(table)] as const))), beforeWorkspace = (await pg.query("select * from personal_workspaces")).rows;
   let rolledBack = false;
   try { await pg.transaction(async tx => { for (const entry of journal.entries.slice(15)) await tx.exec(migration(entry.tag)); throw Error("Synthetic final-step refusal"); }); } catch { rolledBack = true; }
-  check("latefailureundoesENTIRE0015through0030DDLbatch", rolledBack && (await pg.query<{ t: string | null }>("select to_regclass('public.calendar_labels')::text as t")).rows[0].t === null && (await pg.query<{ t: string | null }>("select to_regclass('public.contact_create_requests')::text as t")).rows[0].t === null);
+  check("latefailureundoesENTIREpendingDDLbatch", rolledBack && (await pg.query<{ t: string | null }>("select to_regclass('public.calendar_labels')::text as t")).rows[0].t === null && (await pg.query<{ t: string | null }>("select to_regclass('public.contact_create_requests')::text as t")).rows[0].t === null);
   for (const table of preservedTables) check("failedbatchpreservesoriginalrows", JSON.stringify(await rows(table)) === JSON.stringify(before.get(table)));
   await pg.transaction(async tx => { for (const entry of journal.entries.slice(15)) await tx.exec(migration(entry.tag)); });
   for (const table of preservedTables) { const prior = before.get(table)!; const after = await rows(table); check("successfulpendingchainpreserveseveryexistingcolumn", JSON.stringify(after.map(row => Object.fromEntries(Object.keys(prior[0] ?? {}).map(k => [k, row[k]])))) === JSON.stringify(prior)); }
@@ -61,4 +61,4 @@ try {
   check("existingprivateproofreferencesandbytesmetadataunchanged", JSON.stringify((await vendorDb.query("select * from transaction_checklist_attachments order by id")).rows) === JSON.stringify(filesBefore));
   check("upgradesinventnovendorreportsoutreachorprivatehistory", (await vendorDb.query("select * from transaction_vendor_attachments")).rows.length === 0 && (await vendorDb.query("select * from transaction_events")).rows.length === 0 && (await vendorDb.query("select * from contact_activities")).rows.length === 0);
 } finally { await vendorDb.close(); }
-console.log(`${passed}/${passed} launch migration chain checks passed (atomic0015–0030 rehearsal + vendor backfill; isolated PostgreSQL only)`);
+console.log(`${passed}/${passed} launch migration chain checks passed (atomic pending-chain rehearsal + vendor backfill; isolated PostgreSQL only)`);

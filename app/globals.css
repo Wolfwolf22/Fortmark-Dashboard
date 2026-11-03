@@ -138,6 +138,34 @@
 }
 
 @layer components {
+  .fm-wordmark {
+    position: relative;
+    padding-bottom: 6px;
+    font-family: var(--font-archivo-black), Arial, sans-serif;
+    font-size: 1.1rem;
+    font-weight: 400;
+    letter-spacing: -0.055em;
+    line-height: 1;
+    text-rendering: optimizeLegibility;
+  }
+  .fm-wordmark::after {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    left: 0;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.5;
+    content: "";
+  }
+  .fm-interactive-card {
+    transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+  }
+  .fm-interactive-card:hover,
+  .fm-interactive-card:focus-within {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-card-hover);
+  }
   /* A small polished icon well, not a blurred content surface. Keep layout
      and radius on the consumer; this class owns its material and icon ink. */
   .fm-icon-glass {
@@ -223,34 +251,34 @@
 }
 
 .fm-page-enter {
-  animation: fm-page-enter 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: fm-page-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .fm-page-exit {
-  animation: fm-page-exit 190ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation: fm-page-exit 90ms cubic-bezier(0.4, 0, 1, 1) forwards;
   pointer-events: none;
 }
 
 .fm-rise {
-  animation: fm-rise 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: fm-rise 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .fm-rise-delay-1 {
-  animation-delay: 90ms;
+  animation-delay: 35ms;
 }
 
 .fm-rise-delay-2 {
-  animation-delay: 180ms;
+  animation-delay: 70ms;
 }
 
 /* Phones: shorter, lighter motion. Vertical only — nothing that could be
    mistaken for a browser back/forward swipe. */
 @media (max-width: 767px) {
   .fm-page-enter {
-    animation-duration: 300ms;
+    animation-duration: 180ms;
   }
   .fm-rise {
-    animation-duration: 440ms;
+    animation-duration: 240ms;
   }
 }
 

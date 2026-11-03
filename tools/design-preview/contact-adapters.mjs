@@ -15,7 +15,7 @@ import { z } from "zod";
 import { LeadsError } from "./contact-errors.mjs";
 export { LeadsError } from "./contact-errors.mjs";
 export { previewContactImport, commitContactImport, getContactDuplicates, getContactMergeReview, mergeContacts } from "./import-merge-adapters.mjs";
-export { getContactProperties, lookupContactProperty, addContactProperty, removeContactProperty, getPropertyLists, createPropertyList, getPropertyList, renamePropertyList, getPropertyListProperties, getPropertyListProperty, updatePropertyResearch, transferProperty, lookupPropertyListProperty, addPropertyListProperty, removePropertyListProperty } from "./property-adapters.mjs";
+export { getContactProperties, lookupContactProperty, addContactProperty, removeContactProperty, getPropertyLists, createPropertyList, getPropertyList, renamePropertyList, getPropertyListProperties, getPropertyListProperty, updatePropertyResearch, transferProperty, lookupPropertyListProperty, addPropertyListProperty, removePropertyListProperty, associatePropertyList, getPropertyListSharing, getPropertyListShareCandidates, updatePropertyListSharing, getPropertyListSummary } from "./property-adapters.mjs";
 import { SAMPLE_ACTOR, getPreviewScenario, interactiveSamples, canWriteSample, readSampleContacts, readSampleContact, readSampleRawContacts, readSampleNeeds, readSampleNotes, readSampleTransactionIds, readSampleTimeline, replaceSampleContact, replaceSampleNeeds, appendSampleTimeline, nextSampleRevision } from "./sample-session.mjs";
 
 const copy = value => value === undefined ? undefined : structuredClone(value);
@@ -254,4 +254,21 @@ export async function getLinkedTransactions(id) {
   if (scenario() === "empty") return [];
   const ids = readSampleTransactionIds(id);
   return copy(previewLinkedTransactions(ids));
+}
+
+// Until the closed fixture models file storage it must never invent PDF proof.
+export async function getContactEngagement(id) {
+  const contact = await getLead(id);
+  if (!contact) throw new LeadsError("not_found", 404);
+  return { file: null, contactUpdatedAt: contact.updatedAt, canWrite: false, uploadsEnabled: false };
+}
+export const uploadContactEngagement = readOnly;
+export const downloadContactEngagement = readOnly;
+export const removeContactEngagement = readOnly;
+export const deleteContact = readOnly;
+export const restoreContact = readOnly;
+export async function getDeletedContacts() { return { items: [], total: 0, page: 1, pageSize: 25 }; }
+export async function getTouchHistoryPage(id, cursor) {
+  const touches = (await getTimeline(id)).filter(item => ["call", "email", "text", "meeting", "showing", "contacted"].includes(item.type));
+  return copy(historyPage(touches, HISTORY_PAGE_SIZE, item => ({ at: item.at, id: item.id }), historyCursor(cursor)));
 }

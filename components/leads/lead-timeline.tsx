@@ -32,7 +32,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { IconWell } from "@/components/ui/icon-well";
-import { getTimelinePage, type TimelineItem } from "@/lib/data/adapters/leads";
+import { getTimelinePage,getTouchHistoryPage, type TimelineItem } from "@/lib/data/adapters/leads";
 import { useContactHistory } from "./use-contact-history";
 import { formatDate, formatRelative } from "@/lib/utils";
 
@@ -57,8 +57,10 @@ const ICONS: Record<TimelineItem["type"], LucideIcon> = {
 /** The drawer stays compact: the latest few, and the rest on request. */
 const COLLAPSED = 5;
 
-export function LeadTimeline({ leadId, refreshKey = 0 }: { leadId: string; refreshKey?: number }) {
-  const { data: page, loading, error, refetch, loadOlder, loadingOlder, olderError, olderLoaded } = useContactHistory(leadId, getTimelinePage, refreshKey);
+export function LeadTimeline({ leadId, refreshKey = 0,touchesOnly=false }: { leadId: string; refreshKey?: number;touchesOnly?:boolean }) {
+  const headingId=touchesOnly?"lead-touch-history-heading":"lead-activity-heading";
+  const listId=touchesOnly?"lead-touch-history-list":"lead-activity-list";
+  const { data: page, loading, error, refetch, loadOlder, loadingOlder, olderError, olderLoaded } = useContactHistory(leadId, touchesOnly?getTouchHistoryPage:getTimelinePage, refreshKey);
   const data = page?.items;
   const [all, setAll] = useState(false);
   // Every contact opens collapsed.
@@ -69,11 +71,11 @@ export function LeadTimeline({ leadId, refreshKey = 0 }: { leadId: string; refre
   }
 
   return (
-    <section aria-labelledby="lead-activity-heading" data-testid="lead-timeline">
+    <section aria-labelledby={headingId} data-testid="lead-timeline">
       <div className="flex items-center gap-2.5">
       <IconWell icon={History} />
-      <h3 id="lead-activity-heading" className="text-[15px] font-semibold">
-        Activity{data && data.length > 0 ? ` (${data.length}${page?.hasMore ? "+" : ""})` : ""}
+      <h3 id={headingId} className="text-[15px] font-semibold">
+        {touchesOnly?"Touch history":"Activity"}{data && data.length > 0 ? ` (${data.length}${page?.hasMore ? "+" : ""})` : ""}
       </h3>
       </div>
       {!data && loading ? (
@@ -91,7 +93,7 @@ export function LeadTimeline({ leadId, refreshKey = 0 }: { leadId: string; refre
         <p className="mt-3 rounded-panel border border-dashed border-input px-4 py-5 text-[13px] text-muted-foreground">No activity yet.</p>
       ) : (
         <>
-          <ol id="lead-activity-list" className="mt-3 rounded-panel border border-border p-4">
+          <ol id={listId} className="mt-3 rounded-panel border border-border p-4">
             {(all ? data : data.slice(0, COLLAPSED)).map((item) => {
               const Icon = ICONS[item.type] ?? StickyNote;
               return (
@@ -116,7 +118,7 @@ export function LeadTimeline({ leadId, refreshKey = 0 }: { leadId: string; refre
             <button
               type="button"
               aria-expanded={all}
-              aria-controls="lead-activity-list"
+              aria-controls={listId}
               onClick={() => setAll((v) => !v)}
               className="mt-3 min-h-10 rounded-lg border border-input px-3 py-2 text-[13px] font-semibold transition-colors hover:bg-accent"
             >

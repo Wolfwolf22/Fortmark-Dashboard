@@ -99,7 +99,7 @@ try {
   const contactRaceInput = { ...raceInput, requestId: randomUUID(), targetListId: contactTarget.id };
   const contactRaceDb = beforeBatch(async () => { await db.update(contacts).set({ assignedAgentUserId: other.userId }).where(eq(contacts.id, contactId)); await db.insert(contactProperties).values({ listId: contactTarget.id, contactId, dataset: "synthetic", listingId: "R123", mlsNumber: "R123" }); });
   const contactRace = await transferProperty({ actor, db: contactRaceDb }, raceSource.id, raceProperty.id, contactRaceInput, now);
-  check("catch rechecks linked contact access before reporting duplicate existence", !contactRace.ok && contactRace.reason === "not_found" && (await getPropertyListProperty(ctx, raceSource.id, raceProperty.id)).ok);
+  check("owner may review duplicate existence in own research after contact reassignment", !contactRace.ok && contactRace.reason === "target_has_property" && (await getPropertyListProperty(ctx, raceSource.id, raceProperty.id)).ok);
 
   const staleRemoval = await updatePropertyResearch(ctx, raceSource.id, raceProperty.id, { notes: "Newer note before remove", reviewStatus: "shortlisted", expectedUpdatedAt: raceProperty.updatedAt }, now); check("removal revision fixture saves", staleRemoval.ok);
   const refusedRemoval = await removePropertyListProperty(ctx, raceSource.id, raceProperty.id, now, raceProperty.updatedAt);

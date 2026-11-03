@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createLocalContactDb } from "./helpers/contact-test-db.ts";
-import { auditEvents, contacts, dashboardUsers, transactionDeadlines, transactionEvents, transactionParties, transactionWriteRequests, transactions } from "../lib/db/schema.ts";
+import { auditEvents, contactEngagementFiles, contacts, dashboardUsers, transactionDeadlines, transactionEvents, transactionParties, transactionWriteRequests, transactions } from "../lib/db/schema.ts";
 import { createTransaction, changeStage, getTransaction, planStageChange, commitStageChange, type TransactionContext } from "../lib/transactions/service.ts";
 import { getTransactionWorkspace, updateTransactionWorkspace, mutateTransactionDeadline, mutateTransactionChecklist } from "../lib/transactions/workspace-service.ts";
 import { createTransactionSchema } from "../lib/transactions/validation.ts";
+import { CLOSE_ACKNOWLEDGEMENT_VERSION,type CloseAcknowledgement } from "../lib/transactions/close-acknowledgement.ts";
 import { toTransaction } from "../lib/transactions/projection.ts";
 import type { TransactionWorkspace } from "../lib/transactions/workspace-domain.ts";
 import { getContactMergeReview, mergeContacts } from "../lib/contacts/merge-service.ts";
@@ -25,6 +26,7 @@ async function state() { return (await pg.query<{ value: string }>("select (sele
 try {
   await db.insert(dashboardUsers).values([owner, other, admin, coordinator].map((actor, i) => ({ id: actor.userId, role: actor.role, clerkUserId: `transaction_file_${i}`, primaryEmail: `file${i}@example.test`, status: "active" as const })));
   await db.insert(contacts).values([{ id: contactId, assignedAgentUserId: owner.userId, firstName: "Private client", email: "client@example.test", stage: "representation", updatedAt: now }, { id: primaryId, assignedAgentUserId: owner.userId, firstName: "Canonical client", stage: "representation", updatedAt: now }]);
+  await db.insert(contactEngagementFiles).values([contactId,primaryId].map(id=>({contactId:id,storagePath:`synthetic-engagement/${id}.pdf`,filename:"synthetic-engagement.pdf",contentType:"application/pdf",sizeBytes:8,sha256:"a".repeat(64),uploadedByUserId:owner.userId})));
   for (const day of ["2026-02-30", "2026-13-01", "2026-11-31"]) check("impossiblecalendarinputrefused", !createTransactionSchema.safeParse(createInput({ closingDate: day })).success);
   const body = createInput(), created = await createTransaction(ctx, body, now); check("createdparentpartiesdeadlinesandreceipt", created.ok);
   let file = await workspace(created.value.id);
@@ -68,8 +70,9 @@ try {
   const moved = await changeStage(ctx, file.transaction.id, "financing", now, { requestId: randomUUID(), expectedUpdatedAt: file.updatedAt }); check("stagechangeusesCASreceipt", moved.ok); file = await workspace(file.transaction.id);
   const stageOptions = { requestId: randomUUID(), expectedUpdatedAt: file.updatedAt }, stageChanged = await changeStage(ctx, file.transaction.id, "closing_prep", now, stageOptions); check("stagechangesstillfollowlifecycle", stageChanged.ok);
   const stageState = await state(), stageRetry = await changeStage(ctx, file.transaction.id, "closing_prep", now, stageOptions); check("stageexactretrysucceedswithouthistoryduplicate", stageRetry.ok && await state() === stageState);
-  const planned = await planStageChange(ctx, file.transaction.id, "cancelled", { now, expectedUpdatedAt: stageChanged.value.updatedAt }); check("legacyplanentrypreserved", planned.ok);
-  const closed = await changeStage(ctx, file.transaction.id, "closed", now, { requestId: randomUUID(), expectedUpdatedAt: stageChanged.value.updatedAt }); check("closeusesactualNYdayandnevercompletesunrelatedmilestones", closed.ok && (await db.select().from(transactions).where(eq(transactions.id, file.transaction.id)))[0].closedDate === "2026-11-02" && closed.value.milestones.some(m => m.key === "inspection" && m.state !== "done"));
+  const planned = await planStageChange(ctx, file.transaction.id, "cancelled", { now, expectedUpdatedAt: stageChanged.value.updatedAt, reason:"Client asked to cancel" }); check("legacyplanentrypreserved", planned.ok);
+  const closeAcknowledgement:CloseAcknowledgement={version:CLOSE_ACKNOWLEDGEMENT_VERSION,reviewedToEnd:true,acknowledged:true};
+  const closed = await changeStage(ctx, file.transaction.id, "closed", now, { requestId: randomUUID(), expectedUpdatedAt: stageChanged.value.updatedAt,closeAcknowledgement }); check("closeusesactualNYdayandnevercompletesunrelatedmilestones", closed.ok && (await db.select().from(transactions).where(eq(transactions.id, file.transaction.id)))[0].closedDate === "2026-11-02" && closed.value.milestones.some(m => m.key === "inspection" && m.state !== "done"));
   await assert.rejects(commitStageChange(db, planned.value.writes)); check("oldstageplancannotoverwriteclosedterminalfile", (await getTransaction(ctx, file.transaction.id, now))?.stage === "closed");
   const terminal = await workspace(file.transaction.id); check("terminalmetadataanddeadlinesreadonly", !terminal.canEdit && !(await updateTransactionWorkspace(ctx, file.transaction.id, updateInput(terminal), now)).ok && !(await mutateTransactionDeadline(ctx, file.transaction.id, { ...add, requestId: randomUUID(), expectedUpdatedAt: terminal.updatedAt }, now)).ok);
   const active = await create({ closingDate: undefined, deadlines: [] }), activeFile = await workspace(active.id); check("noinferredmilestonemeansneedssetup", activeFile.transaction.status === "neutral" && activeFile.transaction.statusLabel === "Needs setup" && activeFile.deadlines.length === 0);

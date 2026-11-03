@@ -64,8 +64,14 @@ export async function getInternalCalendar(ctx: Ctx, query: CalendarQuery, availa
   const sources: CalendarSourceState[] = [], items: CalendarItem[] = [], today = calendarDayKey(now);
   let decorations:CalendarDecorations|null=null,labelsStatus:"available"|"unavailable"|"not_configured"=availability.personal?"unavailable":"not_configured";
   if(availability.personal){try{const loaded=await readCalendarDecorations(ctx,results.flatMap(result=>result.rows?.map(row=>item(result.kind,row,ctx,today,now))??[]));if(loaded.ok){decorations=loaded.value;labelsStatus="available";}}catch{/* A label outage does not invent empty source calendars. */}}
-  for (const result of results) { if (result.status !== "available" || !result.rows) { sources.push({ kind: result.kind, status: result.status, total: null, truncated: false }); continue; }
-    try { const current = (await ctx.db.execute<Row>(queryFor(ctx, result.kind, q, window.from, window.to))).rows; if (JSON.stringify(current) !== JSON.stringify(result.rows)) { sources.push({ kind: result.kind, status: "unavailable", total: null, truncated: false }); continue; }
+  // Each source keeps its own late scope/revision check; independent reads need not wait in series.
+  const rechecked = await Promise.all(results.map(async result => {
+    if (result.status !== "available" || !result.rows) return null;
+    try { return (await ctx.db.execute<Row>(queryFor(ctx, result.kind, q, window.from, window.to))).rows; }
+    catch { return null; }
+  }));
+  for (const [index, result] of results.entries()) { if (result.status !== "available" || !result.rows) { sources.push({ kind: result.kind, status: result.status, total: null, truncated: false }); continue; }
+    try { const current = rechecked[index]; if (!current || JSON.stringify(current) !== JSON.stringify(result.rows)) { sources.push({ kind: result.kind, status: "unavailable", total: null, truncated: false }); continue; }
       const total = Number(result.rows[0]?.total ?? 0); sources.push({ kind: result.kind, status: "available", total, truncated: total > result.rows.length }); items.push(...result.rows.map(row => item(result.kind, row, ctx, today, now)));
     } catch { sources.push({ kind: result.kind, status: "unavailable", total: null, truncated: false }); }
   }

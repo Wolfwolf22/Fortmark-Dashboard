@@ -12,9 +12,9 @@ import { isBrokerageAdmin, type Actor } from "../auth/actor.ts";
 /** The visibility predicate, as SQL. Mirrors `canSee` for a query.
  *  Exported so aggregates (lib/contacts/metrics.ts) count exactly the rows
  *  this actor may list — a total is a disclosure like any other. */
-export function visibleTo(actor: Actor, options: { includeMerged?: boolean } = {}) {
+export function visibleTo(actor: Actor, options: { includeMerged?: boolean; includeDeleted?: boolean } = {}) {
   const tenant = eq(contacts.brokerageKey, actor.brokerageKey);
-  return and(tenant, isBrokerageAdmin(actor) ? undefined : eq(contacts.assignedAgentUserId, actor.userId), options.includeMerged ? undefined : isNull(contacts.mergedIntoContactId));
+  return and(tenant, isBrokerageAdmin(actor) ? undefined : eq(contacts.assignedAgentUserId, actor.userId), options.includeMerged ? undefined : isNull(contacts.mergedIntoContactId), options.includeDeleted ? undefined : isNull(contacts.deletedAt));
 }
 
 /** Old audit rows retain their original IDs; the authorized primary file reads its family. */

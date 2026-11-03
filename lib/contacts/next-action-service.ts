@@ -13,15 +13,15 @@ import { checkNextActionDueAt, nextActionDayMirror, nextActionInputSchema, nextA
 function eligibleAssignee(id: string) {
   return sql`exists (select 1 from ${dashboardUsers} where ${dashboardUsers.id} = ${id}::uuid
     and ${dashboardUsers.status} = 'active' and ${dashboardUsers.role} <> 'member'
-    and (${dashboardUsers.id} = ${contacts.assignedAgentUserId} or ${dashboardUsers.role} = 'admin') for share)`;
+    for share)`;
 }
 export async function listNextActionAssignees(ctx: Ctx, id: string): Promise<ServiceResult<{ id: string; name: string }[]>> {
   const access = await loadContact(ctx, id);
   if (!access.ok) return access;
   if (!access.writable) return { ok: false, reason: "forbidden" };
   const users = await ctx.db.select({ id: dashboardUsers.id }).from(dashboardUsers).where(and(
-    eq(dashboardUsers.status, "active"), sql`${dashboardUsers.role} <> 'member'`,
-    or(eq(dashboardUsers.id, access.row.assignedAgentUserId), eq(dashboardUsers.role, "admin"))));
+    eq(dashboardUsers.status, "active"), eq(dashboardUsers.role,ctx.actor.role),sql`${dashboardUsers.role} <> 'member'`,
+    eq(dashboardUsers.id,ctx.actor.userId)));
   const names = await agentNames(ctx.db, users.map(user => user.id));
   if (ctx.viewerName && users.some(user => user.id === ctx.actor.userId) && !names.has(ctx.actor.userId)) {
     const own = (await ctx.viewerName().catch(() => null))?.trim(); if (own) names.set(ctx.actor.userId, own);
@@ -38,7 +38,7 @@ async function failedCasReason(ctx: Ctx, id: string, expectedUpdatedAt: string, 
   if (!latest || !revisionMatches(latest.updatedAt, expectedUpdatedAt) || latest.nextActionId !== expectedId) return "conflict";
   const [eligible] = await ctx.db.select({ id: dashboardUsers.id }).from(dashboardUsers).where(and(
     eq(dashboardUsers.id, assigneeId), eq(dashboardUsers.status, "active"), sql`${dashboardUsers.role} <> 'member'`,
-    or(eq(dashboardUsers.id, latest.assignedAgentUserId), eq(dashboardUsers.role, "admin")))).limit(1);
+    eq(dashboardUsers.id,ctx.actor.userId),eq(dashboardUsers.role,ctx.actor.role))).limit(1);
   return eligible ? "conflict" : "invalid_assignee";
 }
 type HistoryEvent = { event: NextActionEvent; action: NextAction; outcome?: string; reason?: string };
@@ -54,7 +54,8 @@ export async function mutateNextAction(ctx: Ctx, id: string, input: unknown, now
   const d = parsed.data, row = access.row, current = actionFromRow(row);
   const expectedId = d.action === "set" ? d.expectedActionId : d.actionId;
   if (!revisionMatches(row.updatedAt, d.expectedUpdatedAt) || (current?.id ?? null) !== expectedId) return { ok: false, reason: "conflict" };
-  const next = d.action === "cancel" ? undefined : d.next;
+  // Identity is always derived from this authenticated dashboard request.
+  const next = d.action === "cancel" || !d.next ? undefined : {...d.next,assigneeId:ctx.actor.userId};
   if (next && !(OPEN_PIPELINE_STAGES as readonly string[]).includes(row.stage)) return { ok: false, reason: "invalid_transition" };
   if (next) {
     if (!checkNextActionDueAt(next.dueAt, now, d.action === "set" ? current?.dueAt : undefined).ok) return { ok: false, reason: "invalid_date" };
@@ -65,8 +66,8 @@ export async function mutateNextAction(ctx: Ctx, id: string, input: unknown, now
   let pending: NextAction | null = null;
   const history: HistoryEvent[] = [];
   if (d.action === "set") {
-    pending = { ...d.next, id: current?.id ?? randomUUID() };
-    const event = nextActionSetEvent(current, d.next);
+    pending = { ...next!, id: current?.id ?? randomUUID() };
+    const event = nextActionSetEvent(current, next!);
     if (event) history.push({ event, action: pending });
   } else {
     // actionId is a required UUID; the comparison above already refuses absent/replaced actions.
@@ -74,7 +75,7 @@ export async function mutateNextAction(ctx: Ctx, id: string, input: unknown, now
     if (d.action === "cancel") history.push({ event: "next_action_cancelled", action: current, reason: d.reason });
     else {
       history.push({ event: "next_action_completed", action: current, outcome: d.outcome });
-      if (d.next) { pending = { ...d.next, id: randomUUID() }; history.push({ event: "next_action_created", action: pending }); }
+      if (next) { pending = { ...next, id: randomUUID() }; history.push({ event: "next_action_created", action: pending }); }
     }
   }
   const where = and(eq(contacts.id, id), visibleTo(ctx.actor), contactRevision(d.expectedUpdatedAt),

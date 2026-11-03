@@ -63,11 +63,11 @@ export const OPEN_PIPELINE_STAGES = [
 /**
  * The stages that say the brokerage is formally engaged. Moving a contact into
  * one of them asks the person to confirm that an active brokerage engagement is
- * in place. Until private document storage exists this is an acknowledgement and
- * nothing more: the software does not verify an agreement, judge whether one is
- * legally sufficient, or claim that one is attached.
+ * in place and requires a current private PDF attachment. The acknowledgement
+ * records the person's review; the software does not verify the agreement's
+ * contents, signatures, or legal sufficiency.
  */
-export const ENGAGEMENT_STAGES = ["representation", "active_client"] as const;
+export const ENGAGEMENT_STAGES = ["representation", "active_client", "under_contract"] as const;
 
 /** Whether moving from one stage to another should ask for the acknowledgement. */
 export function requiresEngagementNotice(from: ContactStage, to: ContactStage): boolean {

@@ -26,6 +26,7 @@ import { LeadsSnapshotStrip } from "@/components/leads/leads-snapshot";
 import { LeadsTable } from "@/components/leads/leads-table";
 import { ContactImport } from "@/components/leads/contact-import";
 import { ContactDuplicates } from "@/components/leads/contact-duplicates";
+import{DeletedContactsDialog}from"@/components/leads/contact-delete";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { commitContactImport, getContactDuplicates, getContactMergeReview, getLeadAgents, getLeadSnapshot, getLeadsPage, mergeContacts, previewContactImport, queryFields } from "@/lib/data/adapters/leads";
@@ -108,6 +109,7 @@ function LeadsPageInner() {
   const abilities = leadAbilities(useSessionUser().role);
   const [importOpen, setImportOpen] = useState(false);
   const [duplicatesOpen, setDuplicatesOpen] = useState(false);
+  const[deletedOpen,setDeletedOpen]=useState(false);
 
   const urlKey = searchParams.toString();
   const filters = useMemo(() => readQuery(new URLSearchParams(urlKey)), [urlKey]);
@@ -214,6 +216,7 @@ function LeadsPageInner() {
           <Button asChild variant="outline" className="min-h-11 flex-1 sm:flex-none"><Link href="/property-lists"><FolderOpen aria-hidden />Property lists</Link></Button>
           <Button type="button" variant="outline" className="min-h-11 flex-1 sm:flex-none" onClick={() => setImportOpen(true)}><FileUp aria-hidden />Import contacts</Button>
           <Button type="button" variant="outline" className="min-h-11 flex-1 sm:flex-none" onClick={() => setDuplicatesOpen(true)}><CopyCheck aria-hidden />Review duplicates</Button>
+          <Button type="button" variant="outline" className="min-h-11 flex-1 sm:flex-none" onClick={()=>setDeletedOpen(true)}>Recently deleted</Button>
           <Button type="button" className="min-h-11 w-full sm:w-auto" onClick={() => setQuickCreate("lead")}>
             <Plus aria-hidden />
             New contact
@@ -261,6 +264,7 @@ function LeadsPageInner() {
 
       <LeadDrawer leadId={drawerId} open={drawerOpen} onOpenChange={handleDrawerOpenChange} refreshKey={refreshKey} onContactRedirect={(id) => navigate({ ...latest.current }, "replace", id)} />
       {abilities.canWrite && <>
+        <DeletedContactsDialog open={deletedOpen} onOpenChange={setDeletedOpen} onRestored={()=>{list.refetch();snapshot.refetch();}}/>
         <ContactImport open={importOpen} onOpenChange={setImportOpen} onPreview={previewContactImport} onCommit={commitContactImport} onDone={() => { list.refetch(); snapshot.refetch(); }} />
         <ContactDuplicates open={duplicatesOpen} onOpenChange={setDuplicatesOpen} onList={getContactDuplicates} onReview={getContactMergeReview} onMerge={mergeContacts} onDone={() => { list.refetch(); snapshot.refetch(); }} onOpenContact={(id) => navigate({ ...latest.current }, "push", id)} />
       </>}

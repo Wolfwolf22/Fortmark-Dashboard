@@ -3112,8 +3112,7 @@ const ALLOWED_ENV = {
   // runs — so `/brand/…` resolved against the portal zone and 404ed.
   // The rail is gone; the top bar (always black) carries the white marks.
   check("the top bar resolves brand assets through assetPath",
-    railSrc.includes('assetPath("/brand/fortmark-logomark-white.png")') &&
-      railSrc.includes('assetPath("/brand/fortmark-wordmark-white.png")'));
+    railSrc.includes('assetPath("/brand/fortmark-logomark-white.png")'));
   check("no brand asset is referenced without the basePath helper",
     !/src="\/brand\//.test(railSrc));
   check("the favicon is basePath-prefixed too",
@@ -3126,43 +3125,12 @@ const ALLOWED_ENV = {
   check("assetPath leaves absolute URLs alone",
     assetPath("https://cdn.example.com/a.png") === "https://cdn.example.com/a.png");
 
-  // The wordmark is the real asset, not letterforms in a display font.
-  check("the top bar renders the official wordmark asset",
-    railSrc.includes("fortmark-wordmark-white.png"));
-  check("the top bar never renders the brand as plain text",
-    !/>FORTMARK</.test(railSrc));
-  // Sizing is derived from each asset's INK, not its canvas.
-  //
-  // The logomark (1568x700) has no padding, so canvas height == type height.
-  // The wordmark (1756x512) carries 94px of transparent padding on all sides,
-  // so its visible type is only 1568x324 — 63% of the canvas. Sizing both by
-  // canvas rendered ~10px of type beside a 20px mark, which read as a caption.
-  // The wordmark box is therefore intentionally TALLER than the mark.
-  check("the logomark keeps its true 2.24:1 ratio",
-    railSrc.includes("width={45}") && railSrc.includes("height={20}"));
-  check("the wordmark keeps its true 3.43:1 ratio",
-    railSrc.includes("width={110}") && railSrc.includes("height={32}"));
-  {
-    // The arithmetic that makes them match, asserted rather than trusted.
-    const markInk = 20;                      // 20px canvas, no padding
-    const wordInk = 32 * (324 / 512);        // 32px canvas, 324/512 is ink
-    check("wordmark type height matches the mark height within 1px",
-      Math.abs(wordInk - markInk) <= 1);
-    check("the logomark width follows its ratio",
-      Math.abs(45 - 20 * (1568 / 700)) <= 1);
-    check("the wordmark width follows its ratio",
-      Math.abs(110 - 32 * (1756 / 512)) <= 1);
-    // The phone bar shows the mark alone; from sm the wordmark alone.
-    check("the wordmark fits the bar's brand slot", 110 <= 200);
-  }
-  const renderedBrandHeight = (asset: string) => {
-    const image = railSrc.slice(railSrc.indexOf(`assetPath("/brand/${asset}")`));
-    const height = image.slice(0, 300).match(/className="[^"]*\bh-(\d+)\b/);
-    return height ? Number(height[1]) : 0;
-  };
-  check("the wordmark box is taller than the mark to compensate for padding",
-    renderedBrandHeight("fortmark-wordmark-white.png") > renderedBrandHeight("fortmark-logomark-white.png") &&
-      renderedBrandHeight("fortmark-logomark-white.png") > 0);
+  // Crisp self-hosted brand type on desktop; the official compact mark on phones.
+  check("the top bar renders crisp FortMark brand type", railSrc.includes('className="fm-wordmark hidden sm:inline-flex">FORTMARK</span>'));
+  check("brand type uses the existing self-hosted Archivo Black font", readFileSync("app/globals.css","utf8").includes("font-family: var(--font-archivo-black), Arial, sans-serif"));
+  check("the official phone logomark keeps its true 2.24:1 ratio", railSrc.includes("fortmark-logomark-white.png") && railSrc.includes("width={45}") && railSrc.includes("height={20}"));
+  check("desktop and phone branding are mutually exclusive", railSrc.includes("h-5 w-auto sm:hidden") && railSrc.includes("hidden sm:inline-flex"));
+  check("the wordmark retains its understated underline", readFileSync("app/globals.css","utf8").includes(".fm-wordmark::after"));
   check("brand images are not stretched by a square box",
     !/width=\{28\}[\s\S]{0,40}height=\{28\}/.test(railSrc));
   // The bar is black in both themes, so it carries only the white marks —
@@ -3171,7 +3139,7 @@ const ALLOWED_ENV = {
     railSrc.includes('className="dark sticky top-0') && !railSrc.includes("-black.png"));
   check("the brand link keeps a single accessible name",
     railSrc.includes('aria-label="FortMark home"') &&
-      (railSrc.match(/alt=""/g) ?? []).length >= 2);
+      railSrc.includes('alt=""') && railSrc.includes('<span aria-hidden="true" className="fm-wordmark'));
   check("the brand link has a visible focus state",
     railSrc.includes("focus-visible:ring-2"));
 

@@ -1,14 +1,15 @@
 # Contacts V3
 
-Status: **Built and certified on Preview. NOT in Production.**
-Branch: `claude/dashboard-status-yir55p` · Production baseline: `74ff9d4` (Leads V2), untouched.
-Schema record: [`CONTACTS_V3_SCHEMA_PROPOSAL.md`](./CONTACTS_V3_SCHEMA_PROPOSAL.md) (APPROVED / APPLIED TO PREVIEW).
+**Current implementation — 2026-11-03:** Contacts includes structured needs,
+notes, self-assigned Next Actions, reviewed import/merge, named property lists,
+showing links, recoverable deletion and one current private engagement PDF.
+The PDF/lifecycle changes in migration **0031** are implemented and tested locally;
+this change set has not been deployed or applied to a live database.
 
-**Current local release — 2026-11-02:** the reliability, client-context, Next Action,
-CSV import, reviewed merges, named MLS property lists, private property research and the showing planner below are implemented locally.
-The historical Preview certification above does not certify these additions on a
-deployment. Migrations **0015–0022 remain unapplied to live databases**; Production
-was not changed by this work.
+Earlier Preview certification and migration statements below are historical
+records of their dated releases, not certification of the current source or its
+deployment. The original reviewed architecture remains in
+[`CONTACTS_V3_SCHEMA_PROPOSAL.md`](./CONTACTS_V3_SCHEMA_PROPOSAL.md).
 
 ## What changed
 
@@ -55,49 +56,68 @@ Arrays for areas / property types / must-haves, integer cents for money, baths i
 `getContactNeeds` (`lib/contacts/needs-service.ts`) is the single boundary the AI / MLS layer reads —
 no Bridge field names cross it. Audit events carry field names only, never values.
 
-### Drawer
-Header → owner line (admin only) → quick actions → needs → notes → activity (latest 5 + a
-disclosure for the rest) → representation → transactions.
+### Drawer, touches and recoverable deletion
+The drawer groups identity, quick actions, client context, needs, notes, activity,
+engagement and linked transactions. **History** sits beside **Log touch** and
+loads only this contact's calls, emails, texts, meetings, showings and explicit
+contacted marks. Internal notes, tasks and reminder changes stay in Activity;
+they do not masquerade as contact touches. Older history loads in bounded,
+stable pages.
 
-### Stage change notice
-Moving INTO `active_client` or `representation` shows a dialog; Cancel changes nothing, Continue
-moves. The audit records the acknowledgement only. A contact already in Representation is not asked.
-UI order puts `active_client` before `representation`; the database enum order is unchanged.
+**Delete contact** requires confirmation and a reviewed revision. It sets a
+recoverable deletion marker; the contact ID, stage, notes, needs, activities,
+files, property lists and linked transactions remain stored. Deleted contacts
+leave normal contact lists, counts, search, duplicate suggestions and transaction
+contact pickers. **Recently deleted** offers scoped restoration using the same
+ID and retained related records. There is no permanent-delete control.
 
-### Representation → Transaction
-- A **Create transaction** button appears at `representation` only.
-- The New Transaction dialog has a server-side selector of eligible contacts: stage
-  `representation`, the caller's own scope, at most 25, name search escaped. Free text remains for a
-  deal with no contact.
-- The server re-validates on create (`invalid_contact`), makes the contact the primary client party
-  through the existing `transaction_parties.contact_id`, and audits the link (ids only).
-- The drawer lists linked deals. Legacy deals are unchanged.
+### Private engagement PDF and stage acknowledgement
+Every contact may have exactly **one current private PDF**. Uploads accept actual
+PDF bytes up to **4 MiB**; filenames or client MIME declarations are not proof.
+Replacing a PDF is explicit and retains the prior metadata and private object.
+Authorized members may download; writable callers use the existing contact
+scope. Files are served through authenticated, private, no-store attachment
+routes, with no provider URLs or tokens in the client DTO.
 
-## Migrations (Preview only)
+Entering `representation`, `active_client` or `under_contract` requires both the
+current PDF and explicit confirmation that it is attached, reviewed and
+understood. Confirmation binds the exact PDF revision and contact revision;
+a replacement resets acknowledgement. Cancel changes no stage. Existing
+represented contacts without a PDF retain their stage and show a warning;
+they cannot open a linked transaction or enter another represented stage until
+proof is attached. A represented contact must replace the current PDF or leave
+those stages before removing it.
 
-| File | Adds |
-|---|---|
-| `0011_contact_notes.sql` | `contact_notes` + tombstone CHECK |
-| `0012_contact_birthday.sql` | `birthday_month`, `birthday_day` + CHECK |
-| `0013_contact_needs.sql` | `contact_needs`, enums, array / money / baths checks |
+**The system verifies that a PDF attachment exists. It does not verify its
+contents, signatures, legal sufficiency, or whether it is the correct agreement.**
+The UI repeats this limitation next to the file and in the acknowledgement.
 
-No M4 (private engagement documents) and no M5. `scripts/test_migrate.mjs` runs them on a real
-PostgreSQL 16 (66 checks, including the constraints). Production still has 11 migrations and none
-of these tables; Production's migration step is a separate, later gate.
+### Represented contact → Transaction
+After an acknowledged stage change succeeds, the existing New Transaction
+wizard opens with this contact preselected. This opens a reviewable wizard;
+it does not create a transaction automatically. The manual **Create transaction**
+action is also available for the three represented stages when a current PDF
+exists. The server picker and atomic creation guard recheck current contact
+visibility, eligible stage and the actual current attachment. Legacy transaction
+links remain readable under their existing scope.
 
-## Private engagement storage — NOT provisioned (operator step)
-The Blob tooling available here cannot scope a store to Preview only; its default link would also
-affect Production environment variables and would collide with the generic Blob token. The public
-profile-photo store must never be used for engagement documents. To provision, an operator runs:
+### Current storage and migration boundary
+Migration `0031_contact_engagement_lifecycle.sql` adds soft-deletion fields,
+private engagement-file metadata, a partial unique current-file constraint and
+UUID mutation receipts. Creation/replacement/removal and delete/restore use
+parent revisions, current actor checks and atomic audit/receipt writes.
 
-```
-vercel blob create-store <name> --access private --region iad1 --environment preview
-```
+Engagement bytes use the existing dedicated private transaction-file store with
+a separate `contact-engagements/<original-contact-id>/<file-id>.pdf` namespace.
+Uploads require `TRANSACTION_FILES_ENABLED=1` and the dedicated
+`TRANSACTION_FILES_BLOB_READ_WRITE_TOKEN`; disabled storage is shown honestly.
+The public profile-photo store is never used. Merge may reparent authorized
+metadata while retaining the original private storage path. No storage resource
+or live migration was created by this local feature work.
 
-(or uses the dashboard connect dialog, choosing the Preview environment only, with a distinct
-variable name — planned `ENGAGEMENT_BLOB_READ_WRITE_TOKEN`). M4 and the hard-block of regular users
-until an executed agreement is attached remain a separate gate. Requirements are in section 5 of the
-schema proposal. No `CONTACT_ENGAGEMENTS_STORAGE.md` exists because nothing was provisioned.
+Original V3 migrations `0011`–`0013` added notes, birthday and needs; later
+migrations extend those features. Historical Preview verification below applies
+to the earlier V3 source only.
 
 ## Security rules held
 - Note bodies, need values and birthday values never appear in audit metadata, global search, ⌘K,
@@ -106,7 +126,7 @@ schema proposal. No `CONTACT_ENGAGEMENTS_STORAGE.md` exists because nothing was 
 - No email is used as an identity or an ownership key; nothing is hard-coded to a person.
 - Private data responses are authenticated, authorized and `no-store`.
 
-## Certification (Preview)
+## Historical certification (earlier V3 Preview release)
 Fixtures were synthetic ("CV3 …"), seeded on the Preview branch, and removed afterwards.
 
 - **API**, per role (admin, agent, broker, coordinator, member) plus a contact in another brokerage as
@@ -129,7 +149,7 @@ nothing; a duplicate accessible name on the areas list.
 Not exercised through the browser: broker and coordinator (covered by the API spec, whose Transactions
 and Contacts expectations are the role table above).
 
-## Tests
+## Historical checks (earlier V3 release)
 `npm test` (20 suites, includes `test:contacts-v3` 324 checks), `npm run test:migrate` (66),
 `npx tsc --noEmit`, `npx next build` — all green on the committed code.
 
@@ -243,10 +263,11 @@ Migrations 0015–0017 have been prepared locally; this work applies no live upd
 
 The contact profile schedules and edits actions, records a required completion
 outcome with an optional successor in the same save, and records a reason when
-cancelled. Active assignment choices are the contact owner and administrators
-who already have access. Assignment grants no new contact visibility. If a
-chosen person becomes unavailable, the editor keeps the draft, refreshes the
-team list and requires a new explicit choice.
+cancelled. The assignee is always the current authenticated dashboard actor. There is no
+assignee selector. The server derives the actor even if an older client submits
+a different user ID; assigning a task never grants contact visibility. Account
+eligibility failures retain the editor draft and require refreshing the current
+account before another save.
 
 Every mutation freezes the opening contact revision and pending action ID.
 Concurrent changes require explicit review; a completion/cancellation draft
@@ -314,8 +335,12 @@ An update never reassigns ownership. **Blank mapped values do not clear saved
 fields.** CSV Notes append separate chronological note records; neither existing
 notes nor the legacy note column is overwritten. A blank-only, unchanged update
 is reported as skipped without changing its revision or history. Imported stage
-changes follow the normal lifecycle graph; entering Representation or Active
-client requires the batch engagement acknowledgement. Importing does not send
+changes follow the normal lifecycle graph. A new CSV contact cannot enter a
+represented stage because it has no per-contact engagement PDF yet. An existing
+contact entering Representation, Active client or Under contract requires its
+actual current PDF and the explicit batch acknowledgement; both the reviewed
+revision and proof are rechecked atomically. Deleted contacts are excluded from
+import matching and updates. Importing does not send
 messages, create deals or invent a last-contact touch.
 
 Preview writes nothing. Commit rechecks the reviewed exact identifiers and
@@ -630,3 +655,13 @@ locations, road-drive estimates, route order suggestions and an optional
 automatic first property. Recommendations do not change bookings. The Google
 Maps integration is prepared but remains disabled without explicitly configured
 keys; the local demo uses clearly labelled illustrative roads and travel times.
+
+## Current contact lifecycle verification — 2026-11-03
+
+Local isolated PostgreSQL checks cover private-file replacement and rollback,
+exact receipt recovery, current-actor and late-scope refusals, retained children
+after deletion/restoration, actual PDF plus acknowledgement stage gates,
+self-assigned actions and tied-time contact touch pagination. Actual HTTP,
+rendered UI and browser-adapter tests cover multipart limits, authorized
+download headers, draft/request retention and the linked wizard launch.
+No live contact, database or Blob object was changed by these checks.

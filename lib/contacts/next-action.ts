@@ -9,7 +9,7 @@ export interface NextAction { id: string; kind: NextActionKind; purpose: string;
 export interface NextActionDraft { kind: NextActionKind; purpose: string; dueAt: string; assigneeId: string }
 const text = (limit: number) => z.string().trim().min(1).max(limit).refine(value => !value.includes("\0"), "Unsupported character");
 const dueAtValue = z.string().datetime({ offset: true });
-export const nextActionDraftSchema = z.object({ kind: z.enum(NEXT_ACTION_KINDS), purpose: text(240), dueAt: dueAtValue, assigneeId: z.string().uuid() }).strict();
+export const nextActionDraftSchema = z.object({ kind: z.enum(NEXT_ACTION_KINDS), purpose: text(240), dueAt: dueAtValue, assigneeId: z.string().uuid().optional() }).strict();
 const revision = z.string().datetime({ offset: true });
 export const nextActionMutationSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("set"), expectedUpdatedAt: revision, expectedActionId: z.string().uuid().nullable(), next: nextActionDraftSchema }).strict(),

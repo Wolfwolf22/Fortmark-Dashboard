@@ -28,6 +28,16 @@ export function failure(reason: ServiceFailure): NextResponse {
       return NextResponse.json({ error: "no_identity" }, { status: 403, headers: NO_STORE });
     case "invalid_transition":
       return NextResponse.json({ error: "invalid_transition" }, { status: 409, headers: NO_STORE });
+    case "engagement_required":
+    case "engagement_acknowledgement_required":
+      return NextResponse.json({ error: reason }, { status: 409, headers: NO_STORE });
+    case "invalid_engagement":
+      return NextResponse.json({ error: reason }, { status: 400, headers: NO_STORE });
+    case "file_too_large":
+      return NextResponse.json({ error: reason }, { status: 413, headers: NO_STORE });
+    case "engagement_not_configured":
+    case "engagement_unavailable":
+      return NextResponse.json({ error: reason }, { status: 503, headers: NO_STORE });
     case "invalid_assignee":
       return NextResponse.json({ error: "invalid_assignee" }, { status: 400, headers: NO_STORE });
     case "invalid_date":

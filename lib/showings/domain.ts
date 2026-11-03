@@ -35,6 +35,7 @@ export interface ShowingView {
   feedbackLikes: string; feedbackConcerns: string; feedbackSummary: string; visitedAt: string | null; cancelReason: string;
   createdAt: string; updatedAt: string;
   sourceProperty: ShowingSourceProperty | null;
+  linkedTour?: { id: string; name: string } | null;
   canEdit: boolean; canComplete: boolean; canCancel: boolean; canUpdatePropertyReview: boolean;
   listing: Listing | null; syncStatus: "available" | "not_found" | "unavailable" | "not_configured"; checkedAt: string | null;
 }

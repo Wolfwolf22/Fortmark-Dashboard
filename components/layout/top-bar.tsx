@@ -173,14 +173,7 @@ export function TopBar({ profile }: { profile: ShellProfile }) {
             className="h-5 w-auto sm:hidden"
             priority
           />
-          <Image
-            src={assetPath("/brand/fortmark-wordmark-white.png")}
-            alt=""
-            width={110}
-            height={32}
-            className="hidden h-7 w-auto sm:block"
-            priority
-          />
+          <span aria-hidden="true" className="fm-wordmark hidden sm:inline-flex">FORTMARK</span>
         </Link>
 
         <nav aria-label="Primary" className="ml-1 hidden h-16 items-center gap-0.5 xl:flex">

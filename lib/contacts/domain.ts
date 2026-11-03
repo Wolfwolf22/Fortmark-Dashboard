@@ -88,6 +88,7 @@ export const contactStageChangeSchema = z.object({
   stage: z.enum(ALL_CONTACT_STAGES as [LeadStage, ...LeadStage[]]),
   /** The stage observed before choosing a destination, including archive/restore. */
   expectedStage: z.enum(ALL_CONTACT_STAGES as [LeadStage, ...LeadStage[]]).optional(),
+  expectedUpdatedAt: z.string().datetime({offset:true}).optional(),
   /** The person confirmed the engagement notice. Recorded; never taken to mean a document exists. */
   engagementAcknowledged: z.boolean().optional(),
 });
@@ -119,8 +120,8 @@ export type ActivityInput = z.infer<typeof activityInputSchema>;
  * refused instead of half-honoured.
  */
 export const followUpChangeSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("schedule"), day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).strict(),
-  z.object({ action: z.literal("complete") }).strict(),
+  z.object({ action: z.literal("schedule"), day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),expectedUpdatedAt:z.string().datetime({offset:true}).optional() }).strict(),
+  z.object({ action: z.literal("complete"),expectedUpdatedAt:z.string().datetime({offset:true}).optional() }).strict(),
 ]);
 
 export type FollowUpChangeInput = z.infer<typeof followUpChangeSchema>;

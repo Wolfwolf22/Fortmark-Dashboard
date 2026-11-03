@@ -1,7 +1,9 @@
 // Local synthetic manual lookup/list references. No provider, fetch or storage.
 import { propertyLookupInputSchema, addPropertyInputSchema, readPropertyQuery, PROPERTY_BODY_BYTES } from "../../lib/contacts/properties.ts";
-import { createPropertyListInputSchema, renamePropertyListInputSchema, readPropertyListsQuery } from "../../lib/contacts/property-lists.ts";
+import { associatePropertyListInputSchema, sharePropertyListInputSchema, createPropertyListInputSchema, renamePropertyListInputSchema, readPropertyListsQuery } from "../../lib/contacts/property-lists.ts";
 import { propertyResearchInputSchema, propertyTransferInputSchema, propertyRemovalInputSchema, propertyReviewMatches, comparePropertyAdded, applyPropertyPriceOrder } from "../../lib/contacts/property-research.ts";
+import { summarizePropertyList } from "../../lib/contacts/property-list-summary.ts";
+import { contactAgents } from "./contact-fixtures.mjs";
 import { bumpDataVersion } from "../../lib/data/store.ts";
 import { LeadsError } from "./contact-errors.mjs";
 import { announceReadOnly } from "./read-only.mjs";
@@ -12,6 +14,7 @@ import { SAMPLE_ACTOR, interactiveSamples, getPreviewScenario, canWriteSample, r
 const copy = value => structuredClone(value);
 const failure = (code, status = 400) => new LeadsError(code, status);
 const researchConflicts = new Set();
+const listShares = new Map();
 function writeMode() { if (!interactiveSamples()) { announceReadOnly(); throw failure("preview_read_only", 403); } }
 function contactFor(id, write = false) {
   if (write) writeMode();
@@ -24,9 +27,9 @@ function contactFor(id, write = false) {
 }
 function ownList(id, write = false) {
   if (write) writeMode();
-  const list = readSampleRawPropertyLists().find(list => list.id === id && list.ownerUserId === SAMPLE_ACTOR.userId && !list.archivedAt);
+  const list = readSampleRawPropertyLists().find(list => list.id === id && (list.ownerUserId === SAMPLE_ACTOR.userId || !write && (listShares.get(list.id) || []).includes(SAMPLE_ACTOR.userId)) && !list.archivedAt);
   if (!list) throw failure("not_found", 404);
-  if (list.contactId) contactFor(list.contactId);
+  if (write && list.ownerUserId !== SAMPLE_ACTOR.userId) throw failure("forbidden", 403);
   return list;
 }
 function parse(schema, input, code = "invalid_property", bytes = PROPERTY_BODY_BYTES) {
@@ -47,8 +50,8 @@ function resolveLookup(mlsNumber) {
   return result.listing;
 }
 function listView(list) {
-  const contact = list.contactId ? contactFor(list.contactId) : null;
-  return { id: list.id, name: list.name, contactId: contact ? previewPublicRecordId(contact.id) : null, ...(contact ? { contactName: contact.name } : {}), propertyCount: readSampleListPropertyRows(list.id).filter(row => !row.removedAt).length, createdAt: list.createdAt, updatedAt: list.updatedAt };
+  const contact = list.contactId ? readSampleContact(list.contactId) : null;
+  return { id: list.id, name: list.name, contactId: contact ? previewPublicRecordId(contact.id) : null, ...(contact ? { contactName: contact.name } : {}), isOwner: list.ownerUserId === SAMPLE_ACTOR.userId, canWrite: list.ownerUserId === SAMPLE_ACTOR.userId && interactiveSamples(), sharedWithMe: list.ownerUserId !== SAMPLE_ACTOR.userId, propertyCount: readSampleListPropertyRows(list.id).filter(row => !row.removedAt).length, createdAt: list.createdAt, updatedAt: list.updatedAt };
 }
 function view(row, list, checkedAt = new Date().toISOString()) {
   const current = resolution(row.mlsNumber, row.listingId, row.dataset);
@@ -73,11 +76,12 @@ export async function getPropertyListProperty(id, propertyId) {
 }
 export async function getPropertyLists(options = {}) {
   const params = new URLSearchParams({ page: String(options.page ?? 1) });
+  if (options.scope) params.set("scope", options.scope);
   if (options.contactId) params.set("contactId", previewPublicRecordId(options.contactId));
   const query = readPropertyListsQuery(params);
   if (!query) throw failure("invalid_property_list");
   const contact = query.contactId ? contactFor(query.contactId) : null;
-  const lists = readSampleRawPropertyLists().filter(list => list.ownerUserId === SAMPLE_ACTOR.userId && !list.archivedAt && (!contact || list.contactId === contact.id)).filter(list => !list.contactId || readSampleContact(list.contactId)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id));
+  const lists = readSampleRawPropertyLists().filter(list => (list.ownerUserId === SAMPLE_ACTOR.userId || (listShares.get(list.id) || []).includes(SAMPLE_ACTOR.userId)) && (query.scope !== "owned" || list.ownerUserId === SAMPLE_ACTOR.userId) && (query.scope !== "shared" || list.ownerUserId !== SAMPLE_ACTOR.userId) && !list.archivedAt && (!contact || list.contactId === contact.id)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id));
   const page = Math.min(query.page, Math.max(1, Math.ceil(lists.length / query.pageSize)));
   return { items: lists.slice((page - 1) * query.pageSize, page * query.pageSize).map(listView), total: lists.length, page, pageSize: query.pageSize };
 }
@@ -228,3 +232,17 @@ export async function removeContactProperty(id, propertyId, expectedUpdatedAt) {
   if (!list) throw failure("not_found", 404);
   return removePropertyListProperty(list.id, propertyId, expectedUpdatedAt);
 }
+
+// Explicit local sample collaboration; never requests a server/provider or grants contact access.
+export async function associatePropertyList(id, input) {
+  const list = ownList(id, true), data = parse(associatePropertyListInputSchema, {...input, contactId: input.contactId ? previewPublicRecordId(input.contactId) : null}, "invalid_property_list");
+  const contact = data.contactId ? contactFor(data.contactId, true) : null;
+  if ((contact?.id || null) === list.contactId) return listView(list);
+  if (list.updatedAt !== data.expectedUpdatedAt) throw failure("conflict", 409);
+  const updatedAt = nextSampleRevision(list.updatedAt), next = {...list, contactId:contact?.id || null, defaultForContactId:null, updatedAt};
+  replaceSamplePropertyList(next);replaceSampleListPropertyRows(id,readSampleListPropertyRows(id).map(row=>({...row,contactId:next.contactId,updatedAt:nextSampleRevision(row.updatedAt || row.addedAt)})));appendSamplePropertyAudit(next,null,"associate",["contactId"]);bumpDataVersion();return listView(next);
+}
+export async function getPropertyListShareCandidates(page=1) { const items=contactAgents.filter(person=>person.id!==SAMPLE_ACTOR.userId).map(person=>({...person,role:"agent"}));return {items:items.slice((page-1)*24,page*24),page,hasMore:items.length>page*24}; }
+export async function getPropertyListSharing(id) { const list=ownList(id);if(list.ownerUserId!==SAMPLE_ACTOR.userId)throw failure("forbidden",403);return {listId:id,updatedAt:list.updatedAt,users:(listShares.get(id)||[]).map(userId=>({...contactAgents.find(person=>person.id===userId),role:"agent"}))}; }
+export async function updatePropertyListSharing(id,input) { const list=ownList(id,true),data=parse(sharePropertyListInputSchema,input,"invalid_property_list"),allowed=contactAgents.filter(person=>person.id!==SAMPLE_ACTOR.userId).map(person=>person.id);if(data.userIds.some(userId=>!allowed.includes(userId)))throw failure("invalid_share_recipient",409);if([...(listShares.get(id)||[])].sort().join()=== [...data.userIds].sort().join())return getPropertyListSharing(id);if(list.updatedAt!==data.expectedUpdatedAt)throw failure("conflict",409);listShares.set(id,[...data.userIds]);const next={...list,updatedAt:nextSampleRevision(list.updatedAt)};replaceSamplePropertyList(next);appendSamplePropertyAudit(next,null,"share",[]);bumpDataVersion();return getPropertyListSharing(id); }
+export async function getPropertyListSummary(id) { const list=ownList(id),rows=readSampleListPropertyRows(id).filter(row=>!row.removedAt);return {...summarizePropertyList(rows.slice(0,96).map(row=>view(row,list)),rows.length,new Date().toISOString()),sample:true}; }

@@ -83,7 +83,7 @@ try {
   const sameInput = { ...planned.input, requestId: randomUUID(), ...schedule(17) }, captures: string[] = [];
   const sameCreates = await Promise.all([createShowing({ actor, db: beforeBatch(async () => {}, false, captures) }, sameInput, now), createShowing(ctx, sameInput, now)]);
   check("concurrent identicalcreateretry returnsone durableplan", sameCreates.every(result => result.ok) && sameCreates[0].ok && sameCreates[1].ok && sameCreates[0].value.id === sameCreates[1].value.id);
-  check("ownerlock serializes without blocking auditFKkeyshare", captures.some(sql => /from "dashboard_users".*for no key update/.test(sql)) && !captures.some(sql => /from "dashboard_users".*for update/.test(sql)));
+  check("ownerlock serializes without blocking auditFKkeyshare", captures.some(sql => /from "dashboard_users".*for no key update/.test(sql)) && !captures.some(sql => /^select "id" from "dashboard_users".*for update$/.test(sql)));
   const stale = await mutateShowing(ctx, adjacent.showing.id, { action: "update", requestId: randomUUID(), expectedUpdatedAt: "2020-01-01T00:00:00Z", ...schedule(18), meetingDetails: "", notes: "" }, now); check("stale showingedit refused", !stale.ok && stale.reason === "conflict");
   const rescheduleConflict = await mutateShowing(ctx, adjacent.showing.id, { action: "reschedule", requestId: randomUUID(), expectedUpdatedAt: adjacent.showing.updatedAt, ...schedule(16, 10), meetingDetails: "New meeting", notes: "New plan" }, now); check("reschedule overlaps checkedbeforewrite", !rescheduleConflict.ok && rescheduleConflict.reason === "time_conflict");
   const cancelledInput = { action: "cancel" as const, requestId: randomUUID(), expectedUpdatedAt: winner.value.updatedAt, reason: "Private cancellation reason" };

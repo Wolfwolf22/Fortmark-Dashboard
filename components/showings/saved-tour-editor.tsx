@@ -22,7 +22,7 @@ import { savedTourListSelection, validSavedTourChoice, moveSavedTourStop, savedT
 interface Appointment { id: string; startsAt: string; endsAt: string; updatedAt: string; status: string; propertyId: string }
 export function SavedTourEditor({ draft, onChange, disabled, opening }: { draft: SavedTourDraft; onChange: (draft: SavedTourDraft) => void; disabled?: boolean; opening?: SavedShowingTourView }) {
   const prefix = useId(), [listsPage, setListsPage] = useState(1), [lists, setLists] = useState<PropertyListView[]>([]), [propertyPage, setPropertyPage] = useState(1), [loadedProperties, setLoadedProperties] = useState<{ listId: string; items: PropertyView[] }>({ listId: "", items: [] }), [appointmentPage, setAppointmentPage] = useState(1), [loadedAppointments, setLoadedAppointments] = useState<{ key: string; items: Appointment[] }>({ key: "", items: [] });
-  const listQuery = useQuery(async () => ({ page: listsPage, result: await getPropertyLists({ page: listsPage }) }), [listsPage]);
+  const listQuery = useQuery(async () => ({ page: listsPage, result: await getPropertyLists({ page: listsPage, scope: "owned" }) }), [listsPage]);
   useEffect(() => { if (listQuery.data?.page === listsPage) setLists((current) => listsPage === 1 ? listQuery.data!.result.items : [...current.filter((item) => !listQuery.data!.result.items.some((next) => next.id === item.id)), ...listQuery.data!.result.items]); }, [listQuery.data, listsPage]);
   const sourceQuery = useQuery(() => draft.sourceListId ? getPropertyList(draft.sourceListId) : Promise.resolve(undefined), [draft.sourceListId]);
   const source = sourceQuery.data?.id === draft.sourceListId ? sourceQuery.data : undefined;

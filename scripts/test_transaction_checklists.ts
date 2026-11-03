@@ -1,4 +1,5 @@
 /** Real isolated PostgreSQL migration, per-file attestations and guarded stage progression. */
+import { CLOSE_ACKNOWLEDGEMENT_VERSION } from "../lib/transactions/close-acknowledgement.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -58,30 +59,30 @@ try {
   await db.update(dashboardUsers).set({ role: "agent" }).where(eq(dashboardUsers.id, owner.userId));
   const stranger = await mutateTransactionChecklist({ actor: other, db }, first.transaction.id, mutation(first, first.checklist.items[1].id), now); check("otheragentcannotlearnormutatechecklist", !stranger.ok && stranger.reason === "not_found");
   const supervised = await mutateTransactionChecklist({ actor: admin, db }, first.transaction.id, mutation(first, first.checklist.items[1].id), now); check("brokerageadministratorkeepsauthorizedsupervision", supervised.ok); first = supervised.value;
-  const offer = await changeStage(ctx, first.transaction.id, "offer", now, { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt }); check("completedopportunityallowsenteringoffer", offer.ok); first = await file(first.transaction.id);
+  check("completedopportunityautomaticallyentersoffer", first.transaction.stage === "offer"); first = await file(first.transaction.id);
   const skipped = await changeStage(ctx, first.transaction.id, "financing", now, { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt }); check("jumpingaheadrequiresallpriorstagechecklists", !skipped.ok && skipped.reason === "checklist_incomplete");
   first = await complete(first, checklistRequiredStages("offer", "financing"));
-  const financing = await changeStage(ctx, first.transaction.id, "financing", now, { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt }); check("allrequiredcrossedstagesallowskip", financing.ok); first = await file(first.transaction.id);
+  check("allrequiredcrossedstagesautomaticallyadvance", first.transaction.stage === "financing"); first = await file(first.transaction.id);
   const reopened = await mutateTransactionChecklist(ctx, first.transaction.id, mutation(first, first.checklist.items[0].id, "reopen"), now); check("explicitreopenclearsactorandcompletion", reopened.ok && reopened.value.checklist.items[0].completedAt === null && (await db.select().from(transactionChecklistItems).where(eq(transactionChecklistItems.id, first.checklist.items[0].id)))[0].completedByUserId === null); first = reopened.value;
   const oldStageBlocks = await changeStage(ctx, first.transaction.id, "closing_prep", now, { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt }); check("reopenedearlierstageblocksforwardprogresstoo", !oldStageBlocks.ok && oldStageBlocks.reason === "checklist_incomplete");
-  const back = await changeStage(ctx, first.transaction.id, "due_diligence", now, { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt }); check("backwardmoveallowedwithoutpretendingcheckscomplete", back.ok); first = await file(first.transaction.id);
+  check("earlierreopenedrequireditemautomaticallyregressesfile", first.transaction.stage === "opportunity"); first = await file(first.transaction.id);
   const pause = await changeStage(ctx, first.transaction.id, "on_hold", now, { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt }); check("pauseallowedwhileincomplete", pause.ok); first = await file(first.transaction.id);
   const resumed = await changeStage(ctx, first.transaction.id, "offer", now, { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt }); check("onholdresumechecksallpriorstages", !resumed.ok && resumed.reason === "checklist_incomplete");
   const resumeStart = await changeStage(ctx, first.transaction.id, "opportunity", now, { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt }); check("onholdcanreturntostartforreview", resumeStart.ok); first = await file(first.transaction.id);
   first = await complete(first, checklistRequiredStages("opportunity", "closing_prep"));
-  const prep = await changeStage(ctx, first.transaction.id, "closing_prep", now, { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt }); check("readypriorcheckpointsallowclosingprep", prep.ok); first = await file(first.transaction.id);
-  const closeBlocked = await changeStage(ctx, first.transaction.id, "closed", now, { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt }); check("closeexplicitlyrequiresclosingprepitems", !closeBlocked.ok && closeBlocked.reason === "checklist_incomplete");
+  check("readypriorcheckpointsautomaticallyenterclosingprep", first.transaction.stage === "closing_prep"); first = await file(first.transaction.id);
+  const closeBlocked = await changeStage(ctx, first.transaction.id, "closed", now, { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt, closeAcknowledgement:{version:CLOSE_ACKNOWLEDGEMENT_VERSION,reviewedToEnd:true,acknowledged:true} }); check("closeexplicitlyrequiresclosingprepitems", !closeBlocked.ok && closeBlocked.reason === "checklist_incomplete");
   first = await complete(first, checklistRequiredStages("closing_prep", "closed"));
-  const plan = await planStageChange(ctx, first.transaction.id, "closed", { now, expectedUpdatedAt: first.updatedAt }); check("readycloseplanexists", plan.ok);
+  const plan = await planStageChange(ctx, first.transaction.id, "closed", { now, expectedUpdatedAt: first.updatedAt, closeAcknowledgement:{version:CLOSE_ACKNOWLEDGEMENT_VERSION,reviewedToEnd:true,acknowledged:true} }); check("readycloseplanexists", plan.ok);
   // Deliberately reopen without touching parent: the SQL receipt gate still refuses it.
   await db.update(transactionChecklistItems).set({ completedAt: null, completedByUserId: null }).where(eq(transactionChecklistItems.id, first.checklist.items[11].id));
   await assert.rejects(commitStageChange(db, plan.value.writes)); check("atomicstageguardrechecksafterpreflight", (await file(first.transaction.id)).transaction.stage === "closing_prep");
   first = await file(first.transaction.id); first = await complete(first, ["closing_prep"]);
-  const closeInput = { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt }, closed = await changeStage(ctx, first.transaction.id, "closed", now, closeInput); check("fullyreviewedfilecanclose", closed.ok); first = await file(first.transaction.id);
+  const closeInput = { requestId: randomUUID(), expectedUpdatedAt: first.updatedAt,closeAcknowledgement:{version:CLOSE_ACKNOWLEDGEMENT_VERSION,reviewedToEnd:true,acknowledged:true} as const }, closed = await changeStage(ctx, first.transaction.id, "closed", now, closeInput); check("fullyreviewedfilecanclose", closed.ok); first = await file(first.transaction.id);
   check("closedsnapshotreadonlyandretained", !first.canEdit && first.checklist.progress.completed === 12 && !(await mutateTransactionChecklist(ctx, first.transaction.id, mutation(first, first.checklist.items[0].id, "reopen"), now)).ok);
   const closedState = await state(); check("stagecommitreceiptstillreplaysafterterminal", (await changeStage(ctx, first.transaction.id, "closed", now, closeInput)).ok && await state() === closedState);
   check("otherfilesneverautocompletedbyprogress", (await file(second.transaction.id)).checklist.progress.completed === 0);
-  const cancel = await changeStage(ctx, second.transaction.id, "cancelled", now, { requestId: randomUUID(), expectedUpdatedAt: second.updatedAt }); check("cancellationdoesnotrequirechecklist", cancel.ok && (await file(second.transaction.id)).checklist.progress.completed === 0);
+  const cancel = await changeStage(ctx, second.transaction.id, "cancelled", now, { requestId: randomUUID(), expectedUpdatedAt: second.updatedAt,reason:"Synthetic client cancellation" }); check("cancellationdoesnotrequirechecklist", cancel.ok && (await file(second.transaction.id)).checklist.progress.completed === 0);
   const missing = await make(); await db.delete(transactionChecklistItems).where(andIdStage(missing.transaction.id, "opportunity"));
   const missingMove = await changeStage(ctx, missing.transaction.id, "offer", now, { requestId: randomUUID(), expectedUpdatedAt: missing.updatedAt }); check("missingstagesnapshotfailsclosedratherthanvacuouslypassing", !missingMove.ok && missingMove.reason === "checklist_not_ready");
   let rollbackFile = await make(), beforeRollback = await state(); db.batch = (async (writes: Parameters<typeof db.batch>[0]) => originalBatch([...writes, db.insert(auditEvents).values({ actorUserId: randomUUID(), eventType: "transaction_updated", safeMetadata: {} })] as unknown as Parameters<typeof db.batch>[0])) as unknown as typeof db.batch;

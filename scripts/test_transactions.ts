@@ -331,7 +331,7 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
     check(`${name} route is dynamic and node`, src.includes('export const dynamic = "force-dynamic"') && src.includes('export const runtime = "nodejs"'));
   }
   check("the service is server-only", service.includes('import "server-only"'));
-  check("every query is scoped by the caller's visibility", (service.match(/visibleTo\(ctx\.actor\)/g) ?? []).length >= 3);
+  check("every query is scoped by the caller's visibility", (service.match(/visibleTo\(ctx\.actor(?:,|\))/g) ?? []).length >= 3 && service.includes("isNull(transactions.deletedAt)"));
   check("the brokerage is always the server's", service.includes("brokerageKey: ctx.actor.brokerageKey") && !/brokerageKey: input/.test(service));
   check("a named agent is honoured only for a privileged actor", /input\.agentUserId && isPrivileged\(ctx\.actor\)/.test(service));
   check("a stage change checks the lifecycle before writing", service.indexOf("canTransition(from, to)") < service.indexOf(".update(transactions)"));

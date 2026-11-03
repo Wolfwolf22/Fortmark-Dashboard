@@ -292,6 +292,7 @@ export type TransactionSource = "db" | "sample";
 
 export interface Transaction {
   id: string;
+  deletedAt?: string;
   /** MLS ListingKey when the deal is linked to a listing FortMark can see. */
   listingId?: string;
   mlsNumber?: string;
@@ -330,6 +331,7 @@ export interface Transaction {
 }
 
 export interface TransactionFilters {
+  deleted?: boolean;
   stage?: TransactionStage[];
   side?: TransactionSide[];
   agentId?: string;

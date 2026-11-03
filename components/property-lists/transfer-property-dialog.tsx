@@ -24,7 +24,7 @@ function TransferPropertyForm({ property, latest, sourceName, onClose, onTransfe
   const prefix = useId(), heading = useRef<HTMLHeadingElement>(null), reviewRef = useRef<HTMLDivElement>(null), targetRef = useRef<HTMLButtonElement>(null);
   const [opening, setOpening] = useState(property), [mode, setMode] = useState<"copy" | "move">("copy"), [target, setTarget] = useState<PropertyListView | null>(null);
   const [targetPage, setTargetPage] = useState(1), [targets, setTargets] = useState<PropertyListView[]>([]), [listGeneration, setListGeneration] = useState(0);
-  const lists = useQuery(async () => ({ requestPage: targetPage, generation: listGeneration, result: await getPropertyLists({ page: targetPage }) }), [targetPage, listGeneration]);
+  const lists = useQuery(async () => ({ requestPage: targetPage, generation: listGeneration, result: await getPropertyLists({ page: targetPage, scope: "owned" }) }), [targetPage, listGeneration]);
   const answer = lists.data?.requestPage === targetPage && lists.data.generation === listGeneration ? lists.data.result : null;
   const [fresh, setFresh] = useState<PropertyView | null>(null), [conflict, setConflict] = useState(false), [saving, setSaving] = useState(false), [loading, setLoading] = useState(false), [error, setError] = useState<string | null>(null);
   const retry = useRef<PropertyTransferAttempt | null>(null);
