@@ -1,0 +1,10 @@
+"use client";
+import { createContext,useContext,type ReactNode } from "react";
+import type { QuickCreateKind } from "@/lib/stores/ui";
+export interface CreationCapabilities {contacts:boolean;transactions:boolean;personalCalendar:boolean;sampleListing:boolean;sampleDocument:boolean}
+export const NO_CREATION_CAPABILITIES:CreationCapabilities={contacts:false,transactions:false,personalCalendar:false,sampleListing:false,sampleDocument:false};
+const Context=createContext<CreationCapabilities>(NO_CREATION_CAPABILITIES);
+export function CreationCapabilitiesProvider({value,children}:{value:CreationCapabilities;children:ReactNode}){return <Context.Provider value={value}>{children}</Context.Provider>;}
+export function useCreationCapabilities(){return useContext(Context);}
+export function canQuickCreate(kind:QuickCreateKind,capabilities:CreationCapabilities,role:string):boolean { if(role==="Member")return false;return kind==="lead"?capabilities.contacts:kind==="transaction"?capabilities.transactions:kind==="event"?capabilities.personalCalendar:kind==="listing"?capabilities.sampleListing:capabilities.sampleDocument; }
+export function creationUnavailable(kind:QuickCreateKind,role:string):{description:string;href:string;label:string}{const destination=kind==="listing"?{href:"/listings",label:"Open listings"}:kind==="lead"?{href:"/contacts",label:"Open contacts"}:kind==="event"?{href:"/calendar",label:"Open calendar"}:{href:"/transactions",label:"Open transactions"};return {...destination,description:role==="Member"?"Your role has read-only access. Open the workspace to view saved records.":kind==="listing"?"Enter new listings in your MLS. This dashboard reads the listing feed and does not publish listings.":kind==="document"?"The separate document library is not configured. Upload checklist or vendor evidence from the relevant transaction file.":kind==="event"?"Personal calendar creation is not configured in this workspace.":kind==="transaction"?"Stored transaction creation is not configured in this workspace.":"Stored contact creation is not configured in this workspace."};}

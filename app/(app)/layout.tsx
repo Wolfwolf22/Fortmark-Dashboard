@@ -10,6 +10,7 @@
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { AccessDenied } from "@/components/layout/access-denied";
+import { getCreationCapabilities } from "@/lib/creation-capabilities";
 import { AppShell } from "@/components/layout/app-shell";
 import { PersonalLayout } from "@/components/layout/personal-layout";
 import { resolveActor } from "@/lib/auth/actor";
@@ -67,7 +68,7 @@ export default async function AppLayout({
   const actor = await resolveActor(session.user.id, profileDatabaseEnabled());
 
   return (
-    <PersonalLayout key={actor.ok?actor.actor.userId:'no-identity'} ownerId={actor.ok?actor.actor.userId:null} clerkUserId={session.user.id}><AppShell user={toPublicUser(session.user)} profile={profile}>
+    <PersonalLayout key={actor.ok?actor.actor.userId:'no-identity'} ownerId={actor.ok?actor.actor.userId:null} clerkUserId={session.user.id}><AppShell user={toPublicUser(session.user)} profile={profile} creationCapabilities={getCreationCapabilities()}>
       {children}
     </AppShell></PersonalLayout>
   );

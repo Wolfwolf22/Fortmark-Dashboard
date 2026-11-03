@@ -24,7 +24,7 @@ import { type TransactionSide,type TransactionStage,TRANSACTION_STAGE_LABELS } f
 let privateSearch="";
 const WORKLISTS={active:"Active files",attention:"Needs attention",on_hold:"On hold",exited:"Closed & exited",all:"All files"} as const;
 type Worklist=keyof typeof WORKLISTS;
-export function transactionWorklistStages(worklist:Worklist):TransactionStage[]{return worklist==="active"||worklist==="attention"?[...ACTIVE_STAGES]:worklist==="on_hold"?["on_hold"]:worklist==="exited"?["closed","cancelled","withdrawn","fell_through"]:[...ALL_STAGES];}
+function transactionWorklistStages(worklist:Worklist):TransactionStage[]{return worklist==="active"||worklist==="attention"?[...ACTIVE_STAGES]:worklist==="on_hold"?["on_hold"]:worklist==="exited"?["closed","cancelled","withdrawn","fell_through"]:[...ALL_STAGES];}
 function TransactionsPageInner(){
  const router=useRouter(),params=useSearchParams(),canWrite=useSessionUser().role!=="Member",setQuickCreate=useUiStore(state=>state.setQuickCreate);
  const side=params.get("side")&&Object.keys(SIDE_LABELS).includes(params.get("side")!)?params.get("side") as TransactionSide:"all",worklist=params.get("worklist")&&params.get("worklist")! in WORKLISTS?params.get("worklist") as Worklist:"active",stage=ALL_STAGES.includes(params.get("stage") as TransactionStage)?params.get("stage") as TransactionStage:"all",view=params.get("view")==="board"?"board":"table",open=params.get("open");

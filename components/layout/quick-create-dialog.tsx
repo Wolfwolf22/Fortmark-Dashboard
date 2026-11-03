@@ -1,6 +1,9 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import { useSessionUser } from "./session-user";
+import { canQuickCreate,creationUnavailable,useCreationCapabilities } from "./creation-capabilities";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +26,7 @@ import {
 import { useUiStore, QuickCreateKind } from "@/lib/stores/ui";
 import { createListing } from "@/lib/data/adapters/listings";
 import { createTransaction,type QuickCreateTransactionInput } from "@/lib/data/adapters/transactions";
-import { createLead, LeadsError } from "@/lib/data/adapters/leads";
+import { createLead, LeadsError,type QuickCreateLeadInput } from "@/lib/data/adapters/leads";
 import { addDocument } from "@/lib/data/adapters/documents";
 import { getTransactions } from "@/lib/data/adapters/transactions";
 import { useQuery } from "@/lib/data/hooks";
@@ -32,6 +35,7 @@ import { Lead, LEAD_SOURCES_ORDER, LEAD_SOURCE_LABELS, PropertyType } from "@/li
 import { transactionCreateAttempt, transactionCreateUncertain, type TransactionCreateAttempt } from "@/lib/transactions/create-attempt";
 import { closeDateFromInput } from "@/lib/transactions/close-date";
 import { isValidBirthday, MONTH_NAMES } from "@/lib/contacts/birthday";
+import { contactCreateAttempt,contactCreateAttemptAfterClose,contactCreateUncertain,type ContactCreateAttempt } from "@/lib/contacts/create-attempt";
 import { ContactPicker } from "./contact-picker";
 
 /** A birthday half-picked, or one that is not a real day. Raised before anything is sent. */
@@ -39,9 +43,9 @@ class BirthdayInputError extends Error {}
 
 const TITLES: Record<QuickCreateKind, { title: string; description: string; cta: string; goto: string }> = {
   listing: {
-    title: "New listing",
-    description: "Adds a draft listing to inventory. Details can follow.",
-    cta: "Add listing",
+    title: "New sample listing",
+    description: "Adds a labelled sample listing in this browser only. It is not published to the MLS.",
+    cta: "Add sample listing",
     goto: "/listings",
   },
   transaction: {
@@ -63,9 +67,9 @@ const TITLES: Record<QuickCreateKind, { title: string; description: string; cta:
     goto: "/calendar?create=personal",
   },
   document: {
-    title: "New document",
-    description: "Files a document against a transaction.",
-    cta: "File document",
+    title: "New sample document",
+    description: "Adds sample document metadata in this browser only. No file is uploaded or signed.",
+    cta: "Add sample document",
     goto: "/documents",
   },
 };
@@ -81,22 +85,24 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
   const router = useRouter();
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const contactRequest = React.useRef<string | null>(null);
+  const contactRequest = React.useRef<ContactCreateAttempt | null>(null);
+  const [contactUncertain,setContactUncertain]=React.useState(false),[creationDenied,setCreationDenied]=React.useState(false);
   const transactionRequest = React.useRef<TransactionCreateAttempt | null>(null);
   const [transactionUncertain, setTransactionUncertain] = React.useState(false);
 
   const meta = kind ? TITLES[kind] : null;
+  const capabilities=useCreationCapabilities(),role=useSessionUser().role,allowed=Boolean(kind&&canQuickCreate(kind,capabilities,role)),recovering=kind==="transaction"&&transactionUncertain&&Boolean(transactionRequest.current)||kind==="lead"&&contactUncertain&&Boolean(contactRequest.current),privateVisible=!creationDenied&&role!=="Member";
 
   const close = () => {
     setKind(null);
     setError(null);
-    contactRequest.current = null;
+    contactRequest.current=contactCreateAttemptAfterClose(contactRequest.current,contactUncertain);
     if (!transactionUncertain) transactionRequest.current = null;
   };
 
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!kind || busy) return;
+    if (!kind || busy || role==="Member" || !allowed&&!recovering) return;
     let goto = meta!.goto;
     const form = new FormData(e.currentTarget);
     const get = (name: string) => String(form.get(name) ?? "").trim();
@@ -128,22 +134,12 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
         setTransactionUncertain(false);
         goto = created.source === "db" ? `/transactions/${encodeURIComponent(created.id)}` : `/transactions?open=${encodeURIComponent(created.id)}`;
       } else if (kind === "lead") {
-        const month = Number(get("birthdayMonth") || 0);
-        const day = Number(get("birthdayDay") || 0);
-        // Both or neither, and a day that exists in that month (February 29 is fine — no year is kept).
-        if ((month || day) && !isValidBirthday(month, day)) {
-          throw new BirthdayInputError();
-        }
-        const created = await createLead({
-          requestId: contactRequest.current ?? (contactRequest.current = crypto.randomUUID()),
-          name: get("name"),
-          email: get("email"),
-          phone: get("phone"),
-          source: (get("source") || undefined) as Lead["source"] | undefined,
-          birthday: month && day ? { month, day } : undefined,
-        });
-        // Land on the new person, open, ready to schedule the first follow-up.
-        goto = `/contacts?open=${encodeURIComponent(created.id)}`;
+        let input:QuickCreateLeadInput;
+        if(contactUncertain&&contactRequest.current)input=contactRequest.current.input;
+        else{const month=Number(get("birthdayMonth")||0),day=Number(get("birthdayDay")||0);if((month||day)&&!isValidBirthday(month,day))throw new BirthdayInputError();input={name:get("name"),email:get("email"),phone:get("phone"),source:(get("source")||undefined)as Lead["source"]|undefined,birthday:month&&day?{month,day}:undefined};}
+        const attempt=contactCreateAttempt(contactRequest.current,input,contactUncertain);contactRequest.current=attempt;
+        const created=await createLead(attempt.input);contactRequest.current=null;setContactUncertain(false);setCreationDenied(false);
+        goto=`/contacts?open=${encodeURIComponent(created.id)}`;
       } else if (kind === "event") {
         goto = "/calendar?create=personal";
       } else if (kind === "document") {
@@ -158,11 +154,15 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
           kind: "disclosure",
         });
       }
+      setCreationDenied(false);
       close();
       router.push(goto);
     } catch (e) {
+      if([401,403].includes((e as{status?:number})?.status??0))setCreationDenied(true);
       // "Check the fields" is wrong when there is nothing wrong with the
       // fields: an event or a document has nowhere to be saved to here.
+      if(kind==="lead"&&contactRequest.current&&contactCreateUncertain(e,contactUncertain)){setContactUncertain(true);setError("The new contact may have been saved, but its result did not return. Check the same save result before creating another contact.");return;}
+      if(kind==="lead")setContactUncertain(false);
       if (kind === "transaction" && transactionRequest.current && transactionCreateUncertain(e, transactionUncertain)) {
         setTransactionUncertain(true);
         setError(transactionUncertain
@@ -192,8 +192,7 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
     <Dialog open={kind !== null} onOpenChange={(open) => !open && !busy && close()}>
       {/* Opened from the New menu, whose item is gone by the time this closes: focus goes back to the menu's button. */}
       <DialogContent className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto" focusFallback={() => document.querySelector<HTMLElement>("[data-new-trigger]")}>
-        {meta && kind && (
-          <form onSubmit={submit} className="grid gap-4">
+        {meta && kind && ((!allowed||creationDenied)&&!recovering?<QuickCreateUnavailable kind={kind} role={role} accessDenied={creationDenied} onClose={close}/>:<form onSubmit={submit} className="grid gap-4">
             <DialogHeader>
               <DialogTitle>{meta.title}</DialogTitle>
               <DialogDescription>{kind==="transaction"&&side==="gc"?"Open a general contractor file with only the property address and client.":meta.description}</DialogDescription>
@@ -226,12 +225,13 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
               </div>
             )}
 
-            {kind === "transaction" && transactionUncertain && transactionRequest.current && <div role="status" className="space-y-2 rounded-panel border border-border bg-tint p-4"><p className="text-sm font-semibold">Check the submitted file</p><p className="break-words text-sm">{[transactionRequest.current.input.address,transactionRequest.current.input.city].filter(Boolean).join(", ")}</p><p className="break-words text-xs text-muted-foreground">Client: {transactionRequest.current.input.clientName||"Linked contact"}</p><p className="text-xs leading-relaxed text-muted-foreground">The submitted values are kept unchanged. Checking the result uses the same request and will not create a duplicate. If you close this popup, the pending check remains available when you reopen New transaction.</p></div>}
+            {kind === "transaction" && transactionUncertain && transactionRequest.current && <div role="status" className="space-y-2 rounded-panel border border-border bg-tint p-4"><p className="text-sm font-semibold">Check the submitted file</p>{privateVisible&&<><p className="break-words text-sm">{[transactionRequest.current.input.address,transactionRequest.current.input.city].filter(Boolean).join(", ")}</p><p className="break-words text-xs text-muted-foreground">Client: {transactionRequest.current.input.clientName||"Linked contact"}</p></>}<p className="text-xs leading-relaxed text-muted-foreground">The submitted values are kept unchanged. Checking the result uses the same request and will not create a duplicate. If you close this popup, the pending check remains available when you reopen New transaction.</p></div>}
             {kind === "transaction" && !transactionUncertain && (
               <TransactionCreateFields side={side} onSideChange={setSide} preselected={fromContact} onSuggestSide={suggestSide} disabled={busy}/>
             )}
 
-            {kind === "lead" && (
+            {kind==="lead"&&contactUncertain&&contactRequest.current&&<ContactCreateReceipt attempt={contactRequest.current} privateVisible={privateVisible}/> }
+            {kind === "lead" && !contactUncertain && (
               <div className="grid gap-3">
                 <Field label="Name" name="name" required placeholder="Full name" />
                 <div className="grid grid-cols-2 gap-3">
@@ -278,8 +278,8 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
               <Button type="button" variant="ghost" onClick={close} disabled={busy}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={busy}>
-                {busy ? "Saving…" : kind === "transaction" && transactionUncertain ? "Check save result" : meta.cta}
+              <Button type="submit" disabled={busy||role==="Member"}>
+                {busy ? "Saving…" : (kind === "transaction" && transactionUncertain||kind==="lead"&&contactUncertain) ? "Check save result" : meta.cta}
               </Button>
             </DialogFooter>
           </form>
@@ -362,3 +362,7 @@ function DocumentFields() {
     </div>
   );
 }
+
+export function QuickCreateUnavailable({kind,role,onClose,accessDenied=false}:{kind:QuickCreateKind;role:string;onClose:()=>void;accessDenied?:boolean}){const state=creationUnavailable(kind,role);return <><DialogHeader><DialogTitle>{kind==="listing"?"Listings are managed in the MLS":kind==="document"?"Document library unavailable":"Creation unavailable"}</DialogTitle><DialogDescription>{accessDenied?"Your access changed. Refresh the workspace to review your permissions before creating another record.":state.description}</DialogDescription></DialogHeader><DialogFooter><Button type="button" variant="outline" onClick={onClose}>Close</Button><Button asChild><Link href={state.href} onClick={onClose}>{state.label}</Link></Button></DialogFooter></>;}
+
+export function ContactCreateReceipt({attempt,privateVisible}:{attempt:ContactCreateAttempt;privateVisible:boolean}){return <div role="status" className="space-y-2 rounded-panel border border-border bg-tint p-4"><p className="text-sm font-semibold">Check the submitted contact</p>{privateVisible?<><p className="break-words text-sm font-semibold">{attempt.input.name}</p>{attempt.input.email&&<p className="break-all text-xs text-muted-foreground">{attempt.input.email}</p>}{attempt.input.phone&&<p className="break-words text-xs text-muted-foreground">{attempt.input.phone}</p>}</>:<p className="text-sm text-muted-foreground">Private submitted details are hidden until access is verified.</p>}<p className="text-xs leading-relaxed text-muted-foreground">The submitted fields are kept unchanged. Checking the result uses the same request and will not create a duplicate. Closing this popup keeps the pending check available when you reopen New contact.</p></div>;}

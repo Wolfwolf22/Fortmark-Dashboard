@@ -118,6 +118,6 @@ function PreviewControls() {
   </>;
 }
 function Preview() {
-  return <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} storageKey="fortmark.design-preview.theme"><TooltipProvider delayDuration={250}><PreviewNavigation><PreviewControls /><AppShell user={user} profile={profile}><Content /></AppShell></PreviewNavigation></TooltipProvider></ThemeProvider>;
+  return <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} storageKey="fortmark.design-preview.theme"><TooltipProvider delayDuration={250}><PreviewNavigation><PreviewControls /><AppShell user={user} profile={profile} creationCapabilities={{ contacts: true, transactions: true, personalCalendar: true, sampleListing: false, sampleDocument: false }}><Content /></AppShell></PreviewNavigation></TooltipProvider></ThemeProvider>;
 }
 createRoot(document.getElementById("root")).render(<Preview />);

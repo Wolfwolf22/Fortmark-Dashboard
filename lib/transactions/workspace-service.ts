@@ -8,7 +8,7 @@ import { createPayloadHash, revisionMatches } from "../contacts/reliability.ts";
 import { canSee, canWrite } from "./domain.ts";
 import { transactionDeadlineState } from "./calendar-days.ts";
 import { ALL_STAGES, isTerminalStage } from "./stages.ts";
-import { getTransaction, visibleTo, transactionRevisionGuard, transactionWriteLocks, nextTransactionRevision, transactionWriteReplay, isTransactionGuardConflict, type TransactionContext, type ServiceResult } from "./service.ts";
+import { getTransaction, visibleTo, transactionActorGuard, transactionRevisionGuard, transactionWriteLocks, nextTransactionRevision, transactionWriteReplay, isTransactionGuardConflict, type TransactionContext, type ServiceResult } from "./service.ts";
 import { updateTransactionWorkspaceSchema, transactionDeadlineMutationSchema, type TransactionDetails, type TransactionWorkspace, type TransactionHistoryView } from "./workspace-domain.ts";
 import { transactionChecklistMutationSchema, checklistProgress, type TransactionChecklistItem } from "./checklist-domain.ts";
 import { transactionFilesEnabled } from "./transaction-file-storage.ts";
@@ -19,7 +19,7 @@ type Write = Parameters<TransactionContext["db"]["batch"]>[0][number];
 type Batch = Parameters<TransactionContext["db"]["batch"]>[0];
 async function load(ctx: TransactionContext, id: string, write = false): Promise<ServiceResult<TransactionRow>> {
   if (!isRecordId(id)) return { ok: false, reason: "not_found" };
-  const [row] = await ctx.db.select().from(transactions).where(and(eq(transactions.id, id), visibleTo(ctx.actor))).limit(1);
+  const [row] = await ctx.db.select().from(transactions).where(and(eq(transactions.id, id), visibleTo(ctx.actor), transactionActorGuard(ctx.actor))).limit(1);
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (write && !canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
   if (write && row.side === "gc") return { ok: false, reason: "gc_not_configured" };

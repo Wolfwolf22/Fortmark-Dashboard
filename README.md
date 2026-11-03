@@ -1,92 +1,95 @@
 # FortMark Dashboard
 
-Real estate, returned to its profession.
+The FortMark brokerage workspace: authenticated contacts, property research,
+showings and saved tours, transaction files, private calendar items and color labels.
+It is a Next.js dashboard zone served under `/dashboard` through the FortMark portal.
 
-The FortMark brokerage workspace: a production-quality Next.js UI running
-against a typed mock data layer. Every data access point is an adapter, so
-swapping mocks for real services is a one-file change per domain.
+## Start here
 
-## Run it
+- [Launch readiness](docs/LAUNCH_READINESS.md): current evidence, remaining staging gates and rollout order.
+- [Deployment architecture](docs/DEPLOYMENT.md): portal rewrite, Clerk and environment scoping.
+- [Internal calendar](docs/internal-calendar.md): personal items, source schedules and private color labels.
+- [Design system](docs/DESIGN-SYSTEM.md): shared visual foundations.
 
-```bash
-npm install
-npm run dev        # http://localhost:3000
-npm run build      # production build
-npm run typecheck  # tsc --noEmit
+Historical certification documents record the revisions named in those documents.
+They do not certify the current overhaul or the current state of a cloud deployment.
+
+## Local development and review
+
+Use Node.js 22 or newer and install the committed lockfile:
+
+```sh
+npm ci
+npm run typecheck
+npm test
 ```
 
-## Architecture seams
+For the closed synthetic design preview:
 
-### 1. Data adapters — `lib/data/adapters/`
+```sh
+node tools/design-preview/server.mjs
+```
 
-One file per domain: `listings`, `transactions`, `leads`, `calendar`,
-`documents`, `agents`, `market`, `messages`, `notifications`, `metrics`,
-`search`, `settings`. Each exports async functions returning the shapes in
-`lib/data/types.ts`. Components consume them only through the `useQuery` hook
-(`lib/data/hooks.ts`) — never the mock store directly.
+Open `http://127.0.0.1:4173/preview?view=%2Fcalendar&scenario=interactive`.
+The preview uses memory only. Reload discards its sample changes, and it cannot
+write to an account, database, MLS, calendar provider or file store.
 
-To go live on a domain, rewrite the bodies of that one adapter file (e.g.
-point `getListings` at the MLS/RESO API or Supabase). The types, hooks, and
-every component stay untouched. Mock mutations bump a version counter that
-refetches all consumers — the same contract a server mutation + revalidation
-will have.
+For the real application, configure a separate development Clerk instance and
+approved development resources using the names in `.env.example`, then use
+`npm run dev`. Next.js loads the local environment files; standalone operator
+scripts require their environment to be supplied explicitly. Never commit values.
 
-Mock data lives in `lib/data/mock/` (seeded, deterministic, South Florida).
-Listing "photos" are local SVG plates in `public/photos/`; the `photos` field
-is a URL array, so real MLS media drops in via the adapter.
+## Build verification
 
-### 2. AI client — `lib/ai/client.ts` + `app/api/chat/route.ts`
+```sh
+npm run build:verify-isolated
+```
 
-The UI consumes `sendMessage(messages, opts): AsyncIterable<string>` and
-knows nothing about the provider. The streaming route handler in
-`app/api/chat/route.ts` currently streams a mock reply; the
-`// TODO: connect provider` block is where the real model call goes
-(map provider deltas onto the same plain-text stream). Swapping in the real
-model is that one file.
+This verifies a real Next.js production build in a disposable source snapshot.
+It uses synthetic public auth configuration, blocks network access and excludes
+secret environment files. Dependencies and the Clerk prebuild patch are isolated
+from the working checkout. This is a compile check, not staging certification.
 
-Conversation history persists to `localStorage` (`fm.ai.threads.v1`) via
-`lib/ai/store.ts` — threads, per-message feedback, and the active thread id.
-Ids are counter-based (not random) so a server render and the first client
-render never disagree; the counter resumes past whatever rehydrates.
+`npm run build` is the deployment build: it invokes the migration guard before
+Next.js. A Preview build can apply migrations. Verify the exact project,
+branch, isolated database and restore point before pushing or deploying a branch
+that can trigger that command. Production promotion is a separate release step.
 
-`app/(app)/ai/page.tsx` owns the stream lifecycle: it appends an empty
-assistant turn, grows it token by token, and aborts through an
-`AbortController` when you press Stop. A stop before the first token removes
-the empty turn rather than leaving it in the transcript.
+The legacy `FM_PERSONAL_WORKSPACES_SETUP` direct-DDL path is retired. Workspaces
+are created through the normal committed migration journal with the other tables.
 
-### 3. Auth — `app/(auth)/` + `middleware.ts` + `lib/auth/session.ts`
+## Backing services and configuration
 
-Route groups are already split: `app/(auth)/login` and `app/(app)/...`.
-`middleware.ts` passes everything through behind a `// TODO: session check`
-marker; `lib/auth/session.ts` returns a mock session. When the provider
-lands, implement the check in those two files and the login form's submit
-handler — the routing structure doesn't change.
+- Clerk protects the dashboard and API routes. Brokerage identity and roles
+  control database access; private calendars, property lists and tours retain
+  owner scope even for Admin.
+- `PROFILE_DATABASE_ENABLED` enables the shared database identity. Contacts and
+  Transactions have their own source flags. `CALENDAR_DB_ENABLED` independently
+  enables personal items and labels after migration 0030.
+- Listings are read from the configured MLS feed. New listings are entered in
+  the MLS. The dashboard does not publish a listing to that feed.
+- Checklist and vendor evidence use a dedicated **private** Blob store and
+  explicit upload flag. The separate global Documents library remains unconfigured.
+- Source-backed calendar entries update their original showing, next action or
+  transaction deadline. Personal entries and labels are stored privately.
+- The assistant and external providers have separate opt-in flags. Messaging,
+  external calendar sync and other unconfigured integrations are not implied by
+  the dashboard UI.
 
-### 4. Suggestion chips — `lib/ai/suggestions.ts`
+Sample data is permitted only through explicit sample configuration and labelled
+preview surfaces. Production should use real sources or an honest unavailable state.
+The global New menu exposes only creation actions backed by the caller's role and
+configured source; unavailable direct entry points explain where the work belongs.
 
-The chips under the AI composer render exclusively from the exported
-`SUGGESTIONS` array. Edit labels, prompts, optional icons and descriptions in
-that one place. A chip fills its `prompt` into the composer (label when the
-prompt is empty) and focuses the caret — it never auto-sends.
+## Verification boundaries
 
-## Design system
+`npm test` covers pure decisions, real isolated PostgreSQL migrations and service
+queries, HTTP handlers, adapters, rendered components, privacy and recovery paths.
+The launch journey additionally closes and reopens its disposable persistent
+PostgreSQL database to verify saved state across the client workflow.
 
-`docs/DESIGN-SYSTEM.md` is the operative contract (tokens, typography,
-components, chart rules, copy rules); `docs/PLAN.md` holds the plan and its
-critique. In short: strict monochrome from the four FortMark tokens, Archivo
-only, status color confined to badge-sized pills, light and dark both
-first-class, everything keyboard-navigable.
-
-## Notes
-
-- Dashboard widget order is drag-reorderable and persists to
-  `localStorage` (`fm.dashboard.layout.v1`).
-- The top-bar period selector (Today / Week / Month / Quarter / Year) drives
-  every widget through `lib/stores/date-range.ts`.
-- ⌘K opens global search across listings, transactions, and contacts.
-- AI (`/ai`): thread sidebar, streaming transcript with markdown (tables,
-  code, quotes), Stop mid-stream, copy and thumbs feedback per reply.
-  Enter sends, Shift+Enter inserts a newline.
-- Messages (`/messages`): two-pane inbox filtered by search, participant
-  role, and unread. Opening a thread marks it read; replies go through
-  `sendThreadMessage`, which bumps the data version and refetches both panes.
+The isolated production build and closed design preview add compilation and visual
+evidence. A real staging release must still verify current cloud resource isolation,
+apply and verify its journal, sign in as approved synthetic roles, test persistence
+through the portal/API, and exercise the approved private file and MLS integrations.
+Those live checks cannot be replaced by local tests or an older certification report.

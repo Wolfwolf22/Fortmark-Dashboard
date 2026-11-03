@@ -37,7 +37,10 @@ try {
   const reused = await createTransaction(ctx, { ...body, addressLine1: "Changed" }, now); check("createkeycannotrebindpayload", !reused.ok && reused.reason === "request_conflict");
   check("agentscannotreadothersfile", !(await getTransactionWorkspace({ actor: other, db }, file.transaction.id, {}, now)).ok);
   check("brokerageadminsandcoordinatorsretainsupervisedvisibility", (await getTransactionWorkspace({ actor: admin, db }, file.transaction.id, {}, now)).ok && (await getTransactionWorkspace({ actor: coordinator, db }, file.transaction.id, {}, now)).ok);
+  check("staleclonedrolecannotreadworkspace", !(await getTransactionWorkspace(member, file.transaction.id, {}, now)).ok);
+  await db.update(dashboardUsers).set({ role: "member" }).where(eq(dashboardUsers.id, owner.userId));
   check("memberreadonlyworkspace", (await getTransactionWorkspace(member, file.transaction.id, {}, now)).ok && !(await updateTransactionWorkspace(member, file.transaction.id, updateInput(file), now)).ok);
+  await db.update(dashboardUsers).set({ role: "agent" }).where(eq(dashboardUsers.id, owner.userId));
   const edit = updateInput(file, { city: "Corrected city", closingDate: "2026-12-03", commissionFlatCents: 1000000, agentSplitBps: 7000, referralFeeBps: 1000, transactionFeeCents: 50000 });
   const changed = await updateTransactionWorkspace(ctx, file.transaction.id, edit, now); check("fullmetadataandtermseditCAS", changed.ok && changed.value.updatedAt !== file.updatedAt && changed.value.details.city === "Corrected city");
   file = changed.value; check("closingmetadataandpendingmilestonesynchronize", file.deadlines.filter(d => d.kind === "closing").length === 1 && file.deadlines.find(d => d.kind === "closing")?.dueDate === "2026-12-03" && file.details.closingDate === "2026-12-03");

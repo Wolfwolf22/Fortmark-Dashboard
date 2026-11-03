@@ -17,16 +17,20 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useUiStore } from "@/lib/stores/ui";
+import { useSessionUser } from "./session-user";
+import { useCreationCapabilities,canQuickCreate } from "./creation-capabilities";
 import { QuickCreateDialog } from "./quick-create-dialog";
 
 /** The "New" action menu — each entry opens the working quick-create dialog. */
 export function NewMenu() {
   const setQuickCreate = useUiStore((s) => s.setQuickCreate);
   const router = useRouter();
+  const capabilities=useCreationCapabilities(),role=useSessionUser().role,can=(kind:Parameters<typeof canQuickCreate>[0])=>canQuickCreate(kind,capabilities,role);
+  const showLauncher=["listing","transaction","lead","event","document"].some(kind=>can(kind as Parameters<typeof can>[0]));
 
   return (
     <>
-      <DropdownMenu>
+      {showLauncher&&<DropdownMenu>
         <DropdownMenuTrigger asChild>
           {/* One clear creation action; supporting utilities stay quiet. */}
           <Button className="h-11 w-11 shrink-0 px-0 md:w-auto md:px-3" aria-label="New" data-new-trigger>
@@ -35,29 +39,29 @@ export function NewMenu() {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48">
-          <DropdownMenuItem onSelect={() => setQuickCreate("listing")}>
+          {can("listing")&&<DropdownMenuItem onSelect={() => setQuickCreate("listing")}>
             <Building2 />
-            Listing
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setQuickCreate("transaction")}>
+            Sample listing
+          </DropdownMenuItem>}
+          {can("transaction")&&<DropdownMenuItem onSelect={() => setQuickCreate("transaction")}>
             <Workflow />
             Transaction
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setQuickCreate("lead")}>
+          </DropdownMenuItem>}
+          {can("lead")&&<DropdownMenuItem onSelect={() => setQuickCreate("lead")}>
             <UserPlus />
             Contact
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => router.push("/calendar?create=personal")}>
+          </DropdownMenuItem>}
+          {can("event")&&<DropdownMenuItem onSelect={() => router.push("/calendar?create=personal")}>
             <CalendarPlus />
             Calendar item
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setQuickCreate("document")}>
+          </DropdownMenuItem>}
+          {can("document")&&<DropdownMenuItem onSelect={() => setQuickCreate("document")}>
             <FilePlus2 />
-            Document
-          </DropdownMenuItem>
+            Sample document
+          </DropdownMenuItem>}
         </DropdownMenuContent>
-      </DropdownMenu>
-      <QuickCreateDialog />
+      </DropdownMenu>}
+      <QuickCreateDialog key="quick-create-dialog" />
     </>
   );
 }

@@ -1,10 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { neon } from '@neondatabase/serverless';
-// A narrowly scoped additive setup, separate from the existing migration runner.
-// No existing table or record is altered. Deployment fails if setup cannot finish.
+// Migration 0014 is already part of the atomic, journaled migration runner.
+// Retain a fail-closed message for old operator commands; never run direct DDL.
 if (process.env.FM_PERSONAL_WORKSPACES_SETUP === 'true') {
-  const url=process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
-  if(!url)throw new Error('Personal workspace database is not configured');
-  await neon(url).query(readFileSync('lib/db/migrations/0014_personal_workspaces.sql','utf8'));
-  console.log('Personal workspace table ready');
+  throw new Error('Legacy personal-workspace setup is retired. Use the reviewed atomic migration runner (npm run db:migrate).');
 }

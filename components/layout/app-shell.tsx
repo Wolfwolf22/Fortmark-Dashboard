@@ -11,6 +11,7 @@
  * the page inside `<PageTransition>` changes.
  */
 import * as React from "react";
+import { CreationCapabilitiesProvider,NO_CREATION_CAPABILITIES,type CreationCapabilities } from "./creation-capabilities";
 import { usePathname } from "next/navigation";
 import { pageTitleFor } from "@/components/layout/nav-items";
 import { TopBar } from "@/components/layout/top-bar";
@@ -42,14 +43,16 @@ function PageHeading() {
 export function AppShell({
   user,
   profile,
+  creationCapabilities=NO_CREATION_CAPABILITIES,
   children,
 }: {
   user: PublicSessionUser;
   profile: ShellProfile;
+  creationCapabilities?:CreationCapabilities;
   children: React.ReactNode;
 }) {
   return (
-    <SessionUserProvider user={user}>
+    <SessionUserProvider user={user}><CreationCapabilitiesProvider value={creationCapabilities}>
       <div className="flex min-h-screen flex-col">
         <TopBar profile={profile} />
         {/* Wide but bounded: dense at 1440, never stretched on ultrawide. */}
@@ -59,6 +62,6 @@ export function AppShell({
         </main>
         <CommandPalette />
       </div>
-    </SessionUserProvider>
+    </CreationCapabilitiesProvider></SessionUserProvider>
   );
 }

@@ -677,8 +677,10 @@ function readMigrations(): string {
   const dialog = strip(src("components/layout/quick-create-dialog.tsx"));
   check("ui dialog: price, address, close date, commission and MLS are never pre-filled from a contact", !/defaultValue=\{[^}]*(fromContact|contact)/.test(dialog) && !/name="price"[^>]*defaultValue|name="address"[^>]*defaultValue/.test(dialog));
   check("ui dialog: quick contact create asks for name, email, phone, source, birthday — and not intent", ["birthdayMonth", "birthdayDay", 'name="name"', 'name="email"', 'name="phone"', 'name="source"'].every((n) => dialog.includes(n)) && !dialog.includes('name="intent"') && !/Needs?\b.*required/.test(dialog));
-  check("ui dialog: after a contact is saved it opens on the new person", dialog.includes("goto = `/contacts?open=${encodeURIComponent(created.id)}`"));
-  check("ui dialog: a half-picked or impossible birthday is caught before sending", dialog.includes("isValidBirthday(month, day)") && dialog.includes("BirthdayInputError"));
+  const contactSubmit = dialog.slice(dialog.indexOf('} else if (kind === "lead") {'), dialog.indexOf('} else if (kind === "event")'));
+  check("ui dialog: after the frozen contact request is saved it opens on the acknowledged new person", /const\s+created\s*=\s*await\s+createLead\(attempt\.input\)/.test(contactSubmit) && /goto\s*=\s*`\/contacts\?open=\$\{encodeURIComponent\(created\.id\)\}`/.test(contactSubmit) && /contactRequest\.current\s*=\s*null/.test(contactSubmit) && /setContactUncertain\(false\)/.test(contactSubmit) && dialog.includes("router.push(goto)"));
+  const birthdayGuard = /if\s*\(\(month\s*\|\|\s*day\)\s*&&\s*!isValidBirthday\(month,\s*day\)\)\s*throw\s+new\s+BirthdayInputError\(\)/.exec(contactSubmit);
+  check("ui dialog: a new half-picked or impossible birthday is caught before capturing or sending the request", Boolean(birthdayGuard) && birthdayGuard!.index < contactSubmit.indexOf("contactCreateAttempt(") && contactSubmit.indexOf("contactCreateAttempt(") < contactSubmit.indexOf("createLead(attempt.input)") && /if\s*\(contactUncertain\s*&&\s*contactRequest\.current\)\s*input\s*=\s*contactRequest\.current\.input/.test(contactSubmit));
 
   // No M4, no M5.
   const journal = JSON.parse(src("lib/db/migrations/meta/_journal.json")) as { entries: { tag: string }[] };

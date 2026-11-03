@@ -6,6 +6,7 @@ import { PageIntro } from "@/components/common/page-intro";
 import { useSessionUser } from "@/components/layout/session-user";
 import { DayView } from "@/components/calendar/day-view";
 import { EventDetail } from "@/components/calendar/event-detail";
+import { CalendarSources } from "@/components/calendar/calendar-sources";
 import { openPersonalDialog, syncPersonalDialogRoute } from "@/components/calendar/personal-state";
 import { PersonalItemDialog } from "@/components/calendar/personal-item-dialog";
 import { ManageCalendarLabels } from "@/components/calendar/manage-calendar-labels";
@@ -23,10 +24,6 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
-export function CalendarSources({ page }: { page: CalendarPage }) {
- if (!page.sources.length) return null;
- return <div className="flex max-w-full flex-wrap gap-x-5 gap-y-2 text-[11px] leading-relaxed text-muted-foreground" aria-label="Calendar source status">{page.sources.map(source => <p key={source.kind}><span className="font-semibold text-foreground">{CALENDAR_KIND_LABELS[source.kind]}</span> · {source.status === "available" ? source.truncated ? `First ${page.items.filter(item => item.kind === source.kind).length} of ${source.total ?? "many"} loaded` : `${source.total ?? 0} loaded` : source.status === "not_configured" ? "Stored source not configured" : "Could not be loaded"}</p>)}</div>;
-}
 function CalendarPageInner() {
  const router = useRouter(), params = useSearchParams(), canWrite = useSessionUser().role !== "Member", [clock, setClock] = useState(() => new Date()), today = calendarToday(clock), rawView = params.get("view"), view: CalendarView = rawView === "week" || rawView === "month" ? rawView : "day", day = readCalendarDay(params.get("day"), clock), kinds = readCalendarKinds(params.get("kinds")), kindsKey = kinds.join(","), range = calendarQueryRange(view, day), key = JSON.stringify({ ...range, kinds: kindsKey });
  const routeItem=params.get("item"),routeCreate=params.get("create")==="personal";

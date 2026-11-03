@@ -1,5 +1,8 @@
 # Deployment — Clerk authentication and the FortMark dashboard zone
 
+> Current launch status and staging gates: [LAUNCH_READINESS.md](LAUNCH_READINESS.md).
+> Historical deployment/certification details do not certify the current candidate.
+
 ## Architecture
 
 The dashboard is a **zone** of the FortMark portal, not a separate site.
@@ -72,9 +75,10 @@ Preview deployment at the production Clerk instance.
 
 ## Vercel steps (still required)
 
-1. Create a Vercel project for `Wolfwolf22/Fortmark-Dashboard` — **one does
-   not exist yet.** Do not attach `app.fortmark.net` to it; the domain stays
-   on `fortmark-app`.
+1. Use the existing `fortmark-dashboard` Vercel project for
+   `Wolfwolf22/Fortmark-Dashboard`. Re-verify its current team, Git linkage and
+   target environment before changing it. Do not attach `app.fortmark.net` to
+   the dashboard project; the portal owns that origin.
 2. Set the dashboard project's Production Branch, and add the environment
    variables above to Development / Preview / Production separately.
 3. On the **fortmark-app** project set `DASHBOARD_ORIGIN` to the dashboard

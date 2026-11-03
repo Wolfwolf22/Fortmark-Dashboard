@@ -91,7 +91,7 @@ export async function getTransactionChecklistAttachment(ctx: TransactionContext,
   const [attachment] = await ctx.db.select().from(transactionChecklistAttachments).where(and(eq(transactionChecklistAttachments.id, attachmentId), eq(transactionChecklistAttachments.transactionId, id), isNull(transactionChecklistAttachments.removedAt))).limit(1); if (!attachment) return { ok: false, reason: "not_found" };
   const item = await load(ctx, id, attachment.checklistItemId); if (!item.ok) return item;
   const result = await storage.get(attachment.storagePath); if (!result.ok) return { ok: false, reason: result.reason === "not_configured" ? "attachment_not_configured" : "attachment_unavailable" };
-  const current = await load(ctx, id, attachment.checklistItemId), [stillActive] = current.ok ? await ctx.db.select({ id: transactionChecklistAttachments.id }).from(transactionChecklistAttachments).where(and(eq(transactionChecklistAttachments.id, attachmentId), activeAttachments(id, attachment.checklistItemId), eq(transactionChecklistAttachments.storagePath, attachment.storagePath), sql`date_trunc('milliseconds',${transactionChecklistAttachments.updatedAt})=${attachment.updatedAt.toISOString()}::timestamptz`)).limit(1) : [];
+  const current = await load(ctx, id, attachment.checklistItemId), [stillActive] = current.ok ? await ctx.db.select({ id: transactionChecklistAttachments.id }).from(transactionChecklistAttachments).innerJoin(transactions, eq(transactions.id, transactionChecklistAttachments.transactionId)).where(and(eq(transactionChecklistAttachments.id, attachmentId), activeAttachments(id, attachment.checklistItemId), eq(transactionChecklistAttachments.storagePath, attachment.storagePath), sql`date_trunc('milliseconds',${transactionChecklistAttachments.updatedAt})=${attachment.updatedAt.toISOString()}::timestamptz`, visibleTo(ctx.actor), actorGuard(ctx))).limit(1) : [];
   if (!current.ok || !stillActive || result.sizeBytes !== attachment.sizeBytes) { await result.stream.cancel(); return !current.ok ? current : { ok: false, reason: stillActive ? "attachment_unavailable" : "not_found" }; }
   return { ok: true, value: { stream: result.stream, filename: attachment.filename, contentType: attachment.contentType, sizeBytes: attachment.sizeBytes } };
 }
@@ -110,8 +110,10 @@ export async function setTransactionAttachmentRequirement(ctx: TransactionContex
   return getTransactionWorkspace(ctx, id, {}, now);
 }
 export async function getChecklistAttachmentDefaults(ctx: TransactionContext): Promise<ServiceResult<ChecklistAttachmentDefaults>> {
+  if (!await currentActor(ctx)) return { ok: false, reason: "forbidden" };
   const rows = await ctx.db.select().from(transactionChecklistTemplateSettings).where(eq(transactionChecklistTemplateSettings.brokerageKey, ctx.actor.brokerageKey));
   const byKey = new Map(rows.map(row => [row.templateKey, row]));
+  if (!await currentActor(ctx)) return { ok: false, reason: "forbidden" };
   return { ok: true, value: { items: DEFAULT_TRANSACTION_CHECKLIST.map(item => ({ templateKey: item.templateKey, label: item.label, stage: item.stage, attachmentRequired: byKey.get(item.templateKey)?.attachmentRequired ?? false, updatedAt: byKey.get(item.templateKey)?.updatedAt.toISOString() ?? null })), canManage: ctx.actor.role === "admin" } };
 }
 export async function updateChecklistAttachmentDefault(ctx: TransactionContext, input: unknown, now = new Date()): Promise<ServiceResult<ChecklistAttachmentDefaults>> {

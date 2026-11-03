@@ -16,17 +16,16 @@ type Batch = Parameters<TransactionContext["db"]["batch"]>[0];
 type Write = Batch[number];
 type Scope = { row: TransactionRow; detail: TransactionVendorEngagementRow; isCurrent: boolean };
 const actorGuard = (ctx: TransactionContext) => sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${ctx.actor.userId}::uuid and ${dashboardUsers.role}=${ctx.actor.role} and ${dashboardUsers.status}='active')`;
-function currentSelection(id: string, detail: TransactionVendorEngagementRow) { return and(eq(transactionVendorSelections.transactionId, id), eq(transactionVendorSelections.role, detail.role), eq(transactionVendorSelections.vendorId, detail.vendorId), eq(transactionVendorSelections.detailId, detail.id), eq(transactionVendorSelections.status, "selected")); }
+function currentSelection(id: string, detail: Pick<TransactionVendorEngagementRow, "id" | "role" | "vendorId"> | typeof transactionVendorEngagements) { return and(eq(transactionVendorSelections.transactionId, id), eq(transactionVendorSelections.role, detail.role), eq(transactionVendorSelections.vendorId, detail.vendorId), eq(transactionVendorSelections.detailId, detail.id), eq(transactionVendorSelections.status, "selected")); }
 async function load(ctx: TransactionContext, id: string, detailId: string, write = false): Promise<ServiceResult<Scope>> {
   if (!isRecordId(id) || !isRecordId(detailId)) return { ok: false, reason: "not_found" };
-  const [found] = await ctx.db.select({ row: transactions, detail: transactionVendorEngagements }).from(transactions).innerJoin(transactionVendorEngagements, eq(transactionVendorEngagements.transactionId, transactions.id)).where(and(eq(transactions.id, id), eq(transactionVendorEngagements.id, detailId), visibleTo(ctx.actor), actorGuard(ctx))).limit(1);
+  const [found] = await ctx.db.select({ row: transactions, detail: transactionVendorEngagements, selectionId: transactionVendorSelections.id }).from(transactions).innerJoin(transactionVendorEngagements, eq(transactionVendorEngagements.transactionId, transactions.id)).leftJoin(transactionVendorSelections, currentSelection(id, transactionVendorEngagements)).where(and(eq(transactions.id, id), eq(transactionVendorEngagements.id, detailId), visibleTo(ctx.actor), actorGuard(ctx))).limit(1);
   if (!found || !canSee(ctx.actor, found.row)) return { ok: false, reason: "not_found" };
-  const [selection] = await ctx.db.select({ id: transactionVendorSelections.id }).from(transactionVendorSelections).where(currentSelection(id, found.detail)).limit(1);
   if (write && !canWrite(ctx.actor, found.row)) return { ok: false, reason: "forbidden" };
   if (write && found.row.side === "gc") return { ok: false, reason: "gc_not_configured" };
   if (write && isTerminalStage(found.row.stage)) return { ok: false, reason: "invalid_transition" };
-  if (write && !selection) return { ok: false, reason: "vendor_detail_not_current" };
-  return { ok: true, value: { ...found, isCurrent: Boolean(selection) } };
+  if (write && !found.selectionId) return { ok: false, reason: "vendor_detail_not_current" };
+  return { ok: true, value: { row: found.row, detail: found.detail, isCurrent: Boolean(found.selectionId) } };
 }
 function liveAttachments(id: string, detailId: string) { return and(eq(transactionVendorAttachments.transactionId, id), eq(transactionVendorAttachments.detailId, detailId), isNull(transactionVendorAttachments.removedAt)); }
 function detailGuard(scope: Scope, expected: string) { return and(eq(transactionVendorEngagements.id, scope.detail.id), eq(transactionVendorEngagements.transactionId, scope.row.id), eq(transactionVendorEngagements.role, scope.detail.role), eq(transactionVendorEngagements.vendorId, scope.detail.vendorId), sql`date_trunc('milliseconds',${transactionVendorEngagements.updatedAt})=${expected}::timestamptz`); }
@@ -107,7 +106,7 @@ export async function getTransactionVendorAttachment(ctx: TransactionContext, id
   const [attachment] = await ctx.db.select({ file: transactionVendorAttachments }).from(transactionVendorAttachments).innerJoin(transactions, eq(transactions.id, transactionVendorAttachments.transactionId)).where(and(eq(transactionVendorAttachments.id, attachmentId), eq(transactionVendorAttachments.transactionId, id), isNull(transactionVendorAttachments.removedAt), visibleTo(ctx.actor), actorGuard(ctx))).limit(1); if (!attachment) return { ok: false, reason: "not_found" };
   const a = attachment.file, loaded = await load(ctx, id, a.detailId); if (!loaded.ok) return loaded;
   const result = await storage.get(a.storagePath); if (!result.ok) return { ok: false, reason: result.reason === "not_configured" ? "attachment_not_configured" : "attachment_unavailable" };
-  const current = await load(ctx, id, a.detailId), [stillActive] = current.ok ? await ctx.db.select({ id: transactionVendorAttachments.id }).from(transactionVendorAttachments).where(and(eq(transactionVendorAttachments.id, attachmentId), liveAttachments(id, a.detailId), eq(transactionVendorAttachments.storagePath, a.storagePath), sql`date_trunc('milliseconds',${transactionVendorAttachments.updatedAt})=${a.updatedAt.toISOString()}::timestamptz`)).limit(1) : [];
+  const current = await load(ctx, id, a.detailId), [stillActive] = current.ok ? await ctx.db.select({ id: transactionVendorAttachments.id }).from(transactionVendorAttachments).innerJoin(transactions, eq(transactions.id, transactionVendorAttachments.transactionId)).where(and(eq(transactionVendorAttachments.id, attachmentId), liveAttachments(id, a.detailId), eq(transactionVendorAttachments.storagePath, a.storagePath), sql`date_trunc('milliseconds',${transactionVendorAttachments.updatedAt})=${a.updatedAt.toISOString()}::timestamptz`, visibleTo(ctx.actor), actorGuard(ctx))).limit(1) : [];
   if (!current.ok || !stillActive || result.sizeBytes !== a.sizeBytes) { await result.stream.cancel(); return !current.ok ? current : { ok: false, reason: stillActive ? "attachment_unavailable" : "not_found" }; }
   return { ok: true, value: { stream: result.stream, filename: a.filename, contentType: a.contentType, sizeBytes: a.sizeBytes } };
 }

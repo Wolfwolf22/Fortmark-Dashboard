@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { contactsSource } from "@/lib/contacts/http";
 import { transactionsSource } from "@/lib/transactions/http";
 import { listingAvailability } from "@/lib/mls/config";
-import { aiActionsEnabled, sampleDashboardEnabled } from "@/lib/flags";
+import { aiActionsEnabled, sampleDashboardEnabled, calendarDatabaseEnabled, contactsDatabaseEnabled, transactionsDatabaseEnabled } from "@/lib/flags";
 import { assistantHealth } from "@/lib/ai/availability";
+import { transactionFilesEnabled } from "@/lib/transactions/transaction-file-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +23,7 @@ export const dynamic = "force-dynamic";
  * whether it is serving real records *before* signing into it, and a readiness
  * probe that needs a session is not a readiness probe.
  *
- * It therefore says the absolute minimum. Four coarse labels, no counts, no
+ * It therefore says the absolute minimum. Coarse source labels, no counts, no
  * record, no variable name, no variable value, no database identity, no error
  * text. Nothing here narrows an attack: it reports the same configuration an
  * authenticated user could infer in one click, and withholding it buys secrecy
@@ -69,6 +70,13 @@ export async function GET() {
          * the allowlist, resolve to a brokerage identity, and own the record.
          */
         actions: aiActionsEnabled() ? "enabled" : "disabled",
+        /** Configuration selection only; authenticated reads verify reachability. */
+        calendar: {
+          showingsAndTours: contactsDatabaseEnabled() ? "db" : "not_configured",
+          transactionDeadlines: transactionsDatabaseEnabled() ? "db" : "not_configured",
+          personalItemsAndLabels: calendarDatabaseEnabled() ? "db" : "not_configured",
+        },
+        transactionFiles: transactionsDatabaseEnabled() && transactionFilesEnabled() ? "uploads-enabled" : "uploads-disabled",
       },
     },
     { headers: { "Cache-Control": "no-store" } }

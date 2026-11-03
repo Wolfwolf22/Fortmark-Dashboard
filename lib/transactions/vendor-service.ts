@@ -21,6 +21,7 @@ const admin = (ctx: TransactionContext) => ctx.actor.role === "admin";
 const actorGuard = (ctx: TransactionContext) => sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${ctx.actor.userId}::uuid and ${dashboardUsers.role}=${ctx.actor.role} and ${dashboardUsers.status}='active')`;
 const adminGuard = (ctx: TransactionContext) => sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${ctx.actor.userId}::uuid and ${dashboardUsers.role}='admin' and ${dashboardUsers.status}='active')`;
 const vendorScope = (ctx: TransactionContext, id: string) => and(eq(brokerageVendors.id, id), eq(brokerageVendors.brokerageKey, ctx.actor.brokerageKey));
+async function currentActor(ctx: TransactionContext) { const [row] = await ctx.db.select({ id: dashboardUsers.id }).from(dashboardUsers).where(and(eq(dashboardUsers.id, ctx.actor.userId), eq(dashboardUsers.role, ctx.actor.role), eq(dashboardUsers.status, "active"))).limit(1); return Boolean(row); }
 function vendorView(row: VendorRow): BrokerageVendorView { return { id: row.id, name: row.name, company: row.company, email: row.email, phone: row.phone, categories: row.categories as VendorRole[], approved: row.approved, updatedAt: row.updatedAt.toISOString() }; }
 function directoryGuardConflict(error: unknown): boolean {
   if (isTransactionGuardConflict(error)) return true;
@@ -29,18 +30,20 @@ function directoryGuardConflict(error: unknown): boolean {
   return false;
 }
 async function directoryReplay(ctx: TransactionContext, requestId: string, hash: string, action: "create" | "edit"): Promise<VendorResult<BrokerageVendorView> | null> {
-  if (!admin(ctx)) return { ok: false, reason: "forbidden" };
+  if (!admin(ctx) || !await currentActor(ctx)) return { ok: false, reason: "forbidden" };
   const [receipt] = await ctx.db.select().from(brokerageVendorWriteRequests).where(and(eq(brokerageVendorWriteRequests.actorUserId, ctx.actor.userId), eq(brokerageVendorWriteRequests.requestId, requestId))).limit(1);
   if (!receipt) return null;
   if (receipt.brokerageKey !== ctx.actor.brokerageKey) return { ok: false, reason: "not_found" };
-  const [row] = await ctx.db.select().from(brokerageVendors).where(vendorScope(ctx, receipt.vendorId)).limit(1);
+  const [row] = await ctx.db.select().from(brokerageVendors).where(and(vendorScope(ctx, receipt.vendorId), actorGuard(ctx))).limit(1);
   if (!row) return { ok: false, reason: "not_found" };
   return receipt.payloadHash === hash && receipt.action === action ? { ok: true, value: vendorView(row) } : { ok: false, reason: "request_conflict" };
 }
 /** Ordinary brokerage actors read approved choices; only the Admin receives draft/retired entries. */
 export async function listBrokerageVendors(ctx: TransactionContext, options: { role?: VendorRole } = {}): Promise<VendorResult<BrokerageVendorDirectory>> {
   if (options.role && !VENDOR_ROLES.includes(options.role)) return { ok: false, reason: "invalid_transaction" };
+  if (!await currentActor(ctx)) return { ok: false, reason: "forbidden" };
   const rows = await ctx.db.select().from(brokerageVendors).where(and(eq(brokerageVendors.brokerageKey, ctx.actor.brokerageKey), admin(ctx) ? undefined : eq(brokerageVendors.approved, true), options.role ? sql`${options.role}=any(${brokerageVendors.categories})` : undefined)).orderBy(asc(brokerageVendors.name), asc(brokerageVendors.id));
+  if (!await currentActor(ctx)) return { ok: false, reason: "forbidden" };
   return { ok: true, value: { items: rows.map(vendorView), canManage: admin(ctx) } };
 }
 export async function createBrokerageVendor(ctx: TransactionContext, input: unknown, now = new Date()): Promise<VendorResult<BrokerageVendorView>> {
@@ -76,7 +79,7 @@ export async function readTransactionVendorSelections(ctx: TransactionContext, i
     .innerJoin(transactions, eq(transactions.id, transactionVendorSelections.transactionId))
     .leftJoin(brokerageVendors, and(eq(brokerageVendors.id, transactionVendorSelections.vendorId), eq(brokerageVendors.brokerageKey, ctx.actor.brokerageKey)))
     .leftJoin(transactionVendorEngagements, and(eq(transactionVendorEngagements.id, transactionVendorSelections.detailId), eq(transactionVendorEngagements.transactionId, transactionVendorSelections.transactionId), eq(transactionVendorEngagements.role, transactionVendorSelections.role), eq(transactionVendorEngagements.vendorId, transactionVendorSelections.vendorId)))
-    .where(and(eq(transactionVendorSelections.transactionId, id), visibleTo(ctx.actor))).orderBy(transactionVendorSelections.role);
+    .where(and(eq(transactionVendorSelections.transactionId, id), visibleTo(ctx.actor), actorGuard(ctx))).orderBy(transactionVendorSelections.role);
   return rows.map(({ selection: s, current, detailId }) => ({ id: s.id, role: s.role as VendorRole, status: s.status as TransactionVendorSelectionView["status"], vendorId: s.vendorId, vendorName: s.vendorName, company: s.company, email: s.email, phone: s.phone, detailId: s.status === "selected" ? detailId : null, approved: Boolean(s.status === "selected" && current?.approved && current.categories.includes(s.role)), updatedAt: s.updatedAt.toISOString() }));
 }
 /** One reviewed role assignment. No client can submit vendor identity snapshots or approval. */

@@ -5,11 +5,11 @@ import { drizzle } from "drizzle-orm/pglite";
 import type { Db } from "../../lib/db/client.ts";
 import * as schema from "../../lib/db/schema.ts";
 
-export async function createLocalContactDb() {
-  const pg = new PGlite();
+export async function createLocalContactDb(options: { dataDir?: string; migrate?: boolean } = {}) {
+  const pg = new PGlite(options.dataDir);
   const folder = new URL("../../lib/db/migrations/", import.meta.url);
   const journal = JSON.parse(readFileSync(new URL("meta/_journal.json", folder), "utf8")) as { entries: { tag: string }[] };
-  for (const entry of journal.entries) await pg.exec(readFileSync(new URL(`${entry.tag}.sql`, folder), "utf8"));
+  if (options.migrate !== false) for (const entry of journal.entries) await pg.exec(readFileSync(new URL(`${entry.tag}.sql`, folder), "utf8"));
   const base = drizzle(pg, { schema });
   // Neon batches execute prepared statements as a single transaction. Mirror
   // that transport contract while the actual SQL is evaluated by PostgreSQL.

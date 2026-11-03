@@ -105,6 +105,17 @@ export function visibleTo(actor: Actor) {
   const tenant = eq(transactions.brokerageKey, actor.brokerageKey);
   return isPrivileged(actor) ? tenant : and(tenant, eq(transactions.agentUserId, actor.userId));
 }
+/** A resolved request actor can become stale while dependent reads are awaiting. */
+export function transactionActorGuard(actor: Actor) {
+  return sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${actor.userId}::uuid and ${dashboardUsers.role}=${actor.role} and ${dashboardUsers.status}='active')`;
+}
+
+async function stillReadable(ctx: { actor: Actor; db: Db }, rows: TransactionRow[]): Promise<Set<string>> {
+  if (!rows.length) return new Set();
+  const current = await ctx.db.select({ id: transactions.id, updatedAt: transactions.updatedAt }).from(transactions).where(and(inArray(transactions.id, rows.map(row => row.id)), visibleTo(ctx.actor), transactionActorGuard(ctx.actor)));
+  const revisions = new Map(rows.map(row => [row.id, row.updatedAt.getTime()]));
+  return new Set(current.filter(row => revisions.get(row.id) === row.updatedAt.getTime()).map(row => row.id));
+}
 
 async function bundle(db: Db, rows: TransactionRow[], now: Date): Promise<Transaction[]> {
   if (rows.length === 0) return [];
@@ -154,7 +165,7 @@ export async function listTransactions(
   range?: DateRange,
   now: Date = new Date()
 ): Promise<Transaction[]> {
-  const clauses = [visibleTo(ctx.actor)];
+  const clauses = [visibleTo(ctx.actor), transactionActorGuard(ctx.actor)];
   if (filters.stage?.length) clauses.push(inArray(transactions.stage, filters.stage));
   if (filters.side?.length) clauses.push(inArray(transactions.side, filters.side));
   if (filters.agentId && isPrivileged(ctx.actor)) clauses.push(eq(transactions.agentUserId, filters.agentId));
@@ -186,7 +197,8 @@ export async function listTransactions(
     .where(and(...clauses))
     .orderBy(sql`${transactions.closingDate} asc nulls last`, desc(transactions.createdAt))
     .limit(MAX_LIST_ROWS);
-  return bundle(ctx.db, rows, now);
+  const values = await bundle(ctx.db, rows, now), readable = await stillReadable(ctx, rows);
+  return values.filter(value => readable.has(value.id));
 }
 
 export async function getTransaction(
@@ -198,11 +210,12 @@ export async function getTransaction(
   const rows = await ctx.db
     .select()
     .from(transactions)
-    .where(and(eq(transactions.id, id), visibleTo(ctx.actor)))
+    .where(and(eq(transactions.id, id), visibleTo(ctx.actor), transactionActorGuard(ctx.actor)))
     .limit(1);
   const row = rows[0];
   if (!row || !canSee(ctx.actor, row)) return null;
-  return (await bundle(ctx.db, [row], now))[0] ?? null;
+  const values = await bundle(ctx.db, [row], now);
+  return (await stillReadable(ctx, [row])).has(id) ? values[0] ?? null : null;
 }
 
 export type TransactionContext = { actor: Actor; db: Db };
