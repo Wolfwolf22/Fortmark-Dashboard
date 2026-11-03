@@ -23,7 +23,12 @@ import {
   FALLBACK_PLATE,
   apiPath,
   assetPath,
+  dashboardUrl,
   isSafeReturnPath,
+  portalOrigin,
+  portalUrl,
+  signInUrl,
+  toSafeOrigin,
 } from "../lib/routes.ts";
 
 let passed = 0;
@@ -138,6 +143,42 @@ check("javascript scheme rejected", !isSafeReturnPath("javascript:alert(1)"));
 check("bare word rejected", !isSafeReturnPath("evil.com"));
 check("empty rejected", !isSafeReturnPath(""));
 check("null rejected", !isSafeReturnPath(null));
+
+// --- Portal origin normalization and sign-in recovery ----------------------
+for (const [value, expected] of [
+  ["https://APP.FORTMARK.NET/", "https://app.fortmark.net"],
+  [" https://app.fortmark.net/dashboard?tab=profile#account ", "https://app.fortmark.net"],
+  ["http://localhost:4173/dashboard", "http://localhost:4173"],
+  ["http://[::1]:4173/", "http://[::1]:4173"],
+] as const) check(`configured URL becomes a bare origin: ${value}`, toSafeOrigin(value) === expected);
+for (const value of [undefined, null, 42, {}, [], "", "   ", "app.fortmark.net", "ht!tp://nope", "https:///", "//example.com", "ftp://example.com", "javascript:alert(1)", "data:text/html,example", "https://user:password@example.com", "https://user@example.com"]) {
+  check(`unsafe configured origin is refused: ${JSON.stringify(value)}`, toSafeOrigin(value) === null);
+}
+{
+  const previous = process.env.NEXT_PUBLIC_APP_URL;
+  try {
+    process.env.NEXT_PUBLIC_APP_URL = "https://portal.example.test/dashboard?tab=settings#profile";
+    const returnPath = "/dashboard/contacts?open=client-123&tab=notes";
+    const redirected = new URL(signInUrl(returnPath));
+    check("sign-in stays on the normalized portal origin", redirected.origin === "https://portal.example.test");
+    check("sign-in stays outside the dashboard zone", redirected.pathname === "/sign-in");
+    check("safe deep link and query round-trip unchanged", redirected.searchParams.get("redirect_url") === `https://portal.example.test${returnPath}`);
+    check("dashboard home does not double the configured basePath", dashboardUrl() === "https://portal.example.test/dashboard");
+    check("portal landing drops the configured path and query", portalUrl() === "https://portal.example.test");
+    check("account management stays in the portal zone", accountUrl() === "https://portal.example.test/account");
+    for (const hostile of ["//evil.example", "https://evil.example", "/\\evil.example", "/x://evil.example", "javascript:alert(1)"]) {
+      check(`hostile return target is absent from sign-in: ${hostile}`, !new URL(signInUrl(hostile)).searchParams.has("redirect_url"));
+    }
+    for (const invalid of ["app.fortmark.net", "javascript:alert(1)", "https://user:password@example.com", ""]) {
+      process.env.NEXT_PUBLIC_APP_URL = invalid;
+      const relative = signInUrl(returnPath), resolved = new URL(relative, "https://request.example.test");
+      check(`invalid configured origin safely degrades: ${invalid}`, portalOrigin() === "" && relative.startsWith("/sign-in?") && resolved.origin === "https://request.example.test" && resolved.searchParams.get("redirect_url") === returnPath);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+    else process.env.NEXT_PUBLIC_APP_URL = previous;
+  }
+}
 
 // --- basePath asset resolution (Phase 13 regression) -----------------------
 // Raw <img src> is not rewritten by Next under a basePath, which 404'd every

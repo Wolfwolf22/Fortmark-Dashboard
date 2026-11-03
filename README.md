@@ -50,10 +50,17 @@ It uses synthetic public auth configuration, blocks network access and excludes
 secret environment files. Dependencies and the Clerk prebuild patch are isolated
 from the working checkout. This is a compile check, not staging certification.
 
-`npm run build` is the deployment build: it invokes the migration guard before
-Next.js. A Preview build can apply migrations. Verify the exact project,
-branch, isolated database and restore point before pushing or deploying a branch
-that can trigger that command. Production promotion is a separate release step.
+`npm run build` is the deployment build. Production first runs the pinned-endpoint
+release gate, checks the existing migration ledger, applies the committed batch
+atomically and verifies the current schema. Any failure stops before Next.js.
+Preview/local retain the existing migration guard; Preview builds can apply
+migrations. Verify the exact project, branch, database and restore point before
+pushing or deploying. Keep traffic on the prior artifact until the candidate is
+verified and explicitly promoted.
+
+Automatic Vercel deployments are disabled only for the local review branch
+`codex/design-identity-foundation`. Publishing that branch must not implicitly
+migrate a Preview database. The configured Production branch remains unchanged.
 
 The legacy `FM_PERSONAL_WORKSPACES_SETUP` direct-DDL path is retired. Workspaces
 are created through the normal committed migration journal with the other tables.

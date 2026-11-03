@@ -65,10 +65,9 @@ Preview deployment at the production Clerk instance.
 2. Confirm the sign-in URL is `/sign-in` and that
    `redirect_url` is permitted for same-origin targets — this is what returns
    a user to the deep link they originally requested.
-3. Decide the role source. The dashboard reads, in priority order:
-   - Clerk **organization role** (`org:admin` maps to Admin), then
-   - server-managed `publicMetadata.fortmarkRole`.
-   Anything absent or unrecognised resolves to the non-privileged **Member**.
+3. Existing `dashboard_users.role` and status govern stored brokerage access.
+   The server-managed Clerk role is only the bootstrap fallback when the database
+   identity is absent. Unrecognised fallback roles resolve to **Member**.
    `unsafeMetadata` is never consulted — it is user-editable.
 4. Collect the Clerk user IDs (`user_…`) that should reach the dashboard and
    put them in `FORTMARK_ALLOWED_CLERK_USER_IDS`.

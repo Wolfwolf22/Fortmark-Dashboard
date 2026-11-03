@@ -33,14 +33,30 @@ export const ROUTES = {
   settings: "/settings",
 } as const;
 
+/** Normalize configured portal URLs without letting malformed values throw in redirects. */
+export function toSafeOrigin(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (!url.hostname || url.username || url.password) return null;
+  // Only the origin belongs here: /dashboard, a query or a fragment must not
+  // become part of the portal prefix or double the dashboard basePath.
+  return url.origin;
+}
+
 /**
- * Canonical portal origin. Falls back to a relative origin in the browser so
- * local development works without extra configuration; server code that needs
- * an absolute URL should pass an explicit origin.
+ * Canonical portal origin, browser origin, or an empty server fallback.
+ * An invalid configuration must degrade to a relative portal link rather than
+ * making the sign-in redirect throw across the protected dashboard zone.
  */
 export function portalOrigin(): string {
-  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (configured) return configured.replace(/\/+$/, "");
+  const configured = toSafeOrigin(process.env.NEXT_PUBLIC_APP_URL);
+  if (configured) return configured;
   if (typeof window !== "undefined") return window.location.origin;
   return "";
 }

@@ -1,19 +1,89 @@
-# Launch readiness — 2026-11-02
+# Launch readiness — 2026-11-03
 
 ## Current decision
 
-The overhaul is being prepared for an isolated staging validation. Local tests,
-a real Next.js production compile and a persistent client-journey rehearsal are
-release evidence. They do **not** certify the current cloud environment.
+The user has now explicitly requested the complete local overhaul in Production
+using the existing real brokerage data. This supersedes the earlier staging-only
+scope. Live route maps are deferred at the user's request. The two named release
+resources were separately approved: a fresh Production Neon snapshot and a private
+transaction attachment store. Production publication, migration and traffic
+promotion remain pending verification below; local tests alone do not certify a
+running cloud deployment.
 
 The connected Vercel account lists `fortmark-dashboard`
 (`prj_5KVjhWtseC2mnPMkMU35D9F40wQV`) in team
 `team_lrHGYzrhpDXRjeAepo6ezt7Q`, alongside the `fortmark-app` portal.
 Vercel team authorization is now working. Current cloud metadata was inspected;
-the existing deployments predate this overhaul. Staging resource isolation and
-live migration state remain unverified. No remote push, deployment, environment
-change or migration was performed. The one confirmed cloud resource change is
-the obsolete Preview branch deletion recorded below.
+the existing deployments predate this overhaul. The live read-only Production ledger and catalog have now been checked. No remote
+push or migration has run yet.
+The approved private store and fresh snapshot have now been created; configuration
+and deployment evidence must be recorded as release work completes.
+
+### Authorized Production release preparation
+
+- Fresh data-and-schema snapshot: `br-proud-waterfall-avarzu8n`,
+  `pre-overhaul-production-20261103T0438Z`, from `br-bitter-cake-av7pmzth`.
+  Provider console creation time: November 2, 2026, 23:46:06 Eastern; expiration
+  **Never**. No migration is applied to this recovery branch.
+- Dedicated private Blob store: `store_NSTN5f48IHugiItT`,
+  `fortmark-transaction-files-production`, region `iad1`. Its connection uses only
+  Production and the `TRANSACTION_FILES_BLOB` prefix; credentials are never copied
+  or printed.
+- Production database metadata confirms `neondb`, owned by `neondb_owner`.
+  The verified endpoint `ep-delicate-morning-avh7x6vk` uses the project's `c-11`
+  regional gateway. Its normalized hostname fingerprint is `23deffc7e4e5`,
+  matching the currently serving Production build's existing log.
+- `deployment-build.mjs` makes the standard Production build invoke the
+  production-only release gate before Next. Both injected URLs must independently
+  match the fixed provider endpoint/region/database, and the unpooled session must
+  be direct. A missing/unknown ledger or schema mismatch stops the release.
+- The exact documented migration `0009` CRLF hash is acknowledged explicitly;
+  no migration history is rewritten. Other hash/timestamp differences refuse.
+- Portal-origin normalization from the preserved middleware hotfix is selectively
+  integrated with the current auth model; obsolete branch implementations are not
+  merged wholesale.
+
+### Concrete Production execution plan
+
+1. Publish the reviewed `codex/design-identity-foundation` commit. Its committed
+   Vercel Git rule suppresses automatic deployment for that exact review branch.
+2. Create only two new Production variables: `CALENDAR_DB_ENABLED=1` and
+   `TRANSACTION_FILES_ENABLED=1`. Preserve all existing core, MLS, sample and
+   routing settings and credentials.
+3. Temporarily change `autoAssignCustomDomains` from its observed `true` to
+   `false` so the actual Production build cannot take traffic before review.
+   Restore the original setting on completion or failure.
+4. Build the exact reviewed SHA as an actual Production artifact. The ordinary
+   package build runs the pinned endpoint migration gate under one session lock,
+   applies the 17 pending journal migrations atomically, verifies all 31 entries
+   and current schema, and then runs the approved-store private-file gate. That
+   gate creates one 68-byte synthetic PNG at fresh UUIDs, reads and verifies its
+   checksum, and removes only its own generated object. It creates no client or
+   transaction rows and sends no notifications. Next must then build successfully.
+5. Verify the artifact's SHA, release reports and real source health before
+   moving traffic. Fast-forward the tracked Production Git branch from
+   `4251392e0106e044138eae1fe25ca57c7e7043c2` to the same reviewed SHA with an
+   expected-head lease and no force. Stop if another actor changed that branch.
+   Any resulting identical build must pass the same gates.
+6. Promote the verified immutable artifact, restore automatic Production domain
+   assignment, and verify project aliases, portal sign-in, existing Contacts and
+   the new Calendar/transaction surfaces through the legitimate signed-in session.
+
+A migration failure rolls back that migration batch. A later file/build failure
+leaves the already verified upgraded database in place while the old app continues
+serving; the pending schema is compatible with the old app's existing records.
+Do not automatically reset the database or discard later user writes. The fresh
+snapshot and original deployment are recorded recovery resources. A killed worker
+can prevent final synthetic-file cleanup; the build cannot report success without
+an acknowledged cleanup. Live Google route maps remain explicitly deferred.
+
+Final local release additions passed: 125 auth/routing checks, 69 isolated atomic
+release checks, 65 private-file checks, 40 build-order checks, final typecheck and
+actual isolated Next production compilation. The 122 previously configured
+regression commands passed across two runs (the sandbox-only loopback failure was
+resumed with loopback permission); the new private-file command then passed
+separately. These are local checks, not certification of the forthcoming live
+migration/provider/deployment.
 
 Historical certification aliases, branch IDs and migration counts are reference
 material only. Read the current target metadata before deployment; do not reuse
@@ -28,22 +98,22 @@ GitHub repository metadata and current Production deployment metadata agree:
 local overhaul checkout points at `Wolfwolf22/Fortmark-Dashboard`. The portal
 serves the sign-in/account shell and routes `/dashboard` to the dashboard zone.
 
-| Item | Verified state | Required before staging writes |
+| Item | Verified state | Remaining release gate |
 |---|---|---|
-| Dashboard production | READY deployment `dpl_nNbkQFufg9N2U7cMBdkmfZmHiTVQ`, commit `4251392e0106e044138eae1fe25ca57c7e7043c2`, branch `claude/fortmark-dashboard-build-v39u96` | Leave unchanged |
-| Dashboard latest Preview | READY deployment `dpl_GMURJBzZp1o6kEKBkdW1DBhrP1GT`, commit `ab24bcde07dc8869b8b3aad84be66c2d184fec89` | Deploy and verify the exact reviewed overhaul only after isolation |
-| Portal | Existing project `fortmark-app`, `prj_zTxYdq9NBt9UMKy3ICOaCaV54Q9o`; Production commit `63b519b4ae71a8854137ad677aadfb88c112e2b1` on `main`; Preview metadata readable | Verify a compatible nonproduction portal and development identity flow |
-| Neon integration | Store `store_xGLbAY6ruochCguv`, external project `misty-cherry-08153356`, attached to both Preview and Production | Independently verify actual branch/endpoint mappings and Production's manual URL override; attachment alone proves neither sharing nor isolation |
-| Direct Neon connection | The browser now has signed-in access to organization `org-old-breeze-73124071` and confirms `fortmark-dashboard-db` / `misty-cherry-08153356`. The separate plugin connection still reports that its account is not an organization member | Reconnect Neon with the account that has access; browser sign-in did not switch the plugin account |
-| Calendar | No `CALENDAR_DB_ENABLED` environment entry found | Explicit Preview configuration after migrations and resource verification |
-| Transaction files | No `TRANSACTION_FILES_ENABLED` or dedicated `TRANSACTION_FILES_BLOB_READ_WRITE_TOKEN` entry found; only a profile-image Blob store is connected to Preview | Dedicated private transaction store/token scoped to the verified nonproduction target |
-| MLS | No Preview `BRIDGE_API_TOKEN` entry found; provider flag values were not read | Confirm an authorized Preview MLS read configuration |
-| Authentication | Clerk key entries exist; values were not read | Verify development instance and approved synthetic role accounts |
+| Dashboard Production | READY `dpl_nNbkQFufg9N2U7cMBdkmfZmHiTVQ`, commit `4251392e0106e044138eae1fe25ca57c7e7043c2`, tracked branch `claude/fortmark-dashboard-build-v39u96` | Stage and promote the exact reviewed overhaul; fast-forward the tracked branch to the same commit |
+| Portal | `fortmark-app`, `prj_zTxYdq9NBt9UMKy3ICOaCaV54Q9o`, Production commit `63b519b4ae71a8854137ad677aadfb88c112e2b1` | Existing legitimate portal session successfully opens real Contacts; verify again after promotion |
+| Real sources | Existing `/dashboard/api/health` reports contacts/transactions `db`, listings `mls`, homeMetrics `real-only` | Preserve these current settings; verify serving revision and new sources after release |
+| Production database | Actual endpoint `ep-delicate-morning-avh7x6vk`, `neondb`, role `neondb_owner`; read-only repeatable-read metadata check at `2026-11-03T05:02:36Z` | Apply guarded committed migrations during the actual release build |
+| Migration history | 14 applied, 31 committed, 17 pending. All match the repository except the exact known migration0009 CRLF hash. No unknown entry | Verify full ordered ledger and schema after atomic upgrade |
+| Legacy workspace | All five column names, types and nullability match migration0014; 18 existing tables, 246 columns, 123 enum labels exported without business records | Keep workspace JSON and ownership unchanged |
+| Calendar | `CALENDAR_DB_ENABLED` absent | Enable exact Production value `1` for the new persisted Calendar |
+| Private transaction files | Approved private store `store_NSTN5f48IHugiItT` connected Production-only with dedicated sensitive token and store-ID metadata | Enable `TRANSACTION_FILES_ENABLED=1`; verify one generated synthetic PNG round trip and cleanup during the actual build |
+| Live routes | Google Maps credentials absent; user explicitly deferred live routing | Keep disabled |
 
-The direct Neon account's empty listing is an access gap, not evidence that the
-Vercel-managed database was deleted. Do not create a replacement or deploy to a
-possibly shared database to work around it. Any old aliases and branch IDs not
-reverified below remain historical evidence only.
+The signed-in console was used for metadata-only SQL in an explicit read-only
+transaction ending in `ROLLBACK`. Local release evidence contains ledger and
+system-catalog exports; no application records or credentials were exported.
+The Neon plugin account mismatch was not bypassed by copying a database secret.
 
 ### Signed-in Neon console observations
 
@@ -61,7 +131,8 @@ reached**. Eight were archived, including three older Preview branches and five
 historical safety branches. After the user explicitly confirmed the exact
 permanent deletion, `preview/feature/profile-onboarding-wizard`
 (`br-muddy-sunset-avuvj0h9`, archived since 2026-08-26) was deleted on 2026-11-02.
-The resulting console inventory shows **nine branches**, with one slot free.
+The resulting console inventory initially showed **nine branches**, with one slot free.
+The separately approved fresh Production snapshot now occupies the tenth slot.
 `main`, Production, all five historical safety branches and the two other Preview
 branches remain. The Git code branch was not deleted. No reset, unarchive or plan
 upgrade was performed.
@@ -74,9 +145,8 @@ binding to verify rather than assuming that selector describes the application.
 The two manual Vercel Production variable rows were last updated on 2026-08-04.
 The current Production deployment's existing build log reports host fingerprint
 `23deffc7e4e5`, matching the historical audited Production branch fingerprint.
-Together these support continuity with `br-bitter-cake-av7pmzth`; this is metadata
-and existing-log evidence, not a fresh runtime database query. The effective
-Preview integration-secret binding still requires independent verification.
+Together these support continuity with `br-bitter-cake-av7pmzth`; the fresh read-only Production query additionally verifies the actual database,
+role, ledger and catalog. Preview resources are outside this release.
 
 ## Fixes included
 
@@ -130,7 +200,7 @@ The local browser check confirmed that the New menu exposes Contact, Transaction
 and Calendar item in the configured preview. The separate sample banner states
 that changes stay in memory. This is visual evidence, not a cloud persistence run.
 
-## Staging rollout order
+## Historical staging procedure (superseded by the authorized Production release)
 
 1. Recheck the authorized Vercel connection for the identified team. Read the
    dashboard and portal project configuration, production branch, current
