@@ -101,7 +101,7 @@ function PreviewControls() {
       </label>}
     </div>
     {interactive && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
-      Contact stages, next actions, needs, client information, property lists, showings, saved tours, transactions, calendar reschedules, CSV import and duplicate merges can save these synthetic samples. Other writes remain blocked. Reload or Reset samples discards every change.
+      Contact stages, next actions, needs, client information, property lists, showings, saved tours, transactions, personal calendar items, color labels, calendar reschedules, CSV import and duplicate merges can save these synthetic samples. Other writes remain blocked. Reload or Reset samples discards every change.
       {route === "/showing-tours" && <span className="ml-1">Sample addresses: Sample FortMark office, Sample client meeting point, Sample coastal meeting point.</span>}
       {(route === "/contacts" || route === "/property-lists") && <span className="ml-1">Property list examples: SAMPLE-002 and SAMPLE-003. Fictional MLS references only.</span>}
     </p>}
@@ -112,7 +112,7 @@ function PreviewControls() {
       Research conflict rehearsal: edit a saved property's notes or status, then save. The first refused save reveals a predefined newer sample version. Review it explicitly while keeping your draft. This scenario remains read-only.
     </p>}
     {writeBlocked && <div role="alert" className="flex items-center justify-center gap-3 border-b border-border bg-card px-4 py-2 text-xs">
-      <span>{interactive ? "This write is disabled in interactive samples. Only stages, next actions, needs, client information, property lists, showings, saved tours, import and duplicate merge can save." : "Design preview is read-only. No records were changed."}</span>
+      <span>{interactive ? "This write is disabled in interactive samples. Only stages, next actions, needs, client information, property lists, showings, saved tours, personal calendar items, color labels, import and duplicate merge can save." : "Design preview is read-only. No records were changed."}</span>
       <button type="button" className="font-semibold underline underline-offset-4" onClick={() => setWriteBlocked(false)}>Dismiss</button>
     </div>}
   </>;

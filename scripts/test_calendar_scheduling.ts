@@ -65,6 +65,14 @@ const acrossMidnight = buildCalendarWarnings([overnight, showing("after-midnight
 check("overnight overlap is attributed to its actual New York conflict day", acrossMidnight.length === 1 && acrossMidnight[0].day === "2026-11-03" && acrossMidnight[0].kind === "overlap");
 const bothFolds = [showing("early-fold", "2026-11-01T05:15:00Z", "2026-11-01T05:45:00Z"), showing("late-fold", "2026-11-01T06:15:00Z", "2026-11-01T06:45:00Z")];
 check("identical-looking repeated local times remain separate actual instants", buildCalendarWarnings(bothFolds).length === 0 && itemsForDay(bothFolds, "2026-11-01").length === 2);
+const personal: CalendarItem = { ...overlapping, id: "personal:private", kind: "personal", blocksTime: true };
+check("a personal time block and showing produce an advisory overlap", buildCalendarWarnings([a, personal])[0].kind === "overlap");
+check("personal-to-personal overlap remains advisory", buildCalendarWarnings([personal, { ...personal, id: "personal:second" }])[0].kind === "overlap");
+check("a timed personal block participates in the explicit planning buffer", buildCalendarWarnings([a, { ...b, kind: "personal" }])[0].kind === "planning_buffer");
+equal("personal nonblocking times do not claim availability", buildCalendarWarnings([a, { ...personal, blocksTime: false }]), []);
+equal("all-day personal facts never block time even with an accidental blocking flag", buildCalendarWarnings([a, { ...personal, allDay: true, startsAt: null, endsAt: null }]), []);
+check("personal intervals retain honest overnight day membership", calendarItemOccursOnDay({ ...overnight, kind: "personal" }, "2026-11-02") && calendarItemOccursOnDay({ ...overnight, kind: "personal" }, "2026-11-03"));
+check("warnings do not mutate or reject the underlying personal appointment", personal.status === "scheduled" && personal.startsAt === overlapping.startsAt && buildCalendarWarnings([a, personal])[0].message.includes("appointments"));
 for (const bufferMinutes of [-1, 61, 1.5, Number.NaN]) { assert.throws(() => buildCalendarWarnings([a, b], { bufferMinutes }), RangeError); checks++; }
 const previousTz = process.env.TZ;
 try {

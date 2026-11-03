@@ -1,6 +1,6 @@
 import "server-only";
 import { and, eq, sql, type SQL } from "drizzle-orm";
-import { contacts, dashboardUsers, showings, savedShowingTours, savedTourStops, transactions, transactionDeadlines, transactionWriteRequests } from "../db/schema.ts";
+import { contacts, dashboardUsers, showings, savedShowingTours, savedTourStops, transactions, transactionDeadlines, transactionWriteRequests, personalCalendarItems } from "../db/schema.ts";
 import type { Ctx } from "../contacts/service.ts";
 import { visibleTo as contactVisibility } from "../contacts/visibility.ts";
 import { OPEN_PIPELINE_STAGES } from "../contacts/stages.ts";
@@ -13,12 +13,13 @@ import { calendarDayKey } from "../transactions/calendar-days.ts";
 import { calendarQueryWindow, readCalendarQuery } from "./scheduling.ts";
 import { calendarRescheduleInputSchema } from "./validation.ts";
 import { CALENDAR_KINDS, CALENDAR_TIME_ZONE, type CalendarKind, type CalendarItem, type CalendarPage, type CalendarQuery, type CalendarSourceState } from "./domain.ts";
+import { personalCalendarVisibility, readCalendarDecorations, calendarIdentityKey, type CalendarDecorations } from "./personal-service.ts";
 
 export const CALENDAR_SOURCE_LIMIT = 200;
-export interface CalendarAvailability { contacts: boolean; transactions: boolean }
+export interface CalendarAvailability { contacts: boolean; transactions: boolean; personal?: boolean }
 export type CalendarFailure = "invalid_calendar_query" | "invalid_calendar_reschedule" | "not_found" | "forbidden" | "not_configured" | "unavailable" | "conflict" | "request_conflict" | "invalid_transition" | "invalid_date" | "invalid_assignee" | "time_conflict" | "property_conflict" | "gc_not_configured" | "closing_deadline_conflict" | "invalid_deadline_transition";
 export type CalendarResult<T> = { ok: true; value: T } | { ok: false; reason: CalendarFailure };
-type Row = { id: string; source_id: string; title: string; subtitle: string; day: string; starts_at: Date | string | null; ends_at: Date | string | null; status: string; revision: Date | string; child_revision?: Date | string; action_id?: string; fallback?: boolean; tour_ids?: string[]; total: number | string };
+type Row = { id: string; source_id: string; title: string; subtitle: string; day: string; starts_at: Date | string | null; ends_at: Date | string | null; status: string; revision: Date | string; child_revision?: Date | string; action_id?: string; fallback?: boolean; tour_ids?: string[]; all_day?: boolean; blocks_time?: boolean; label_id?: string|null; total: number | string };
 const actorGuard = (ctx: Ctx) => sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${ctx.actor.userId}::uuid and ${dashboardUsers.role}=${ctx.actor.role} and ${dashboardUsers.status}='active')`;
 async function activeActor(ctx: Ctx) { const [row] = await ctx.db.select({ id: dashboardUsers.id }).from(dashboardUsers).where(and(eq(dashboardUsers.id, ctx.actor.userId), eq(dashboardUsers.role, ctx.actor.role), eq(dashboardUsers.status, "active"))).limit(1); return Boolean(row); }
 const iso = (at: Date | string) => new Date(at).toISOString();
@@ -26,9 +27,10 @@ const nameSql = sql`coalesce(nullif(btrim(${contacts.preferredName}),''),nullif(
 const activeContacts = sql`${contacts.stage}::text in (${sql.join(OPEN_PIPELINE_STAGES.map(stage => sql`${stage}`), sql`,`)})`;
 const activeTransactions = sql`${transactions.side}::text<>'gc' and ${transactions.stage}::text not in ('closed','cancelled','withdrawn','fell_through')`;
 function sourceFailure(reason: string): CalendarResult<never> { switch (reason) { case "not_found": case "forbidden": case "unavailable": case "conflict": case "request_conflict": case "invalid_transition": case "invalid_date": case "invalid_assignee": case "time_conflict": case "property_conflict": case "gc_not_configured": case "closing_deadline_conflict": case "invalid_deadline_transition": return { ok: false, reason }; case "invalid_showing": case "invalid_action": case "invalid_transaction": return { ok: false, reason: "invalid_calendar_reschedule" }; default: return { ok: false, reason: "unavailable" }; } }
-function sourceEnabled(kind: CalendarKind, availability: CalendarAvailability) { return kind === "transaction_deadline" ? availability.transactions : availability.contacts; }
+function sourceEnabled(kind: CalendarKind, availability: CalendarAvailability) { return kind === "personal" ? Boolean(availability.personal) : kind === "transaction_deadline" ? availability.transactions : availability.contacts; }
 function queryFor(ctx: Ctx, kind: CalendarKind, q: CalendarQuery, from: string, to: string): SQL {
   const bounds = sql`${from}::timestamptz`, end = sql`${to}::timestamptz`, cap = CALENDAR_SOURCE_LIMIT;
+  if (kind === "personal") return sql`select ${personalCalendarItems.id} as id,${personalCalendarItems.id} as source_id,${personalCalendarItems.title} as title,coalesce(nullif(${personalCalendarItems.location},''),'Personal calendar item') as subtitle,${personalCalendarItems.day}::text as day,${personalCalendarItems.startsAt} as starts_at,${personalCalendarItems.endsAt} as ends_at,'scheduled'::text as status,${personalCalendarItems.updatedAt} as revision,${personalCalendarItems.allDay} as all_day,${personalCalendarItems.blocksTime} as blocks_time,${personalCalendarItems.labelId} as label_id,(count(*) over())::int as total from ${personalCalendarItems} where ${personalCalendarVisibility(ctx)} and ${personalCalendarItems.cancelledAt} is null and ((${personalCalendarItems.allDay} and ${personalCalendarItems.day}>=${q.fromDay}::date and ${personalCalendarItems.day}<${q.toDay}::date) or (not ${personalCalendarItems.allDay} and ${personalCalendarItems.startsAt}<${end} and ${personalCalendarItems.endsAt}>${bounds})) order by ${personalCalendarItems.day},${personalCalendarItems.startsAt} nulls first,${personalCalendarItems.id} limit ${cap}`;
   if (kind === "showing") return sql`select ${showings.id} as id,${showings.id} as source_id,('Showing · MLS '||${showings.mlsNumber}) as title,${nameSql} as subtitle,to_char(${showings.startsAt} at time zone 'America/New_York','YYYY-MM-DD') as day,${showings.startsAt} as starts_at,${showings.endsAt} as ends_at,${showings.status} as status,${showings.updatedAt} as revision,
     array(select distinct ${savedShowingTours.id}::text from ${savedTourStops} inner join ${savedShowingTours} on ${savedShowingTours.id}=${savedTourStops.tourId} where ${savedTourStops.linkedShowingId}=${showings.id} and ${savedTourVisibility(ctx)} and ${savedShowingTours.archivedAt} is null order by ${savedShowingTours.id}::text) as tour_ids,(count(*) over())::int as total
     from ${showings} inner join ${contacts} on ${contacts.id}=${showings.contactId} where ${showingVisibility(ctx)} and ${actorGuard(ctx)} and ${showings.status}='scheduled' and ${showings.startsAt}<${end} and ${showings.endsAt}>${bounds} order by ${showings.startsAt},${showings.id} limit ${cap}`;
@@ -47,6 +49,7 @@ function queryFor(ctx: Ctx, kind: CalendarKind, q: CalendarQuery, from: string, 
   ) select *,(count(*) over())::int as total from calendar_deadlines order by day,id limit ${cap}`;
 }
 function item(kind: CalendarKind, row: Row, ctx: Ctx, today: string, now: Date): CalendarItem {
+  if (kind === "personal") return {id:`personal:${row.id}`,kind,title:row.title,subtitle:row.subtitle,day:row.day,allDay:Boolean(row.all_day),startsAt:row.starts_at?iso(row.starts_at):null,endsAt:row.ends_at?iso(row.ends_at):null,status:"scheduled",sourceId:row.source_id,sourceHref:`/calendar?item=${encodeURIComponent(row.source_id)}`,sourceLabel:"Personal calendar item",blocksTime:!row.all_day&&Boolean(row.blocks_time),reschedule:null,personal:{updatedAt:iso(row.revision),canEdit:ctx.actor.role!=="member"},annotation:{labelId:row.label_id??null,updatedAt:iso(row.revision)}};
   const timed = kind === "showing" || kind === "tour" || kind === "next_action", editable = ctx.actor.role !== "member", overdue = row.day < today || kind === "next_action" && row.starts_at !== null && new Date(row.starts_at).getTime() < now.getTime();
   const sourceHref = kind === "showing" ? `/showings?showing=${encodeURIComponent(row.source_id)}` : kind === "tour" ? `/showing-tours?tour=${encodeURIComponent(row.source_id)}` : kind === "transaction_deadline" ? `/transactions/${encodeURIComponent(row.source_id)}` : `/contacts?open=${encodeURIComponent(row.source_id)}`;
   return { id: row.fallback ? `closing:${row.source_id}` : `${kind}:${row.id}`, kind, title: row.title, subtitle: row.subtitle, day: row.day, allDay: !timed, startsAt: row.starts_at ? iso(row.starts_at) : null, endsAt: row.ends_at ? iso(row.ends_at) : null, status: overdue && kind !== "tour" && kind !== "showing" ? "overdue" : row.status,
@@ -59,14 +62,17 @@ export async function getInternalCalendar(ctx: Ctx, query: CalendarQuery, availa
   if (!await activeActor(ctx)) return { ok: false, reason: "forbidden" };
   const kinds = q.kinds ?? [...CALENDAR_KINDS], results = await Promise.all(kinds.map(async kind => { if (!sourceEnabled(kind, availability)) return { kind, rows: null, status: "not_configured" as const }; try { return { kind, rows: (await ctx.db.execute<Row>(queryFor(ctx, kind, q, window.from, window.to))).rows, status: "available" as const }; } catch { return { kind, rows: null, status: "unavailable" as const }; } }));
   const sources: CalendarSourceState[] = [], items: CalendarItem[] = [], today = calendarDayKey(now);
+  let decorations:CalendarDecorations|null=null,labelsStatus:"available"|"unavailable"|"not_configured"=availability.personal?"unavailable":"not_configured";
+  if(availability.personal){try{const loaded=await readCalendarDecorations(ctx,results.flatMap(result=>result.rows?.map(row=>item(result.kind,row,ctx,today,now))??[]));if(loaded.ok){decorations=loaded.value;labelsStatus="available";}}catch{/* A label outage does not invent empty source calendars. */}}
   for (const result of results) { if (result.status !== "available" || !result.rows) { sources.push({ kind: result.kind, status: result.status, total: null, truncated: false }); continue; }
     try { const current = (await ctx.db.execute<Row>(queryFor(ctx, result.kind, q, window.from, window.to))).rows; if (JSON.stringify(current) !== JSON.stringify(result.rows)) { sources.push({ kind: result.kind, status: "unavailable", total: null, truncated: false }); continue; }
       const total = Number(result.rows[0]?.total ?? 0); sources.push({ kind: result.kind, status: "available", total, truncated: total > result.rows.length }); items.push(...result.rows.map(row => item(result.kind, row, ctx, today, now)));
     } catch { sources.push({ kind: result.kind, status: "unavailable", total: null, truncated: false }); }
   }
+  if(decorations){for(const entry of items){const annotation=entry.kind==="personal"?entry.annotation:decorations.annotations.get(calendarIdentityKey(entry))??{labelId:null,updatedAt:null};if(annotation){entry.annotation=annotation;entry.label=annotation.labelId?decorations.labelsById.get(annotation.labelId)??null:null;}}}
   if (!await activeActor(ctx)) return { ok: false, reason: "forbidden" };
   items.sort((a, b) => a.day.localeCompare(b.day) || Number(b.allDay) - Number(a.allDay) || (a.startsAt ?? "").localeCompare(b.startsAt ?? "") || a.id.localeCompare(b.id));
-  return { ok: true, value: { items, sources, fromDay: q.fromDay, toDay: q.toDay, timeZone: CALENDAR_TIME_ZONE, generatedAt: now.toISOString() } };
+  return { ok: true, value: { items, sources, fromDay: q.fromDay, toDay: q.toDay, timeZone: CALENDAR_TIME_ZONE, generatedAt: now.toISOString(),labels:decorations?.labels??[],labelsStatus } };
 }
 
 /** A bridge to the original source writer. No event copy or independent calendar state is written. */

@@ -76,7 +76,7 @@ export function buildCalendarWarnings(items: readonly CalendarItem[], options: {
   if (!Number.isInteger(buffer) || buffer < 0 || buffer > 60) throw new RangeError("Choose a planning buffer from 0 to 60 minutes.");
   const seen = new Set<string>();
   const appointments = items.flatMap(item => {
-    if (seen.has(item.id) || item.kind !== "showing" || !item.blocksTime || item.allDay || item.status !== "scheduled") return [];
+    if (seen.has(item.id) || item.kind !== "showing" && item.kind !== "personal" || !item.blocksTime || item.allDay || item.status !== "scheduled") return [];
     const starts = instant(item.startsAt), ends = instant(item.endsAt);
     if (starts === null || ends === null || ends <= starts) return [];
     seen.add(item.id);
@@ -96,7 +96,7 @@ export function buildCalendarWarnings(items: readonly CalendarItem[], options: {
       warnings.push({
         id: `${kind}:${JSON.stringify([before.item.id, after.item.id])}`,
         kind, itemIds: [before.item.id, after.item.id], day: businessDayKey(new Date(after.starts)), gapMinutes: gap,
-        message: overlap ? "These scheduled showings overlap." : `Less than your ${buffer}-minute planning buffer remains between these showings. Driving time has not been calculated.`,
+        message: overlap ? "These scheduled appointments overlap." : `Less than your ${buffer}-minute planning buffer remains between these appointments. Driving time has not been calculated.`,
       });
     }
   }

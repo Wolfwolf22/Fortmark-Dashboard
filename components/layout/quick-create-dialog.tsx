@@ -57,10 +57,10 @@ const TITLES: Record<QuickCreateKind, { title: string; description: string; cta:
     goto: "/contacts",
   },
   event: {
-    title: "Plan an activity",
-    description: "Calendar items come from your showings, tour plans, client next actions and transaction deadlines.",
-    cta: "Open showing agenda",
-    goto: "/showings",
+    title: "New calendar item",
+    description: "Add a personal calendar item, or plan work from its connected record.",
+    cta: "Add calendar item",
+    goto: "/calendar?create=personal",
   },
   document: {
     title: "New document",
@@ -145,7 +145,7 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
         // Land on the new person, open, ready to schedule the first follow-up.
         goto = `/contacts?open=${encodeURIComponent(created.id)}`;
       } else if (kind === "event") {
-        goto = "/showings";
+        goto = "/calendar?create=personal";
       } else if (kind === "document") {
         const txnId = get("transactionId");
         const txns = await getTransactions();
@@ -263,7 +263,7 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
 
             {kind === "event" && (
               <div className="grid gap-3 text-sm">
-                <p className="leading-relaxed text-muted-foreground">Plan a showing from a saved property, set a next action on a contact, or add a deadline inside its transaction. Each activity stays connected to the original record.</p>
+                <p className="leading-relaxed text-muted-foreground">Add your own meeting, reminder or appointment. You can also plan a showing from a saved property, set a client next action, or add a transaction deadline.</p>
                 <div className="flex flex-wrap gap-2">
                   {[['/showing-tours', 'Tour plans'], ['/contacts', 'Client next actions'], ['/transactions', 'Transaction deadlines']].map(([href,label]) => <Button key={href} type="button" variant="outline" onClick={() => { close(); router.push(href); }}>{label}</Button>)}
                 </div>

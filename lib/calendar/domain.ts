@@ -1,9 +1,10 @@
 /** Internal calendar projections retain their source records and business-day semantics. */
 export const CALENDAR_TIME_ZONE = "America/New_York";
-export const CALENDAR_KINDS = ["showing", "tour", "transaction_deadline", "next_action", "reminder"] as const;
+export const CALENDAR_KINDS = ["showing", "tour", "transaction_deadline", "next_action", "reminder", "personal"] as const;
 export type CalendarKind = (typeof CALENDAR_KINDS)[number];
 export const CALENDAR_KIND_LABELS: Record<CalendarKind, string> = {
   showing: "Showings", tour: "Tour plans", transaction_deadline: "Transaction deadlines", next_action: "Client next actions", reminder: "Follow-up reminders",
+  personal: "My calendar items",
 };
 export type CalendarRescheduleRef =
   | { kind: "showing"; sourceId: string; expectedUpdatedAt: string }
@@ -27,6 +28,10 @@ export interface CalendarItem {
   blocksTime: boolean;
   tourIds?: string[];
   reschedule: CalendarRescheduleRef | null;
+  label?: import("./personal-domain").CalendarLabel | null;
+  /** Per-user label revision; personal items use their original record revision. */
+  annotation?: { labelId: string | null; updatedAt: string | null };
+  personal?: { updatedAt: string; canEdit: boolean };
 }
 export interface CalendarQuery {
   fromDay: string;
@@ -48,6 +53,8 @@ export interface CalendarPage {
   toDay: string;
   timeZone: typeof CALENDAR_TIME_ZONE;
   generatedAt: string;
+  labels?: import("./personal-domain").CalendarLabel[];
+  labelsStatus?: "available" | "unavailable" | "not_configured";
 }
 export interface CalendarWarning {
   id: string;

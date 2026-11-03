@@ -2,14 +2,14 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { requireCaller } from "../auth/require-caller.ts";
 import { resolveActor } from "../auth/actor.ts";
-import { contactsDatabaseEnabled, transactionsDatabaseEnabled } from "../flags.ts";
+import { contactsDatabaseEnabled, transactionsDatabaseEnabled,calendarDatabaseEnabled } from "../flags.ts";
 import type { Ctx } from "../contacts/service.ts";
 import type { CalendarAvailability, CalendarFailure } from "./service.ts";
 export const CALENDAR_NO_STORE = { "Cache-Control": "private, no-store" } as const;
 export async function calendarCallerContext(): Promise<{ ok: true; ctx: Ctx | null; availability: CalendarAvailability } | { ok: false; response: NextResponse }> {
   const caller = await requireCaller(); if (!caller.ok) return caller;
-  const availability = { contacts: contactsDatabaseEnabled(), transactions: transactionsDatabaseEnabled() };
-  if (!availability.contacts && !availability.transactions) return { ok: true, ctx: null, availability };
+  const availability = { contacts: contactsDatabaseEnabled(), transactions: transactionsDatabaseEnabled(),personal:calendarDatabaseEnabled() };
+  if (!availability.contacts && !availability.transactions&&!availability.personal) return { ok: true, ctx: null, availability };
   const resolved = await resolveActor(caller.clerkUserId, true); if (!resolved.ok) return { ok: false, response: NextResponse.json({ error: resolved.reason === "no_identity" ? "no_identity" : "Service unavailable" }, { status: resolved.reason === "no_identity" ? 403 : 503, headers: CALENDAR_NO_STORE }) };
   return { ok: true, ctx: { actor: resolved.actor, db: resolved.db }, availability };
 }

@@ -23,7 +23,7 @@ const calls=[]; globalThis.fetch=async(input,init={})=>{calls.push({input,init})
 const baseline=JSON.stringify([sampleShowings,sampleSavedTours,sampleTransactionBundles]), actor={...SAMPLE_ACTOR};
 const query={fromDay:'2026-10-01',toDay:'2027-01-01'};let groups=0;
 const page=await api.getInternalCalendar(query);
-assert.equal(page.timeZone,'America/New_York');assert.equal(page.sources.length,5);assert(page.items.some(i=>i.kind==='showing'));assert(page.items.some(i=>i.kind==='tour'));assert(page.items.some(i=>i.kind==='transaction_deadline'));assert(page.items.some(i=>i.kind==='next_action'));assert(page.items.some(i=>i.kind==='reminder'));assert(!page.items.some(i=>i.sourceId===SAMPLE_PRIVATE_SHOWING_ID));groups++;
+assert.equal(page.timeZone,'America/New_York');assert.equal(page.sources.length,6);assert.equal(page.labelsStatus,'available');assert.equal(page.labels.length,4);assert(page.items.some(i=>i.kind==='showing'));assert(page.items.some(i=>i.kind==='tour'));assert(page.items.some(i=>i.kind==='transaction_deadline'));assert(page.items.some(i=>i.kind==='next_action'));assert(page.items.some(i=>i.kind==='reminder'));assert(!page.items.some(i=>i.sourceId===SAMPLE_PRIVATE_SHOWING_ID));groups++;
 for(const item of page.items){assert(item.sourceHref.startsWith('/'));if(item.allDay){assert.equal(item.startsAt,null);assert.equal(item.endsAt,null);}if(item.kind==='tour'||item.kind==='next_action')assert.equal(item.blocksTime,false);}
 assert(!buildCalendarWarnings(page.items).some(w=>w.itemIds.some(id=>id.startsWith('tour:'))));groups++;
 const actions=page.items.filter(i=>i.kind==='next_action');for(const action of actions)assert(!page.items.some(i=>i.kind==='reminder'&&i.sourceId===action.sourceId));groups++;

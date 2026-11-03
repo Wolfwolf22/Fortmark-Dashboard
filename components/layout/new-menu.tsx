@@ -8,6 +8,7 @@ import {
   UserPlus,
   Workflow,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -21,6 +22,7 @@ import { QuickCreateDialog } from "./quick-create-dialog";
 /** The "New" action menu — each entry opens the working quick-create dialog. */
 export function NewMenu() {
   const setQuickCreate = useUiStore((s) => s.setQuickCreate);
+  const router = useRouter();
 
   return (
     <>
@@ -45,9 +47,9 @@ export function NewMenu() {
             <UserPlus />
             Contact
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setQuickCreate("event")}>
+          <DropdownMenuItem onSelect={() => router.push("/calendar?create=personal")}>
             <CalendarPlus />
-            Plan activity
+            Calendar item
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setQuickCreate("document")}>
             <FilePlus2 />

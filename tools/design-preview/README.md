@@ -542,7 +542,7 @@ The real setup/workspace adapters exercise 15 additional groups:
 node --experimental-strip-types --no-warnings tools/design-preview/test-transaction-operations-session.mjs
 ```
 
-Total isolated preview groups: 226. Live private-file storage configuration is
+Total isolated preview groups: 248. Live private-file storage configuration is
 documented in [TRANSACTION_FILES_AND_VENDORS.md](../../docs/TRANSACTION_FILES_AND_VENDORS.md).
 
 
@@ -633,3 +633,37 @@ suppression, all-day/point semantics, source filters, three source reschedules,
 revision conflicts, owned-Agent writes, exact receipts after completion/removal,
 bounded counts and partial sources.
 See `docs/internal-calendar.md` for production behavior and deferred provider sync.
+
+
+## Personal calendar items and named color labels
+
+The Calendar now includes **Add item** and **Manage labels**. The global New
+menu’s **Calendar item** action opens the same editor directly.
+
+Use `/preview?view=%2Fcalendar%3Fcreate%3Dpersonal&scenario=interactive` to add
+an item. Personal entries support private notes/location, timed or all-day dates,
+an optional availability block, and named colors. They can be edited or cancelled.
+Repeated Add starts a fresh form after a confirmed save; an unconfirmed request
+keeps its request identity for explicit recovery.
+
+Default labels are Urgent, Important, Low priority and Personal. Rename them,
+change their palette, or create a custom label. Choose **Add label** inside an
+existing calendar item’s details to color a CRM source item privately. Renaming
+updates assigned badges across views; archiving retains existing badges.
+
+All data stays in synthetic memory. Reload resets the personal entries, custom
+labels and assignments. There is no live calendar, account write or provider call.
+In production this feature uses migration0030 and the independent
+`CALENDAR_DB_ENABLED` flag; this local build does not enable it or apply migrations.
+
+Run its closed-transport regression:
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-personal-calendar-session.mjs
+```
+
+Twenty-two groups cover actual personal/label/annotation adapters, virtual defaults
+without GET writes, first-assignment materialization, ownership, all-day and timed
+spans, source identity, receipt recovery, archival, cancellation, exact revision
+checks and the active-label cap. Existing Calendar remains21 groups; all17 preview
+suites total248 groups.

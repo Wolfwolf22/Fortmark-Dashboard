@@ -75,6 +75,11 @@ export function contactsDatabaseEnabled(env: EnvLike = process.env): boolean {
   return enabled("CONTACTS_DATABASE_ENABLED", env) && profileDatabaseEnabled(env);
 }
 
+/** Personal calendar data is independent of CRM and transaction source selection. */
+export function calendarDatabaseEnabled(env: EnvLike = process.env): boolean {
+  return enabled("CALENDAR_DB_ENABLED", env) && profileDatabaseEnabled(env);
+}
+
 /**
  * Show the generated sample brokerage on the Home dashboard.
  *

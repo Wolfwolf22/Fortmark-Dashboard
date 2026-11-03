@@ -16,6 +16,7 @@ import {
   boolean,
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -268,6 +269,7 @@ export const auditEvents = pgTable(
 
 /** Event types Release 1 is allowed to write. */
 export const RELEASE_1_AUDIT_EVENTS = [
+  "calendar_item_updated", "calendar_label_updated", "calendar_annotation_updated",
   "user_record_created",
   "profile_created",
   "profile_updated",
@@ -1434,3 +1436,21 @@ export const transactionShowingTours = pgTable("transaction_showing_tours", {
  removedAt: timestamp("removed_at", { withTimezone: true }),
 }, t => [uniqueIndex("transaction_showing_tours_pair_idx").on(t.transactionId,t.tourId), index("transaction_showing_tours_tour_idx").on(t.tourId,t.removedAt)]);
 export type TransactionShowingTourRow = typeof transactionShowingTours.$inferSelect;
+
+/** Owner-private color vocabulary. Defaults are virtual until an explicit write materializes them. */
+export const calendarLabels = pgTable("calendar_labels", {
+  ownerUserId: uuid("owner_user_id").notNull().references(() => dashboardUsers.id, { onDelete: "restrict" }), brokerageKey: text("brokerage_key").notNull(), id: text("id").notNull(), name: text("name").notNull(), color: text("color").$type<import("../calendar/personal-domain.ts").CalendarColor>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(), archivedAt: timestamp("archived_at", { withTimezone: true }),
+}, t => [primaryKey({ columns: [t.ownerUserId, t.brokerageKey, t.id] }), index("calendar_labels_owner_active_idx").on(t.ownerUserId,t.brokerageKey,t.archivedAt), check("calendar_labels_name_check",sql`char_length(btrim(${t.name})) between 1 and 60`), check("calendar_labels_color_check",sql`${t.color} in ('red','amber','green','blue','purple','teal','slate','pink')`),check("calendar_labels_id_check",sql`${t.id} in ('urgent','important','low-priority','personal') or ${t.id} ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`)]);
+export type CalendarLabelRow = typeof calendarLabels.$inferSelect;
+export const personalCalendarItems = pgTable("personal_calendar_items", {
+  id: uuid("id").primaryKey().defaultRandom(), ownerUserId: uuid("owner_user_id").notNull().references(() => dashboardUsers.id,{onDelete:"restrict"}), brokerageKey:text("brokerage_key").notNull(), title:text("title").notNull(),notes:text("notes").notNull().default(""),location:text("location").notNull().default(""),day:date("day").notNull(),allDay:boolean("all_day").notNull(),startsAt:timestamp("starts_at",{withTimezone:true}),endsAt:timestamp("ends_at",{withTimezone:true}),blocksTime:boolean("blocks_time").notNull().default(false),labelId:text("label_id"),createdAt:timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),updatedAt:timestamp("updated_at",{withTimezone:true}).notNull().defaultNow(),cancelledAt:timestamp("cancelled_at",{withTimezone:true}),
+},t=>[index("personal_calendar_items_owner_day_idx").on(t.ownerUserId,t.brokerageKey,t.day),index("personal_calendar_items_owner_time_idx").on(t.ownerUserId,t.brokerageKey,t.startsAt),foreignKey({columns:[t.ownerUserId,t.brokerageKey,t.labelId],foreignColumns:[calendarLabels.ownerUserId,calendarLabels.brokerageKey,calendarLabels.id]}).onDelete("restrict"),check("personal_calendar_items_text_check",sql`char_length(btrim(${t.title})) between 1 and 200 and char_length(${t.notes})<=5000 and char_length(${t.location})<=500`),check("personal_calendar_items_time_check",sql`(${t.allDay} and ${t.startsAt} is null and ${t.endsAt} is null and not ${t.blocksTime}) or (not ${t.allDay} and ${t.startsAt} is not null and ${t.endsAt} is not null and ${t.endsAt}>${t.startsAt} and ${t.endsAt}-${t.startsAt}<=interval '7 days' and (${t.startsAt} at time zone 'America/New_York')::date=${t.day})`)]);
+export type PersonalCalendarItemRow=typeof personalCalendarItems.$inferSelect;
+export const calendarItemAnnotations=pgTable("calendar_item_annotations",{
+  ownerUserId:uuid("owner_user_id").notNull().references(()=>dashboardUsers.id,{onDelete:"restrict"}),brokerageKey:text("brokerage_key").notNull(),itemId:text("item_id").notNull(),kind:text("kind").$type<import("../calendar/domain.ts").CalendarKind>().notNull(),sourceId:uuid("source_id").notNull(),labelId:text("label_id"),createdAt:timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),updatedAt:timestamp("updated_at",{withTimezone:true}).notNull().defaultNow(),
+},t=>[primaryKey({columns:[t.ownerUserId,t.brokerageKey,t.itemId,t.kind,t.sourceId]}),index("calendar_annotations_source_idx").on(t.ownerUserId,t.brokerageKey,t.kind,t.sourceId),foreignKey({columns:[t.ownerUserId,t.brokerageKey,t.labelId],foreignColumns:[calendarLabels.ownerUserId,calendarLabels.brokerageKey,calendarLabels.id]}).onDelete("restrict"),check("calendar_annotations_kind_check",sql`${t.kind} in ('showing','tour','transaction_deadline','next_action','reminder')`),check("calendar_annotations_item_check",sql`char_length(${t.itemId}) between 1 and 100`)]);
+export type CalendarItemAnnotationRow=typeof calendarItemAnnotations.$inferSelect;
+export const calendarWriteRequests=pgTable("calendar_write_requests",{
+  actorUserId:uuid("actor_user_id").notNull().references(()=>dashboardUsers.id,{onDelete:"restrict"}),requestId:uuid("request_id").notNull(),brokerageKey:text("brokerage_key").notNull(),action:text("action").notNull(),payloadHash:text("payload_hash").notNull(),result:jsonb("result").$type<{itemId?:string;labelId?:string;annotationItemId?:string;updatedAt:string}>().notNull(),createdAt:timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
+},t=>[primaryKey({columns:[t.actorUserId,t.requestId]}),check("calendar_requests_action_check",sql`${t.action} in ('create_item','update_item','cancel_item','create_label','update_label','archive_label','annotate')`),check("calendar_requests_hash_check",sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`)]);
