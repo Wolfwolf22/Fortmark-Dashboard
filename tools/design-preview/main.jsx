@@ -24,6 +24,7 @@ import ContactsPage from "@/app/(app)/contacts/page";
 import PropertyListsPage from "@/app/(app)/property-lists/page";
 import ShowingsPage from "@/app/(app)/showings/page";
 import ShowingToursPage from "@/app/(app)/showing-tours/page";
+import CalendarPage from "@/app/(app)/calendar/page";
 import { PREVIEW_WRITE_EVENT } from "./read-only.mjs";
 import { sampleImportCsv } from "./import-merge-fixtures.mjs";
 
@@ -57,6 +58,7 @@ function Content() {
   if (route === "/property-lists") return <PropertyListsPage />;
   if (route === "/showings") return <ShowingsPage />;
   if (route === "/showing-tours") return <ShowingToursPage />;
+  if (route === "/calendar") return <CalendarPage />;
   if (route === "/settings") return <DesignSystem />;
   return <Card className="p-8"><p className="text-micro">Design preview</p><h2 className="mt-3 text-3xl font-semibold tracking-tight">{pageTitleFor(route)}</h2><p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">This preview covers the shared identity and Home layout. This destination is shown to verify navigation, active states and shared styling. Production workflows and records are not connected.</p><Button className="mt-6" onClick={() => window.history.back()}>Go back</Button></Card>;
 }
@@ -82,24 +84,24 @@ function PreviewControls() {
       {route === "/showing-tours" && <PreviewLink href="/showing-tours?tour=86000000-0000-4000-8000-000000000001" className="font-semibold text-foreground underline underline-offset-4">Saturday buyer tour</PreviewLink>}
       {route === "/contacts" && <a href={`data:text/csv;charset=utf-8,${encodeURIComponent(sampleImportCsv)}`} download="fortmark-synthetic-contacts.csv" className="font-semibold text-foreground underline underline-offset-4">Sample CSV</a>}
       {interactive && <button type="button" className="font-semibold text-foreground underline underline-offset-4" onClick={() => window.location.reload()}>Reset samples</button>}
-      {(transactionsRoute || ["/contacts", "/property-lists", "/showings", "/showing-tours"].includes(route)) && <label className="ml-2 flex items-center gap-2">Preview data
-        <select aria-label={route === "/contacts" ? "Preview contact data" : route === "/property-lists" ? "Preview property-list data" : route === "/showing-tours" ? "Preview saved-tour data" : route === "/showings" ? "Preview showing data" : "Preview transaction data"} value={scenario} className="rounded border border-input bg-card px-2 py-1 text-foreground" onChange={event => {
+      {(transactionsRoute || ["/contacts", "/property-lists", "/showings", "/showing-tours", "/calendar"].includes(route)) && <label className="ml-2 flex items-center gap-2">Preview data
+        <select aria-label={route === "/calendar" ? "Preview calendar data" : route === "/contacts" ? "Preview contact data" : route === "/property-lists" ? "Preview property-list data" : route === "/showing-tours" ? "Preview saved-tour data" : route === "/showings" ? "Preview showing data" : "Preview transaction data"} value={scenario} className="rounded border border-input bg-card px-2 py-1 text-foreground" onChange={event => {
           const url = new URL(window.location.href);
           url.searchParams.set("scenario", event.target.value);
           window.location.assign(url);
         }}>
           <option value="records">Records</option>
           {route === "/contacts" && <option value="empty">Empty contact book</option>}
-          {(transactionsRoute || route === "/contacts") && <option value="unavailable">First request unavailable</option>}
+          {(transactionsRoute || route === "/contacts" || route === "/calendar") && <option value="unavailable">{route === "/calendar" ? "First deadline source unavailable" : "First request unavailable"}</option>}
           {transactionsRoute && <option value="conflict">Remote file change (409)</option>}
           {route === "/contacts" && <option value="conflict">Remote change on save (409)</option>}
           {route === "/property-lists" && <option value="conflict">Remote research change (409)</option>}
-          {(transactionsRoute || route === "/contacts" || route === "/property-lists" || route === "/showings" || route === "/showing-tours" || interactive) && <option value="interactive">Interactive samples</option>}
+          {(transactionsRoute || route === "/contacts" || route === "/property-lists" || route === "/showings" || route === "/showing-tours" || route === "/calendar" || interactive) && <option value="interactive">Interactive samples</option>}
         </select>
       </label>}
     </div>
     {interactive && <p role="status" className="border-b border-border bg-card px-4 py-2 text-center text-xs leading-relaxed text-muted-foreground">
-      Contact stages, next actions, needs, client information, property lists, showings, saved tours, transactions, CSV import and duplicate merges can save these synthetic samples. Other writes remain blocked. Reload or Reset samples discards every change.
+      Contact stages, next actions, needs, client information, property lists, showings, saved tours, transactions, calendar reschedules, CSV import and duplicate merges can save these synthetic samples. Other writes remain blocked. Reload or Reset samples discards every change.
       {route === "/showing-tours" && <span className="ml-1">Sample addresses: Sample FortMark office, Sample client meeting point, Sample coastal meeting point.</span>}
       {(route === "/contacts" || route === "/property-lists") && <span className="ml-1">Property list examples: SAMPLE-002 and SAMPLE-003. Fictional MLS references only.</span>}
     </p>}

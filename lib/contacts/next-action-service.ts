@@ -78,6 +78,7 @@ export async function mutateNextAction(ctx: Ctx, id: string, input: unknown, now
     }
   }
   const where = and(eq(contacts.id, id), visibleTo(ctx.actor), contactRevision(d.expectedUpdatedAt),
+    sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${ctx.actor.userId}::uuid and ${dashboardUsers.role}=${ctx.actor.role} and ${dashboardUsers.status}='active')`,
     expectedId ? eq(contacts.nextActionId, expectedId) : isNull(contacts.nextActionId),
     next ? eligibleAssignee(next.assigneeId) : undefined,
     next ? inArray(contacts.stage, [...OPEN_PIPELINE_STAGES]) : undefined);

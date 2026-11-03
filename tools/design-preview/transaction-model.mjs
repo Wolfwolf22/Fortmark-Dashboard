@@ -70,7 +70,7 @@ function event(bundle, action, fields, now, extra = {}) {
   const item = { id: crypto.randomUUID(), eventType: action === "create" ? "transaction_created" : action === "stage" ? "transaction_stage_changed" : "transaction_updated", action, fields, createdAt: now.toISOString(), ...extra };
   bundle.history.push(item); if (action === "create" || action === "stage") homeEvents.add(item.id);
 }
-function save(bundle, started, action) { records.set(bundle.row.id, copy(bundle)); receipts.set(started.key, { id: bundle.row.id, action, hash: started.payloadHash }); }
+function save(bundle, started, action, result = {}) { records.set(bundle.row.id, copy(bundle)); receipts.set(started.key, { id: bundle.row.id, action, hash: started.payloadHash, ...result }); }
 function activeDeadlines(bundle) { return bundle.deadlines.filter(item => !item.removedAt); }
 function closingMetadata(bundle, day, next) {
   if (day === bundle.row.closingDate) return;
@@ -104,7 +104,7 @@ export function mutatePreviewTransactionDeadline(id, input, now = new Date()) {
     if (value.action === "add") bundle.deadlines.push({ id: crypto.randomUUID(), transactionId: bundle.row.id, ...value.deadline, note: value.deadline.note || "", completedAt: null, removedAt: null, sortOrder: Math.max(0, ...live.map(item => item.sortOrder + 1)), createdAt: now.toISOString(), updatedAt: next });
     else if (value.action === "edit") Object.assign(current, value.deadline, { note: value.deadline.note || "", updatedAt: next });
     else Object.assign(current, { ...(value.action === "remove" ? { removedAt: now.toISOString() } : { completedAt: value.action === "complete" ? now.toISOString() : null }), updatedAt: next });
-    Object.assign(bundle.row, { closingDate, updatedAt: next, updatedByUserId: SAMPLE_ACTOR.userId }); event(bundle, action, value.deadline ? ["kind", "label", "dueDate", "note"] : [value.action === "remove" ? "removedAt" : "completedAt"], now); save(bundle, started, action); return workspace(bundle, 1, now); });
+    Object.assign(bundle.row, { closingDate, updatedAt: next, updatedByUserId: SAMPLE_ACTOR.userId }); event(bundle, action, value.deadline ? ["kind", "label", "dueDate", "note"] : [value.action === "remove" ? "removedAt" : "completedAt"], now); save(bundle, started, action, value.action === "edit" ? { deadlineId: current.id } : {}); return workspace(bundle, 1, now); });
 }
 export function changePreviewTransactionStage(id, input, now = new Date()) {
   writeMode(id); const value = parse(stageChangeSchema, input); if (!value.requestId || !value.expectedUpdatedAt) fail("invalid_transaction");
@@ -150,6 +150,11 @@ export function previewTransactionActivity() {
 }
 export function previewLinkedTransactions(ids) { const keys = new Set(ids.map(previewTransactionId)); return all().filter(bundle => visible(bundle) && keys.has(bundle.row.id)).map(bundle => { const dto = project(bundle); return { id: dto.id, address: dto.address, city: dto.city, stage: dto.stage, ...(dto.side === "gc" ? {workflowLabel:"Setup pending"} : {}) }; }); }
 export function readPreviewTransactionExtra(id, read) { return read(load(id)); }
+/** Lifecycle exceptions require a scoped existing edit; the source writer still verifies the full hash. */
+export function hasPreviewDeadlineEditReceipt(id, deadlineId, requestId) {
+  const bundle = load(id), receipt = receipts.get(`${SAMPLE_ACTOR.userId}:${requestId}`);
+  return Boolean(receipt && receipt.id === bundle.row.id && receipt.action === "edit_deadline" && receipt.deadlineId === deadlineId);
+}
 /** Extensions share the file lock, exact receipts and safe history with core writes. */
 export function mutatePreviewTransactionExtra(id, input, action, work, now = new Date()) {
   writeMode(id);

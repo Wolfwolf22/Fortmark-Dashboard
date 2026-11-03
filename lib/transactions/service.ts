@@ -208,7 +208,7 @@ export async function getTransaction(
 export type TransactionContext = { actor: Actor; db: Db };
 type TransactionWrite = Parameters<Db["batch"]>[0][number];
 export function transactionRevisionGuard(ctx: TransactionContext, row: TransactionRow, expected: string) {
-  return and(eq(transactions.id, row.id), sql`${transactions.side}<>'gc'`, visibleTo(ctx.actor), eq(transactions.agentUserId, row.agentUserId), eq(transactions.brokerageKey, row.brokerageKey), eq(transactions.stage, row.stage), sql`date_trunc('milliseconds',${transactions.updatedAt})=${expected}::timestamptz`);
+  return and(eq(transactions.id, row.id), sql`${transactions.side}<>'gc'`, sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${ctx.actor.userId}::uuid and ${dashboardUsers.role}=${ctx.actor.role} and ${dashboardUsers.status}='active')`, visibleTo(ctx.actor), eq(transactions.agentUserId, row.agentUserId), eq(transactions.brokerageKey, row.brokerageKey), eq(transactions.stage, row.stage), sql`date_trunc('milliseconds',${transactions.updatedAt})=${expected}::timestamptz`);
 }
 export function transactionWriteLocks(ctx: TransactionContext, id?: string): TransactionWrite[] {
   const locks: TransactionWrite[] = [ctx.db.select({ id: dashboardUsers.id }).from(dashboardUsers).where(eq(dashboardUsers.id, ctx.actor.userId)).for("no key update")];

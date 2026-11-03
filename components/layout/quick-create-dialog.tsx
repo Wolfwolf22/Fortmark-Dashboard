@@ -24,13 +24,11 @@ import { useUiStore, QuickCreateKind } from "@/lib/stores/ui";
 import { createListing } from "@/lib/data/adapters/listings";
 import { createTransaction,type QuickCreateTransactionInput } from "@/lib/data/adapters/transactions";
 import { createLead, LeadsError } from "@/lib/data/adapters/leads";
-import { createEvent } from "@/lib/data/adapters/calendar";
 import { addDocument } from "@/lib/data/adapters/documents";
 import { getTransactions } from "@/lib/data/adapters/transactions";
 import { useQuery } from "@/lib/data/hooks";
 import { SUBSYSTEM_COPY, unavailableSubsystem } from "@/components/common/subsystem-state";
-import { EventType, Lead, LEAD_SOURCES_ORDER, LEAD_SOURCE_LABELS, PropertyType } from "@/lib/data/types";
-import { now } from "@/lib/dates";
+import { Lead, LEAD_SOURCES_ORDER, LEAD_SOURCE_LABELS, PropertyType } from "@/lib/data/types";
 import { transactionCreateAttempt, transactionCreateUncertain, type TransactionCreateAttempt } from "@/lib/transactions/create-attempt";
 import { closeDateFromInput } from "@/lib/transactions/close-date";
 import { isValidBirthday, MONTH_NAMES } from "@/lib/contacts/birthday";
@@ -59,10 +57,10 @@ const TITLES: Record<QuickCreateKind, { title: string; description: string; cta:
     goto: "/contacts",
   },
   event: {
-    title: "New event",
-    description: "Adds an event to the calendar.",
-    cta: "Add event",
-    goto: "/calendar",
+    title: "Plan an activity",
+    description: "Calendar items come from your showings, tour plans, client next actions and transaction deadlines.",
+    cta: "Open showing agenda",
+    goto: "/showings",
   },
   document: {
     title: "New document",
@@ -147,16 +145,7 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
         // Land on the new person, open, ready to schedule the first follow-up.
         goto = `/contacts?open=${encodeURIComponent(created.id)}`;
       } else if (kind === "event") {
-        const date = get("date") || now().toISOString().slice(0, 10);
-        const time = get("time") || "10:00";
-        const start = new Date(`${date}T${time}:00`);
-        await createEvent({
-          type: (get("type") || "showing") as EventType,
-          title: get("title"),
-          address: get("address") || undefined,
-          start: start.toISOString(),
-          end: new Date(start.getTime() + 60 * 60000).toISOString(),
-        });
+        goto = "/showings";
       } else if (kind === "document") {
         const txnId = get("transactionId");
         const txns = await getTransactions();
@@ -273,26 +262,11 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
             )}
 
             {kind === "event" && (
-              <div className="grid gap-3">
-                <Field label="Title" name="title" required placeholder="Buyer showing" />
-                <Field label="Address" name="address" placeholder="Optional" />
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Date" name="date" type="date" required />
-                  <Field label="Time" name="time" type="time" defaultValue="10:00" />
+              <div className="grid gap-3 text-sm">
+                <p className="leading-relaxed text-muted-foreground">Plan a showing from a saved property, set a next action on a contact, or add a deadline inside its transaction. Each activity stays connected to the original record.</p>
+                <div className="flex flex-wrap gap-2">
+                  {[['/showing-tours', 'Tour plans'], ['/contacts', 'Client next actions'], ['/transactions', 'Transaction deadlines']].map(([href,label]) => <Button key={href} type="button" variant="outline" onClick={() => { close(); router.push(href); }}>{label}</Button>)}
                 </div>
-                <SelectField
-                  label="Type"
-                  name="type"
-                  defaultValue="showing"
-                  options={[
-                    ["showing", "Showing"],
-                    ["inspection", "Inspection"],
-                    ["appraisal", "Appraisal"],
-                    ["closing", "Closing"],
-                    ["openHouse", "Open house"],
-                    ["deadline", "Deadline"],
-                  ]}
-                />
               </div>
             )}
 

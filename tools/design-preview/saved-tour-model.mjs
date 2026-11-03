@@ -18,6 +18,7 @@ let pending = Promise.resolve();
 const serialized = work => { const next = pending.then(work, work); pending = next.catch(() => {}); return next; };
 const fail = (code, status = 400) => { throw new PreviewShowingError(code, status); };
 const all = () => interactiveSamples() ? [...rows.values()] : sampleSavedTours;
+export function readAllSampleSavedTours() { return copy(all()); }
 const canReadContact = person => person?.recordSource === "db" && (SAMPLE_ACTOR.role === "admin" || person.assignedAgentId === SAMPLE_ACTOR.userId);
 function person(id) { const value = readSampleContact(id); if (!canReadContact(value)) fail("not_found", 404); return value; }
 function own(id) { const row = all().find(item => item.id === id && item.ownerUserId === SAMPLE_ACTOR.userId); if (!row) fail("not_found", 404); person(row.contactId); return row; }

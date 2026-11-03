@@ -1,121 +1,38 @@
 "use client";
-
 import Link from "next/link";
-import { ArrowUpRight, MapPin, StickyNote, User } from "lucide-react";
-import { EVENT_TYPE_ICONS } from "./event-chip";
+import { useEffect, useId, useRef, useState } from "react";
+import { ArrowUpRight, CalendarClock } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
-import { getAgent } from "@/lib/data/adapters/agents";
-import { useQuery } from "@/lib/data/hooks";
-import { CalendarEvent, EVENT_TYPE_LABELS } from "@/lib/data/types";
-import { formatDate, formatTime } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { IconWell } from "@/components/ui/icon-well";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import type { CalendarItem, CalendarRescheduleInput } from "@/lib/calendar/domain";
+import { rescheduleCalendarItem } from "@/lib/data/adapters/internal-calendar";
+import { CALENDAR_ITEM_LABELS, CALENDAR_KIND_ICONS, calendarItemTime } from "./event-chip";
+import { calendarDateDraft, calendarFailure, calendarStatusLabel, freezeCalendarReschedule, calendarSaveAllowed, calendarReceiptRecoverable, calendarRescheduleValue, calendarSourceChanged, calendarWriteUncertain, formatCalendarDay, sameCalendarTarget } from "./calendar-state";
+export function EventDetail({ event, current, canWrite, onClose, onSaved, onReload }: { event: CalendarItem; current?: CalendarItem | null; canWrite: boolean; onClose: () => void; onSaved: () => void; onReload: (baseline:CalendarItem,proposedDay:string) => Promise<CalendarItem | null> }) {
+ const [opening, setOpening] = useState(event), [draft, setDraft] = useState(() => calendarDateDraft(event)), [editing, setEditing] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null), [blocked, setBlocked] = useState(false), [uncertain, setUncertain] = useState(false), [fresh, setFresh] = useState<CalendarItem | null | undefined>(undefined);
+ const attempt = useRef<CalendarRescheduleInput | null>(null), body = useRef<HTMLDivElement>(null), dateInput = useRef<HTMLInputElement>(null), prefix = useId();
+ const observedCurrent = current===null&&opening.day!==event.day?undefined:current, stale = calendarSourceChanged(opening, observedCurrent), writable = canWrite && Boolean(opening.reschedule) && (observedCurrent === undefined || Boolean(observedCurrent?.reschedule)), dirty = JSON.stringify(draft) !== JSON.stringify(calendarDateDraft(opening)), recovering = uncertain && calendarReceiptRecoverable(opening), allowed = fresh !== undefined && fresh !== null && sameCalendarTarget(opening, fresh) && Boolean(fresh.reschedule);
+ const proposed = calendarRescheduleValue(opening, draft);
+ useEffect(() => { if (body.current) body.current.scrollTop = 0; if (editing && fresh === undefined) dateInput.current?.focus(); }, [editing, fresh]);
+ function close() { if (!busy) onClose(); }
+ function change(field: keyof typeof draft, value: string) { if (busy || uncertain) return; setDraft(old => ({ ...old, [field]: value })); setError(null); attempt.current = null; }
+ async function review() { if (busy) return; setBusy(true); setError(null); try { setFresh(await onReload(opening,draft.day)); } catch (failure) { setError(calendarFailure(failure)); } finally { setBusy(false); } }
+ function accept(keep: boolean) { if (!fresh || !allowed) return; setOpening(fresh); if (!keep) setDraft(calendarDateDraft(fresh)); setFresh(undefined); setBlocked(false); setUncertain(false); setError(null); attempt.current = null; }
+ async function save(retry = false) {
+  if (!calendarSaveAllowed({busy,retry,recovering,hasAttempt:Boolean(attempt.current),writable,stale,blocked,uncertain,hasFresh:fresh!==undefined,dirty})) return;
+  if (!retry) { if (!proposed.ok) { setError(proposed.message); return; } attempt.current = freezeCalendarReschedule(proposed.input); }
+  setBusy(true); setError(null);
+  try { await rescheduleCalendarItem(attempt.current!); onSaved(); onClose(); }
+  catch (failure) { const unknown = calendarWriteUncertain(failure), code = (failure as { code?: string }).code, status = (failure as { status?: number }).status; setError(calendarFailure(failure)); setUncertain(unknown); if (!unknown && status === 409 && code !== "time_conflict") setBlocked(true); }
+  finally { setBusy(false); }
+ }
+ return <Dialog open onOpenChange={open => { if (!open) close(); }}><DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg flex-col gap-0 overflow-hidden p-0"><DialogHeader className="shrink-0 border-b border-border p-5 pr-12"><div className="mb-3 flex items-center gap-2.5"><IconWell icon={CALENDAR_KIND_ICONS[opening.kind]}/><span className="text-xs text-muted-foreground">{CALENDAR_ITEM_LABELS[opening.kind]}</span></div><DialogTitle className="break-words leading-snug [overflow-wrap:anywhere]">{editing ? "Reschedule" : opening.title}</DialogTitle><DialogDescription className="break-words">{editing ? opening.title : opening.subtitle}</DialogDescription></DialogHeader><div ref={body} className="min-h-0 space-y-5 overflow-y-auto p-5">{!editing ? <><div className="rounded-panel border border-border bg-tint p-4"><p className="text-sm font-semibold">{formatCalendarDay(opening.day, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</p><p className="mt-2 text-sm tabular">{calendarItemTime(opening)}</p><p className="mt-1 text-xs text-muted-foreground">{opening.allDay ? "Date-only record · no time is reserved" : "America/New_York · Eastern time"}</p></div><div className="flex flex-wrap gap-2"><Badge variant="outline">{calendarStatusLabel(opening.status)}</Badge>{opening.kind === "tour" && <Badge variant="muted">Plan, not a booked appointment</Badge>}</div>{opening.kind === "tour" && <p className="text-sm leading-relaxed text-muted-foreground">This is the tour plan’s starting point. Its booked showings appear as separate appointments.</p>}{opening.kind === "reminder" && <p className="text-sm leading-relaxed text-muted-foreground">This date-only reminder is managed in the client’s contact record.</p>}{(stale || current === null) && <p role="status" className="text-sm text-muted-foreground">This source changed since it was opened. Refresh its details before making a change.</p>}<p className="text-xs leading-relaxed text-muted-foreground">Changes are saved to the original record. Calendar does not send invitations or messages.</p></> : <form id={`${prefix}-form`} onSubmit={event => { event.preventDefault(); void save(); }} className="space-y-4">{(stale || blocked || uncertain) && fresh === undefined && <div role="alert" className="space-y-3 rounded-panel border border-border bg-tint p-4"><p className="text-sm leading-relaxed">{uncertain ? "The save result is unconfirmed. Your proposed date is preserved." : "The source changed. Your proposed date is preserved."}</p><Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void review()}>Review saved date</Button></div>}{fresh !== undefined && <div className="space-y-3 rounded-panel border border-border bg-tint p-4" role="status">{fresh ? <><p className="text-sm font-semibold">Current saved date</p><p className="text-sm">{formatCalendarDay(fresh.day)} · {calendarItemTime(fresh)}</p>{allowed ? <div className="flex flex-wrap gap-2"><Button type="button" size="sm" disabled={busy} onClick={() => accept(true)}>Keep my proposed date</Button><Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => accept(false)}>Use saved date</Button></div> : <p className="text-sm leading-relaxed text-muted-foreground">This item can no longer be rescheduled here. Open its source to review the current work.</p>}</> : <p className="text-sm leading-relaxed">This item is no longer in this calendar view. It may have moved or been removed. Open its source to review the current date.</p>}</div>}<CalendarRescheduleFields opening={opening} draft={draft} disabled={busy || uncertain || fresh !== undefined || !writable} prefix={prefix} dateRef={dateInput} onChange={change} ambiguous={proposed.ok && proposed.ambiguous}/>{uncertain && !recovering && <p className="text-sm leading-relaxed">Review the saved date before trying this action again.</p>}{error && <p role="alert" className="text-sm leading-relaxed">{error}</p>}</form>}</div><DialogFooter className="grid shrink-0 grid-cols-2 gap-2 border-t border-border p-4 sm:flex"><Button type="button" variant="outline" disabled={busy} onClick={() => { if (editing && !uncertain) { setEditing(false); setError(null); } else close(); }}>{editing && !uncertain ? "Back" : "Close"}</Button><Button asChild type="button" variant="outline" className="min-w-0" aria-disabled={busy}><Link href={opening.sourceHref} onClick={event => { if (busy) event.preventDefault(); }}><span className="max-w-[180px] truncate">{opening.sourceLabel}</span><ArrowUpRight aria-hidden/></Link></Button>{!editing && canWrite && opening.reschedule && <Button type="button" className="col-span-2 sm:w-auto" disabled={busy || current === null} onClick={() => setEditing(true)}><CalendarClock aria-hidden/>Reschedule</Button>}{editing && (recovering ? <Button type="button" className="col-span-2 sm:w-auto" disabled={busy} onClick={() => void save(true)}>{busy ? "Checking…" : "Check save result"}</Button> : <Button type="submit" className="col-span-2 sm:w-auto" form={`${prefix}-form`} disabled={busy || !dirty || stale || blocked || uncertain || fresh !== undefined || !writable}>{busy ? "Saving…" : "Save date"}</Button>)}</DialogFooter></DialogContent></Dialog>;
+}
 
-/** Event detail dialog: type, when, where, who, notes, transaction link. */
-export function EventDetail({
-  event,
-  open,
-  onOpenChange,
-}: {
-  event: CalendarEvent | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const agentId = event?.agentId ?? null;
-  const { data: agent, loading: agentLoading } = useQuery(
-    () => (agentId ? getAgent(agentId) : Promise.resolve(undefined)),
-    [agentId]
-  );
-
-  const Icon = event ? EVENT_TYPE_ICONS[event.type] : null;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        {event && Icon && (
-          <>
-            <DialogHeader>
-              <div className="flex items-center gap-2">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-tint">
-                  <Icon className="h-4 w-4" aria-hidden />
-                </span>
-                <span className="text-micro">{EVENT_TYPE_LABELS[event.type]}</span>
-              </div>
-              <DialogTitle className="pt-1">{event.title}</DialogTitle>
-              <DialogDescription className="tabular">
-                {formatDate(event.start)} · {formatTime(event.start)} –{" "}
-                {formatTime(event.end)}
-              </DialogDescription>
-            </DialogHeader>
-
-            <Separator />
-
-            <div className="space-y-3 text-sm">
-              {event.address && (
-                <div className="flex items-start gap-2.5">
-                  <MapPin
-                    className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <div>
-                    <p className="text-micro mb-0.5">Address</p>
-                    <p>{event.address}</p>
-                  </div>
-                </div>
-              )}
-              <div className="flex items-start gap-2.5">
-                <User
-                  className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
-                  aria-hidden
-                />
-                <div>
-                  <p className="text-micro mb-0.5">Agent</p>
-                  {agentLoading ? (
-                    <Skeleton className="h-4 w-32" />
-                  ) : agent ? (
-                    <p>
-                      {agent.name}
-                      <span className="text-muted-foreground"> · {agent.phone}</span>
-                    </p>
-                  ) : (
-                    <p className="text-muted-foreground">Unassigned</p>
-                  )}
-                </div>
-              </div>
-              {event.notes && (
-                <div className="flex items-start gap-2.5">
-                  <StickyNote
-                    className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <div>
-                    <p className="text-micro mb-0.5">Notes</p>
-                    <p className="text-muted-foreground">{event.notes}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {event.transactionId && (
-              <div className="flex justify-end">
-                <Button asChild variant="outline" size="sm">
-                  <Link href={`/transactions?open=${event.transactionId}`}>
-                    Open transaction
-                    <ArrowUpRight aria-hidden />
-                  </Link>
-                </Button>
-              </div>
-            )}
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
+export function CalendarRescheduleFields({ opening, draft, disabled, prefix, dateRef, onChange, ambiguous = false }: { opening: CalendarItem; draft: ReturnType<typeof calendarDateDraft>; disabled: boolean; prefix: string; dateRef?: React.Ref<HTMLInputElement>; onChange: (field: keyof ReturnType<typeof calendarDateDraft>, value: string) => void; ambiguous?: boolean }) {
+ return <fieldset disabled={disabled} className="min-w-0 space-y-4"><div className="space-y-2"><Label htmlFor={`${prefix}-day`}>Date{opening.allDay ? "" : " · New York"}</Label><Input ref={dateRef} id={`${prefix}-day`} type="date" required className="min-w-0 max-w-full" value={draft.day} onChange={event => onChange("day", event.target.value)}/></div>{!opening.allDay && <div className="grid min-w-0 gap-4 sm:grid-cols-2"><div className="min-w-0 space-y-2"><Label htmlFor={`${prefix}-time`}>Start time · Eastern</Label><Input id={`${prefix}-time`} type="time" required className="min-w-0 max-w-full" value={draft.time} onChange={event => onChange("time", event.target.value)}/></div>{opening.kind === "showing" && <div className="min-w-0 space-y-2"><Label htmlFor={`${prefix}-duration`}>Duration · minutes</Label><Input id={`${prefix}-duration`} type="number" inputMode="numeric" required min={15} max={240} value={draft.duration} onChange={event => onChange("duration", event.target.value)}/></div>}</div>}{ambiguous && <p className="text-xs leading-relaxed text-muted-foreground">Clocks repeat this time in New York. A changed time uses its first occurrence; an unchanged saved time keeps its original occurrence.</p>}<p className="text-xs leading-relaxed text-muted-foreground">Only the date{opening.kind === "showing" ? ", start time and duration" : opening.allDay ? "" : " and time"} will change. Other saved details stay with the source record.</p></fieldset>;
 }

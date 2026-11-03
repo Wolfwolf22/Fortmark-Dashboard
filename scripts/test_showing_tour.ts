@@ -82,7 +82,11 @@ try {
   const beforeUnauthorized = { mls: mlsCalls, roads: roadCalls };
   check("admincannotreadanotherownershowingtour", !(await getShowingTour({ actor: admin, db }, first.showingId, mls, routing, {}, now)).ok);
   check("otherownercannotcalculateanotherownershowingtour", !(await recommendShowingTour({ actor: other, db }, first.showingId, body(first), mls, routing, now)).ok && mlsCalls === beforeUnauthorized.mls && roadCalls === beforeUnauthorized.roads);
+  await db.update(dashboardUsers).set({ role: "member" }).where(eq(dashboardUsers.id, actor.userId));
+  const staleRoleCalls = { mls: mlsCalls, roads: roadCalls };
+  check("formeragentcontextcannotreadtourafteractualdemotion", !(await getShowingTour(ctx, first.showingId, mls, routing, {}, now)).ok && mlsCalls === staleRoleCalls.mls && roadCalls === staleRoleCalls.roads);
   check("membercanrequestreadonlyrecommendationonownvisiblerecord", (await recommendShowingTour(reader, first.showingId, body(first), mls, routing, now)).ok);
+  await db.update(dashboardUsers).set({ role: "agent" }).where(eq(dashboardUsers.id, actor.userId));
   for (const bad of [{ ...body(first), selectedPropertyIds: [properties[0].id] }, { ...body(first), selectedPropertyIds: [properties[0].id, properties[0].id] }, { ...body(first), startPropertyId: separatePropertyId }, { ...body(first), coordinates: { lat: 26, lng: -80 } }]) check("clientcannotinjectauthorityorinvalidselection", !tourPlanInputSchema.safeParse(bad).success);
   const beforeInvalid = roadCalls;
   check("wronglistselectionrefusedbeforeexternalroute", !(await recommendShowingTour(ctx, first.showingId, { ...body(first), selectedPropertyIds: [properties[0].id, separatePropertyId] }, mls, routing, now)).ok && roadCalls === beforeInvalid);

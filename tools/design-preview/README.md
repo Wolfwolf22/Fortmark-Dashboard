@@ -542,7 +542,7 @@ The real setup/workspace adapters exercise 15 additional groups:
 node --experimental-strip-types --no-warnings tools/design-preview/test-transaction-operations-session.mjs
 ```
 
-Total isolated preview groups: 205. Live private-file storage configuration is
+Total isolated preview groups: 226. Live private-file storage configuration is
 documented in [TRANSACTION_FILES_AND_VENDORS.md](../../docs/TRANSACTION_FILES_AND_VENDORS.md).
 
 
@@ -598,3 +598,38 @@ node --experimental-strip-types --no-warnings tools/design-preview/test-gc-trans
 The 10 additional groups exercise the actual adapter's minimal request, blank
 workspace, receipt/lost-reply recovery, client scope, side filters, refused
 sales writes and unchanged Home figures. See [GC behavior](../../docs/GC_TRANSACTIONS.md).
+
+
+## Internal calendar and daily agenda
+
+The real Calendar page, item details and internal API adapter now read the same
+memory-only showings, saved tours, contacts and transaction deadlines as their
+source screens. Nothing reaches an external calendar, routing provider or MLS.
+
+- `/preview?view=%2Fcalendar&scenario=interactive` opens Today.
+- `/preview?view=%2Fcalendar%3Fview%3Dweek&scenario=interactive` shows the combined week.
+- `/responsive?width=320&height=568&view=%2Fcalendar&scenario=interactive` checks the phone layout.
+- Choose **First deadline source unavailable** to verify that other sources remain
+  visible with an incomplete-availability message; Refresh restores the deadline source.
+
+Day, Week and Month share New York day boundaries. Date-only deadlines remain
+all-day, next actions remain points, and tour-plan starts do not duplicate booked
+appointment blocks. Source filters scope the visible work and warning checks.
+The adjustable planning buffer is advisory; no driving estimate is invented.
+
+Interactive samples permit calendar rescheduling of a showing, client next action
+or transaction deadline through its existing source model. Open its source to
+verify the saved date in the same session. Reload discards the synthetic changes.
+The New menu’s Plan activity chooser uses the production source navigation.
+
+Run the closed-transport regression:
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-calendar-session.mjs
+```
+
+Twenty-one isolated groups cover the actual adapter, private owner scope, mirror
+suppression, all-day/point semantics, source filters, three source reschedules,
+revision conflicts, owned-Agent writes, exact receipts after completion/removal,
+bounded counts and partial sources.
+See `docs/internal-calendar.md` for production behavior and deferred provider sync.

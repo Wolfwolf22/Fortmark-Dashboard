@@ -29,7 +29,7 @@ export function getPreviewScenario() {
   return typeof window === "undefined" ? "records" : new URLSearchParams(window.location.search).get("scenario") || "records";
 }
 export const interactiveSamples = () => getPreviewScenario() === "interactive";
-export const canWriteSample = contact => interactiveSamples() && SAMPLE_ACTOR.role === "admin" && contact?.recordSource === "db";
+export const canWriteSample = contact => interactiveSamples() && contact?.recordSource === "db" && SAMPLE_ACTOR.role !== "member" && (SAMPLE_ACTOR.role === "admin" || contact.assignedAgentId === SAMPLE_ACTOR.userId);
 
 function legacyOpportunities(contact) {
   const kinds = { buy: ["buyer"], sell: ["seller"], both: ["buyer", "seller"], lease: ["tenant"], invest: ["investor"], other: [] }[contact.intent] || [];

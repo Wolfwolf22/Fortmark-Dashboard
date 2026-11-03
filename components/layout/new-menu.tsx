@@ -47,7 +47,7 @@ export function NewMenu() {
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setQuickCreate("event")}>
             <CalendarPlus />
-            Calendar event
+            Plan activity
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setQuickCreate("document")}>
             <FilePlus2 />

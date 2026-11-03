@@ -14,7 +14,7 @@ export function QuickCreateDialog() {
   // Keep recovery state mounted across every New menu selection. The real
   // dialog only accepts transactions; other kinds use the read-only preview.
   return <>
-    {interactive && <ActualQuickCreateDialog allowedKinds={["transaction"]} />}
-    <Dialog open={!!kind && (!interactive || kind !== "transaction")} onOpenChange={open => !open && setKind(null)}><DialogContent><DialogHeader><DialogTitle>Design preview</DialogTitle><DialogDescription>Creation is disabled in this visual review.</DialogDescription></DialogHeader><p className="text-sm text-muted-foreground">The real navigation and shared controls are shown here. No live records or services are connected.</p></DialogContent></Dialog>
+    {interactive && <ActualQuickCreateDialog allowedKinds={["transaction", "event"]} />}
+    <Dialog open={!!kind && (!interactive || !["transaction", "event"].includes(kind))} onOpenChange={open => !open && setKind(null)}><DialogContent><DialogHeader><DialogTitle>Design preview</DialogTitle><DialogDescription>Creation is disabled in this visual review.</DialogDescription></DialogHeader><p className="text-sm text-muted-foreground">The real navigation and shared controls are shown here. No live records or services are connected.</p></DialogContent></Dialog>
   </>;
 }

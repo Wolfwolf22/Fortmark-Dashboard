@@ -63,8 +63,12 @@ try {
   const collision = await createShowing(ctx, { ...planned.input, requestId: randomUUID(), ...schedule(15, 10) }, now); check("sameowner overlap refuses with no partialrow", !collision.ok && collision.reason === "time_conflict" && (await db.select().from(showings)).length === 1);
   const adjacent = await plan(15, 30);
   check("adjacent interval is accepted", adjacent.showing.startsAt === planned.showing.endsAt);
+  await db.update(dashboardUsers).set({ role: "member" }).where(eq(dashboardUsers.id, actor.userId));
   check("member cannot create or mutate", !(await createShowing(reader, { ...planned.input, requestId: randomUUID(), ...schedule(18) }, now)).ok && !(await mutateShowing(reader, planned.showing.id, { action: "cancel", requestId: randomUUID(), expectedUpdatedAt: planned.showing.updatedAt, reason: "No" }, now)).ok);
-  check("member can read own showing without writeabilities", (await getShowing(reader, planned.showing.id) as { ok: true; value: ShowingView }).value.canEdit === false);
+  const memberRead = await getShowing(reader, planned.showing.id);
+  check("member can read own showing without writeabilities", memberRead.ok && memberRead.value.canEdit === false);
+  check("stale agent role does not retain showing access after demotion", !(await getShowing(ctx, planned.showing.id)).ok);
+  await db.update(dashboardUsers).set({ role: "agent" }).where(eq(dashboardUsers.id, actor.userId));
   check("admin cannot read colleague-owned appointment evenvisiblecontact", !(await getShowing(adminCtx, planned.showing.id)).ok);
   const otherList = await createPropertyList(otherCtx, { requestId: randomUUID(), name: "Other source", contactId: otherContactId }, now); check("other list creates", otherList.ok);
   const otherPropertyId = randomUUID(); await db.insert(contactProperties).values({ id: otherPropertyId, listId: otherList.value.id, contactId: otherContactId, dataset: "synthetic", listingId: "other-key", mlsNumber: "O123" });

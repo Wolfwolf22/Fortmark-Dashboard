@@ -46,6 +46,7 @@ try {
   const changedCreate = await createSavedShowingTour(ctx, { ...draftInput, name: "Changed" }, now); check("createkeycannotrebindpayload", !changedCreate.ok && changedCreate.reason === "request_conflict");
   check("admincannotreadanotherownerstour", !(await getSavedShowingTour({ actor: admin, db }, draft.id)).ok);
   await db.update(dashboardUsers).set({ role: "member" }).where(eq(dashboardUsers.id, actor.userId));
+  check("formeragentcontextcannotreadsavedtourafteractualdemotion", !(await getSavedShowingTour(ctx, draft.id)).ok);
   check("memberreadallowedbutallwritesandreviewsrefused", (await getSavedShowingTour(member, draft.id)).ok && !(await createSavedShowingTour(member, input(), now)).ok && !(await reviewSavedShowingTour(member, draft.id, { expectedUpdatedAt: draft.updatedAt }, mls, routing, now)).ok);
   await db.update(dashboardUsers).set({ role: "agent" }).where(eq(dashboardUsers.id, actor.userId));
   check("foreignlistdraftrefusedwithoutMLScalls", !(await createSavedShowingTour(ctx, { ...input(), sourceListId: otherListId }, now)).ok && mlsCalls === 0);
@@ -118,7 +119,9 @@ try {
   await db.update(showings).set({ notes: "New private showing note after review", updatedAt: new Date(now.getTime() + 9000) }).where(eq(showings.id, scheduled.value.showingIds[1]));
   const staleLinked = await scheduleSavedShowingTour(ctx, latestLocked.id, scheduleInput(latestLocked, linkedReview), now);
   check("linkedshowingrevisionprotectsnewerprivatenotes", !staleLinked.ok && staleLinked.reason === "stale_review" && (await db.select().from(showings).where(eq(showings.id, scheduled.value.showingIds[1])))[0].notes === "New private showing note after review");
+  await db.update(dashboardUsers).set({ role: "member" }).where(eq(dashboardUsers.id, actor.userId));
   const memberApply = await scheduleSavedShowingTour(member, latestLocked.id, scheduleInput(latestLocked, linkedReview), now); check("membercannotapplyevenwithvalidsignedreview", !memberApply.ok && memberApply.reason === "forbidden");
+  await db.update(dashboardUsers).set({ role: "agent" }).where(eq(dashboardUsers.id, actor.userId));
   const wrongOwner = await scheduleSavedShowingTour({ actor: admin, db }, latestLocked.id, scheduleInput(latestLocked, linkedReview), now); check("admincannotapplyanotherownerssignedreview", !wrongOwner.ok && wrongOwner.reason === "not_found");
   const allAudits = await db.select().from(auditEvents); check("noendpointsorroutegeometryeverenteraudit", !/Private typed|coordinates|mapPolyline|Synthetic roads/.test(JSON.stringify(allAudits)));
   const archiveBody = { requestId: randomUUID(), expectedUpdatedAt: endpoints.updatedAt }, archived = await archiveSavedShowingTour(ctx, endpoints.id, archiveBody, now); check("archiveisrecoverablesoftstate", archived.ok && archived.value.archivedAt === now.toISOString() && !archived.value.canEdit);

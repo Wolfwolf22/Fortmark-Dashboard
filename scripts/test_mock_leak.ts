@@ -259,7 +259,6 @@ check("the availability route is authenticated and uncacheable", (() => {
 
 const SCREENS: [string, string][] = [
   ["app/(app)/messages/page.tsx", "messages"],
-  ["app/(app)/calendar/page.tsx", "calendar"],
   ["app/(app)/documents/page.tsx", "documents"],
   ["components/settings/team-section.tsx", "team"],
   ["components/settings/brokerage-section.tsx", "brokerage"],
@@ -274,6 +273,12 @@ for (const [path, subsystem] of SCREENS) {
   check(`${subsystem} reads the error, not just the loading flag`, (() =>
     /const \{[^}]*\berror\b[^}]*\} = useQuery/.test(src))());
 }
+
+
+check("internal Calendar reads source records through its authenticated adapter", (() => {
+  const page = code("app/(app)/calendar/page.tsx"), adapter = code("lib/data/adapters/internal-calendar.ts");
+  return page.includes("getInternalCalendar") && !page.includes("getEvents") && !/mock\/db|sample-leads|sample-transactions/.test(adapter) && adapter.includes('/api/calendar?') && adapter.includes('cache: "no-store"');
+})());
 
 check("Reports decides before it renders five generated cards", (() => {
   const src = code("app/(app)/reports/page.tsx");
@@ -305,7 +310,6 @@ check("quick create names the missing subsystem rather than blaming the fields",
 
 const LABELLED: string[] = [
   "app/(app)/messages/page.tsx",
-  "app/(app)/calendar/page.tsx",
   "app/(app)/documents/page.tsx",
   "app/(app)/reports/page.tsx",
   "components/settings/team-section.tsx",

@@ -1,217 +1,54 @@
 "use client";
-
-/**
- * Calendar — month and week views over typed brokerage events. Local cursor
- * plus view toggle drive the adapter range; type chips include/exclude event
- * kinds; clicking an event opens the shared detail dialog.
- */
-import { useMemo, useState } from "react";
-import {
-  addMonths,
-  addWeeks,
-  endOfMonth,
-  endOfWeek,
-  format,
-  startOfMonth,
-  startOfWeek,
-} from "date-fns";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { EVENT_TYPE_ICONS } from "@/components/calendar/event-chip";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { CalendarDays, ChevronLeft, ChevronRight, RefreshCw, TriangleAlert } from "lucide-react";
+import { PageIntro } from "@/components/common/page-intro";
+import { useSessionUser } from "@/components/layout/session-user";
+import { DayView } from "@/components/calendar/day-view";
 import { EventDetail } from "@/components/calendar/event-detail";
 import { MonthView } from "@/components/calendar/month-view";
 import { WeekView } from "@/components/calendar/week-view";
-import { Button } from "@/components/ui/button";
-import { Segmented } from "@/components/ui/segmented";
-import { getEvents } from "@/lib/data/adapters/calendar";
+import { CALENDAR_KIND_ICONS } from "@/components/calendar/event-chip";
+import { calendarFailure, calendarPartial, calendarQueryCurrent, calendarQueryRange, calendarReviewQueries, calendarReviewedItem, calendarRangeLabel, calendarToday, readCalendarDay, readCalendarKinds, shiftCalendarDay, type CalendarView } from "@/components/calendar/calendar-state";
+import { CALENDAR_KINDS, CALENDAR_KIND_LABELS, type CalendarItem, type CalendarPage } from "@/lib/calendar/domain";
+import { buildCalendarWarnings } from "@/lib/calendar/scheduling";
+import { getInternalCalendar } from "@/lib/data/adapters/internal-calendar";
 import { useQuery } from "@/lib/data/hooks";
-import { SubsystemNotConnected, unavailableSubsystem } from "@/components/common/subsystem-state";
-import { SampleDataNotice } from "@/components/listings/sample-data-notice";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import {
-  CalendarEvent,
-  EVENT_TYPE_LABELS,
-  EventType,
-} from "@/lib/data/types";
-import { cn } from "@/lib/utils";
-
-type CalendarView = "month" | "week";
-
-const ALL_TYPES: EventType[] = [
-  "showing",
-  "inspection",
-  "appraisal",
-  "closing",
-  "openHouse",
-  "deadline",
-];
-
-const WEEK_OPTS = { weekStartsOn: 1 as const };
-
-export default function Page() {
-  const [view, setView] = useState<CalendarView>("month");
-  const [cursor, setCursor] = useState<Date>(() => new Date());
-  const [types, setTypes] = useState<EventType[]>(ALL_TYPES);
-
-  const [detailEvent, setDetailEvent] = useState<CalendarEvent | null>(null);
-  const [detailOpen, setDetailOpen] = useState(false);
-
-  const cursorTime = cursor.getTime();
-  const range = useMemo(() => {
-    const anchor = new Date(cursorTime);
-    if (view === "month") {
-      // Cover the whole visible grid, leading and trailing days included.
-      return {
-        from: startOfWeek(startOfMonth(anchor), WEEK_OPTS),
-        to: endOfWeek(endOfMonth(anchor), WEEK_OPTS),
-      };
-    }
-    return {
-      from: startOfWeek(anchor, WEEK_OPTS),
-      to: endOfWeek(anchor, WEEK_OPTS),
-    };
-  }, [view, cursorTime]);
-
-  const typesKey = [...types].sort().join(",");
-  const { data: events, loading, error } = useQuery(
-    () =>
-      types.length === 0
-        ? Promise.resolve<CalendarEvent[]>([])
-        : getEvents(range, types),
-    [view, range.from.getTime(), range.to.getTime(), typesKey]
-  );
-
-  const label =
-    view === "month"
-      ? format(cursor, "MMMM yyyy")
-      : `${format(range.from, "MMM d")} – ${format(range.to, "MMM d")}`;
-
-  function goPrevious() {
-    setCursor((c) => (view === "month" ? addMonths(c, -1) : addWeeks(c, -1)));
-  }
-
-  function goNext() {
-    setCursor((c) => (view === "month" ? addMonths(c, 1) : addWeeks(c, 1)));
-  }
-
-  function goToday() {
-    setCursor(new Date());
-  }
-
-  function toggleType(type: EventType) {
-    setTypes((prev) =>
-      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
-    );
-  }
-
-  function openEvent(event: CalendarEvent) {
-    setDetailEvent(event);
-    setDetailOpen(true);
-  }
-
-  // There is no calendar provider. An empty month would read as "you have
-  // nothing on", which is a claim about the reader's week.
-  const missing = unavailableSubsystem(error);
-  if (missing) {
-    return (
-      <Card className="flex min-h-[24rem] items-center justify-center">
-        <SubsystemNotConnected subsystem={missing} />
-      </Card>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      {/* Events only reach this page in the labelled fixture mode. */}
-      {events && events.length > 0 && (
-        <SampleDataNotice subject="These appointments are generated for development. Nothing here is on anyone's calendar." />
-      )}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={goPrevious}
-            aria-label={view === "month" ? "Previous month" : "Previous week"}
-          >
-            <ChevronLeft />
-          </Button>
-          <Button variant="outline" size="sm" onClick={goToday}>
-            Today
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={goNext}
-            aria-label={view === "month" ? "Next month" : "Next week"}
-          >
-            <ChevronRight />
-          </Button>
-        </div>
-        <h2 className="min-w-0 truncate text-lg font-bold leading-none tabular">
-          {label}
-        </h2>
-        <div className="ml-auto">
-          <Segmented
-            ariaLabel="Calendar view"
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "month", label: "Month" },
-              { value: "week", label: "Week" },
-            ]}
-          />
-        </div>
-      </div>
-
-      <div
-        role="group"
-        aria-label="Filter by event type"
-        className="flex flex-wrap items-center gap-1.5"
-      >
-        {ALL_TYPES.map((type) => {
-          const active = types.includes(type);
-          const Icon = EVENT_TYPE_ICONS[type];
-          return (
-            <button
-              key={type}
-              type="button"
-              aria-pressed={active}
-              onClick={() => toggleType(type)}
-              className={cn(
-                "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors duration-150",
-                active
-                  ? "bg-primary text-primary-foreground hover:bg-primary/85"
-                  : "bg-tint text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <Icon className="h-3 w-3" aria-hidden />
-              {EVENT_TYPE_LABELS[type]}
-            </button>
-          );
-        })}
-      </div>
-
-      {view === "month" ? (
-        <MonthView
-          cursor={cursor}
-          events={events}
-          loading={loading}
-          onEventClick={openEvent}
-        />
-      ) : (
-        <WeekView
-          cursor={cursor}
-          events={events}
-          loading={loading}
-          onEventClick={openEvent}
-        />
-      )}
-
-      <EventDetail
-        event={detailEvent}
-        open={detailOpen}
-        onOpenChange={setDetailOpen}
-      />
-    </div>
-  );
+import { Input } from "@/components/ui/input";
+import { Segmented } from "@/components/ui/segmented";
+import { Skeleton } from "@/components/ui/skeleton";
+export function CalendarSources({ page }: { page: CalendarPage }) {
+ if (!page.sources.length) return null;
+ return <div className="flex max-w-full flex-wrap gap-x-5 gap-y-2 text-[11px] leading-relaxed text-muted-foreground" aria-label="Calendar source status">{page.sources.map(source => <p key={source.kind}><span className="font-semibold text-foreground">{CALENDAR_KIND_LABELS[source.kind]}</span> · {source.status === "available" ? source.truncated ? `First ${page.items.filter(item => item.kind === source.kind).length} of ${source.total ?? "many"} loaded` : `${source.total ?? 0} loaded` : source.status === "not_configured" ? "Stored source not configured" : "Could not be loaded"}</p>)}</div>;
 }
+function CalendarPageInner() {
+ const router = useRouter(), params = useSearchParams(), canWrite = useSessionUser().role !== "Member", [clock, setClock] = useState(() => new Date()), today = calendarToday(clock), rawView = params.get("view"), view: CalendarView = rawView === "week" || rawView === "month" ? rawView : "day", day = readCalendarDay(params.get("day"), clock), kinds = readCalendarKinds(params.get("kinds")), kindsKey = kinds.join(","), range = calendarQueryRange(view, day), key = JSON.stringify({ ...range, kinds: kindsKey });
+ const [bufferMinutes, setBufferMinutes] = useState(15), [selected, setSelected] = useState<CalendarItem | null>(null), [notice, setNotice] = useState<string | null>(null), priorKey = useRef(key);
+ const query = useQuery(async () => ({ key, result: kinds.length ? await getInternalCalendar({ ...range, kinds }) : { ...range, items: [], sources: [], timeZone: "America/New_York", generatedAt: new Date().toISOString() } as CalendarPage }), [key]);
+ const data = calendarQueryCurrent(key, query.data, query.error), partial = data ? calendarPartial(data) : false, warnings = useMemo(() => buildCalendarWarnings(data?.items ?? [], {bufferMinutes}), [data?.items,bufferMinutes]);
+ useEffect(() => { if (priorKey.current !== key) { priorKey.current = key; setSelected(null); setNotice(null); } }, [key]);
+ useEffect(() => { const status = (query.error as { status?: number } | null)?.status; if (status === 401 || status === 403 || status === 404) setSelected(null); }, [query.error]);
+ useEffect(() => {
+  function refresh() { const now = new Date(); setClock(previous => calendarToday(previous) === calendarToday(now) ? previous : now); query.refetch(); }
+  function visible() { if (document.visibilityState === "visible") refresh(); }
+  const timer = window.setInterval(() => { if (document.visibilityState !== "visible") return; const now = new Date(); setClock(previous => calendarToday(previous) === calendarToday(now) ? previous : now); }, 60_000);
+  window.addEventListener("focus", refresh); document.addEventListener("visibilitychange", visible);
+  return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", visible); };
+ }, [query.refetch]);
+ function navigate(changes: Record<string, string | null>) { const next = new URLSearchParams(params.toString()); for (const [name, value] of Object.entries(changes)) { if (value === null) next.delete(name); else next.set(name, value); } setSelected(null); setNotice(null); router.replace(`/calendar${next.size ? `?${next}` : ""}`, { scroll: false }); }
+ async function reloadSelected(baseline:CalendarItem,proposedDay:string): Promise<CalendarItem | null> {
+  if(!selected||baseline.id!==selected.id||baseline.kind!==selected.kind)return null;
+  const results=await Promise.allSettled(calendarReviewQueries(baseline,proposedDay).map(query=>getInternalCalendar(query)));
+  query.refetch();
+  const denied=results.find(result=>result.status==="rejected"&&[401,403,404].includes((result.reason as {status?:number})?.status??0));if(denied?.status==="rejected")throw denied.reason;
+  const pages=results.flatMap(result=>result.status==="fulfilled"?[result.value]:[]),found=calendarReviewedItem(baseline,pages);
+  if(found)return found;
+  const failed=results.find(result=>result.status==="rejected");if(failed?.status==="rejected")throw failed.reason;
+  return null;
+ }
+ return <div className="min-w-0 space-y-4"><PageIntro title="Calendar" description="Your stored appointments, client actions and transaction dates in one place." icon={CalendarDays} action={<Button type="button" variant="outline" className="min-h-11" disabled={query.loading} onClick={query.refetch}><RefreshCw aria-hidden/>Refresh</Button>}/><Card className="min-w-0 space-y-3 p-3 sm:p-4"><div className="flex min-w-0 flex-wrap items-center justify-between gap-3"><div className="flex min-w-0 flex-wrap items-center gap-2"><div className="flex items-center gap-1"><Button type="button" variant="ghost" size="icon" className="h-11 w-11" aria-label={`Previous ${view}`} onClick={() => navigate({ day: shiftCalendarDay(view, day, -1) })}><ChevronLeft aria-hidden/></Button><Button type="button" variant="outline" size="sm" className="min-h-11" onClick={() => navigate({ day: null, view: "day" })}>Today</Button><Button type="button" variant="ghost" size="icon" className="h-11 w-11" aria-label={`Next ${view}`} onClick={() => navigate({ day: shiftCalendarDay(view, day, 1) })}><ChevronRight aria-hidden/></Button></div><h3 className="break-words text-base font-semibold tracking-tight tabular sm:text-lg">{calendarRangeLabel(view, day)}</h3></div><Segmented ariaLabel="Calendar view" value={view} onChange={value => navigate({ view: value })} options={[{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }]}/></div><div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-3"><p className="text-[11px] leading-relaxed text-muted-foreground">America/New_York · Eastern time. Date-only work does not reserve time.</p><Input type="date" aria-label="Choose calendar date" className="min-h-10 w-[164px] max-w-full" value={day} onChange={event => { if (/^\d{4}-\d{2}-\d{2}$/.test(event.target.value)) navigate({ day: event.target.value }); }}/></div></Card><div role="group" aria-label="Calendar source filters" className="flex max-w-full gap-1.5 overflow-x-auto pb-1">{CALENDAR_KINDS.map(kind => { const active = kinds.includes(kind), Icon = CALENDAR_KIND_ICONS[kind]; return <Button key={kind} type="button" variant={active ? "default" : "outline"} size="sm" className="min-h-10 shrink-0" aria-pressed={active} onClick={() => { const next = active ? kinds.filter(value => value !== kind) : CALENDAR_KINDS.filter(value => value === kind || kinds.includes(value)); navigate({ kinds: next.length === CALENDAR_KINDS.length ? null : next.length ? next.join(",") : "none" }); }}><Icon aria-hidden/>{CALENDAR_KIND_LABELS[kind]}</Button>; })}</div>{notice && <p role="status" className="rounded-panel border border-border bg-tint p-3 text-sm">{notice}</p>}{query.error && <div role="alert" className="flex flex-wrap items-start justify-between gap-3 rounded-panel border border-border bg-tint p-4"><p className="max-w-2xl text-sm leading-relaxed">{calendarFailure(query.error)}{data ? " The last loaded items for this view are shown." : ""}</p><Button type="button" size="sm" variant="outline" disabled={query.loading} onClick={query.refetch}>Retry</Button></div>}{data && <CalendarSources page={data}/>} {partial && <p role="status" className="rounded-panel border border-border bg-tint p-3 text-xs leading-relaxed">Some sources are incomplete or could not be loaded. The calendar cannot establish your complete availability from these items.</p>}<div className="flex min-w-0 flex-wrap items-center justify-between gap-3"><p className="text-[11px] leading-relaxed text-muted-foreground">Schedule review checks only loaded showings from the selected sources.</p><label className="flex items-center gap-2 text-xs text-muted-foreground">Planning buffer<select aria-label="Planning buffer" value={bufferMinutes} onChange={event=>{const value=Number(event.target.value);if([0,10,15,20,30,45,60].includes(value))setBufferMinutes(value);}} className="min-h-10 max-w-full rounded-lg border border-input bg-card px-3 text-xs font-medium text-foreground">{[0,10,15,20,30,45,60].map(value=><option key={value} value={value}>{value} min</option>)}</select></label></div>{warnings.length > 0 && <Card className="min-w-0 p-4"><div className="flex items-center gap-2"><TriangleAlert aria-hidden className="h-4 w-4 shrink-0"/><h3 className="text-sm font-semibold">Schedule to review</h3><Badge variant="muted">{warnings.length}</Badge></div><p className="mt-2 text-xs leading-relaxed text-muted-foreground">{bufferMinutes===0?"Overlapping loaded showings.":`Loaded showing overlaps and gaps shorter than ${bufferMinutes} minutes.`} This planning buffer is not a driving estimate.</p><ul className="mt-3 space-y-2">{warnings.map(warning => <li key={warning.id} className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-2"><div className="min-w-0 flex-1"><p className="text-xs leading-relaxed">{warning.message}</p><p className="mt-1 break-words text-xs font-semibold [overflow-wrap:anywhere]">{warning.itemIds.map(id=>data?.items.find(item=>item.id===id)?.title).filter(Boolean).join(" → ")}</p></div><div className="flex flex-wrap gap-2">{warning.itemIds.map((id, index) => { const item = data?.items.find(value => value.id === id); return item ? <Button key={id} type="button" variant="ghost" size="sm" aria-label={`Open showing: ${item.title}`} onClick={() => setSelected(item)}>Showing {index + 1}</Button> : null; })}</div></li>)}</ul></Card>}{!data && query.error && !query.loading ? <Card className="p-6"><h3 className="text-sm font-semibold">Calendar items could not be loaded</h3><p className="mt-2 text-sm text-muted-foreground">Retry the saved sources above. No items from a previous view are shown here.</p></Card> : kinds.length === 0 ? <Card className="space-y-3 p-6"><h3 className="text-sm font-semibold">No sources selected</h3><p className="text-sm text-muted-foreground">Choose a source above or restore every source.</p><Button type="button" variant="outline" onClick={() => navigate({ kinds: null })}>Show all sources</Button></Card> : view === "month" ? <MonthView day={day} today={today} items={data?.items} loading={query.loading} onItemClick={setSelected} onDayClick={value => navigate({ day: value })} partial={partial}/> : view === "week" ? <WeekView day={day} today={today} items={data?.items} loading={query.loading} onItemClick={setSelected} onDayClick={value => navigate({ day: value, view: "day" })}/> : <DayView day={day} items={data?.items} loading={query.loading} onItemClick={setSelected} partial={partial}/>}<p className="text-[11px] leading-relaxed text-muted-foreground">Internal work records only. Tours are plans until their showings are scheduled; client actions do not reserve appointment time.</p>{selected && ![401,403,404].includes((query.error as {status?:number}|null)?.status??0) && <EventDetail key={selected.id} event={selected} current={data ? data.items.find(item => item.id === selected.id) ?? null : undefined} canWrite={canWrite && !query.error} onClose={() => setSelected(null)} onSaved={() => { setNotice("The new date was saved to its source record."); query.refetch(); }} onReload={reloadSelected}/>}</div>;
+}
+export default function Page() { return <Suspense fallback={<Skeleton className="h-80 w-full rounded-card"/>}><CalendarPageInner/></Suspense>; }

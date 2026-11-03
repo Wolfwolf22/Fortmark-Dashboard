@@ -26,6 +26,7 @@ type Access = { row: ShowingRow; contact: ContactRow; writable: boolean };
 /** Appointment ownership never inherits the admin's broader contact visibility. */
 export function showingVisibility(ctx: Ctx) {
   return and(eq(showings.ownerUserId, ctx.actor.userId), eq(showings.brokerageKey, ctx.actor.brokerageKey),
+    sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${ctx.actor.userId}::uuid and ${dashboardUsers.role}=${ctx.actor.role} and ${dashboardUsers.status}='active')`,
     sql`exists(select 1 from ${contacts} where ${contacts.id}=${showings.contactId} and ${visibleTo(ctx.actor)})`);
 }
 async function loadShowing(ctx: Ctx, id: string): Promise<ShowingResult<Access>> {

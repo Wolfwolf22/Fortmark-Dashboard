@@ -10,6 +10,7 @@ import { getSampleShowingActivity } from "./showing-model.mjs";
 import { tourTransport } from "./tour-transport.mjs";
 import { savedTourTransport } from "./saved-tour-transport.mjs";
 import { transactionTransport } from "./transaction-transport.mjs";
+import { calendarTransport } from "./calendar-transport.mjs";
 import { readPreviewTransactionBundles, previewTransactionActivity } from "./transaction-model.mjs";
 import { previewTransactionPublicId } from "./transaction-fixtures.mjs";
 import { isActiveStage } from "../../lib/transactions/stages.ts";
@@ -114,6 +115,8 @@ export function installPreviewTransport() {
     const url = new URL(typeof input === "string" ? input : input.url, window.location.origin);
     if (url.origin !== window.location.origin) return json({ error: "External requests are disabled in the design preview." }, 403);
     const path = url.pathname.replace(/^\/dashboard/, "");
+    const calendarResponse = await calendarTransport(path, url, input, init);
+    if (calendarResponse) return calendarResponse;
     const transactionResponse = await transactionTransport(path, url, input, init);
     if (transactionResponse) return transactionResponse;
     const savedTourResponse = await savedTourTransport(path, url, input, init);
