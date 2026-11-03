@@ -11,8 +11,9 @@ The connected Vercel account lists `fortmark-dashboard`
 `team_lrHGYzrhpDXRjeAepo6ezt7Q`, alongside the `fortmark-app` portal.
 Vercel team authorization is now working. Current cloud metadata was inspected;
 the existing deployments predate this overhaul. Staging resource isolation and
-live migration state remain unverified. No remote push, deployment,
-configuration change, live database write or live storage operation was performed.
+live migration state remain unverified. No remote push, deployment, environment
+change or migration was performed. The one confirmed cloud resource change is
+the obsolete Preview branch deletion recorded below.
 
 Historical certification aliases, branch IDs and migration counts are reference
 material only. Read the current target metadata before deployment; do not reuse
@@ -55,9 +56,15 @@ connection strings, querying tables, unarchiving branches or changing settings:
 | `production/fortmark-professional-profiles` | `br-bitter-cake-av7pmzth` | `main` | One Primary, `ep-delicate-morning-avh7x6vk`, suspended |
 | `preview/claude/dashboard-status-yir55p` | `br-crimson-smoke-avlj2rmp` | `main` | One Primary, `ep-blue-river-avha0z9g`, suspended; branch archived 2026-10-04 |
 
-The project has ten branches and displays **Branch limit reached**. Eight are
-archived, including three older Preview branches and five historical safety
-branches. No branch was removed, reset or unarchived, and no upgrade was made.
+At initial inspection the project had ten branches and displayed **Branch limit
+reached**. Eight were archived, including three older Preview branches and five
+historical safety branches. After the user explicitly confirmed the exact
+permanent deletion, `preview/feature/profile-onboarding-wizard`
+(`br-muddy-sunset-avuvj0h9`, archived since 2026-08-26) was deleted on 2026-11-02.
+The resulting console inventory shows **nine branches**, with one slot free.
+`main`, Production, all five historical safety branches and the two other Preview
+branches remain. The Git code branch was not deleted. No reset, unarchive or plan
+upgrade was performed.
 The observed old Preview branch's linked Vercel deployment is an older deployment;
 its existence does not bind the current candidate's effective Preview variables.
 
@@ -129,6 +136,10 @@ that changes stay in memory. This is visual evidence, not a cloud persistence ru
    dashboard and portal project configuration, production branch, current
    deployment revisions and target environment mappings. Do this before a Git
    push or deployment: Preview builds can apply migrations automatically.
+   Disabling application source flags does **not** disable that migration guard.
+   An initial provisioning deployment to an unverified target must explicitly
+   omit the migrator in its deployment-scoped build command; changing source
+   flags alone is insufficient. Do not change Production build settings.
 2. Confirm the staging database is a separate branch/resource from production,
    private transaction files use a separate private Blob store, and staging uses
    a development Clerk instance with approved synthetic Agent/Admin/Member users.
