@@ -34,6 +34,7 @@ export async function listLinkedTransactions(ctx: Pick<Ctx, "actor" | "db">, con
       line2: transactions.addressLine2,
       city: transactions.city,
       stage: transactions.stage,
+      side: transactions.side,
     })
     .from(transactionParties)
     .innerJoin(transactions, eq(transactions.id, transactionParties.transactionId))
@@ -45,7 +46,7 @@ export async function listLinkedTransactions(ctx: Pick<Ctx, "actor" | "db">, con
   for (const r of rows) {
     if (seen.has(r.id)) continue;
     seen.add(r.id);
-    items.push({ id: r.id, address: r.line2 ? `${r.line1} ${r.line2}` : r.line1, city: r.city, stage: r.stage });
+    items.push({ id: r.id, address: r.line2 ? `${r.line1} ${r.line2}` : r.line1, city: r.city, stage: r.stage, ...(r.side === "gc" ? { workflowLabel: "Setup pending" } : {}) });
     if (items.length >= MAX) break;
   }
   return { ok: true, value: items };

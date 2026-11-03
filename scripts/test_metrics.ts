@@ -209,8 +209,9 @@ check("follow-up duty comes from a stored date, never from silence", (() => {
 // --- Authorization -------------------------------------------------------------------
 check("transaction aggregates use the list's own visibility predicate", (() => {
   const src = readFileSync("lib/transactions/metrics.ts", "utf8");
-  const uses = src.match(/visibleTo\(ctx\.actor\)/g) ?? [];
-  return src.includes('import { visibleTo } from "./service.ts"') && uses.length >= 4;
+  const salesScope = /const\s+salesScope\s*=\s*\(ctx:\s*Ctx\)\s*=>\s*and\(visibleTo\(ctx\.actor\),\s*ne\(transactions\.side,\s*"gc"\)\)/.test(src);
+  const uses = src.match(/salesScope\(ctx\)/g) ?? [];
+  return src.includes('import { visibleTo } from "./service.ts"') && salesScope && uses.length >= 4;
 })());
 check("contact aggregates use the list's own visibility predicate", (() => {
   const src = readFileSync("lib/contacts/metrics.ts", "utf8");
@@ -222,7 +223,11 @@ check("no metrics query runs without the predicate", (() => {
     const src = code(path);
     // Query builders only — `Array.from` is not a table read.
     const selects = src.match(/^\s*\.from\(/gm) ?? [];
-    const guarded = (src.match(/visibleTo\(ctx\.actor\)/g) ?? []).length;
+    const hasSalesScope = /const\s+salesScope\s*=\s*\(ctx:\s*Ctx\)\s*=>\s*and\(visibleTo\(ctx\.actor\),\s*ne\(transactions\.side,\s*"gc"\)\)/.test(src);
+    // A composed sales scope counts only when it still intersects the same
+    // ownership predicate with the GC exclusion. Its definition is not a read.
+    const guarded = (src.match(/visibleTo\(ctx\.actor\)/g) ?? []).length - (hasSalesScope ? 1 : 0)
+      + (hasSalesScope ? (src.match(/salesScope\(ctx\)/g) ?? []).length : 0);
     // agentNames and activeAgentCount are display-name and headcount lookups
     // on the user tables; they carry no brokerage-owned rows, so they are the
     // only reads permitted to run without the ownership predicate.

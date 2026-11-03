@@ -16,7 +16,7 @@ import "server-only";
  * different answer. Those rows are fetched as a narrow projection of integer
  * columns, in one query, not per deal.
  */
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
   dashboardUsers,
@@ -46,6 +46,8 @@ export interface Ctx {
 }
 
 const ACTIVE = ACTIVE_STAGES as readonly string[] as string[];
+/** GC setup files are operational records, not sales production or pipeline. */
+const salesScope = (ctx: Ctx) => and(visibleTo(ctx.actor), ne(transactions.side, "gc"));
 
 /** How many months of closed production the small charts show. */
 export const MONTHS_OF_HISTORY = 12;
@@ -92,7 +94,7 @@ async function totals(ctx: Ctx, now: Date) {
       closedVolume: sql<string>`coalesce(sum(${transactions.contractPriceCents}) filter (where ${transactions.stage} = 'closed' and ${transactions.closedDate} >= ${month.start} and ${transactions.closedDate} <= ${month.end}), 0)::text`,
     })
     .from(transactions)
-    .where(visibleTo(ctx.actor));
+    .where(salesScope(ctx));
   return rows[0];
 }
 
@@ -117,13 +119,13 @@ export async function transactionMetrics(ctx: Ctx, now: Date): Promise<Transacti
     ctx.db
       .select(TERM_COLUMNS)
       .from(transactions)
-      .where(and(visibleTo(ctx.actor), inArray(transactions.stage, ACTIVE as TransactionStage[]))),
+      .where(and(salesScope(ctx), inArray(transactions.stage, ACTIVE as TransactionStage[]))),
     ctx.db
       .select(TERM_COLUMNS)
       .from(transactions)
       .where(
         and(
-          visibleTo(ctx.actor),
+          salesScope(ctx),
           eq(transactions.stage, "closed"),
           sql`${transactions.closedDate} >= ${historyStart}`
         )
@@ -216,7 +218,7 @@ export async function transactionAttention(
     .innerJoin(transactions, eq(transactionDeadlines.transactionId, transactions.id))
     .where(
       and(
-        visibleTo(ctx.actor),
+        salesScope(ctx),
         inArray(transactions.stage, ACTIVE as TransactionStage[]),
         isNull(transactionDeadlines.completedAt),
         isNull(transactionDeadlines.removedAt),
@@ -262,20 +264,21 @@ export async function transactionActivity(ctx: Ctx, limit: number): Promise<Acti
       safeMetadata: transactionEvents.safeMetadata,
       createdAt: transactionEvents.createdAt,
       stage: transactions.stage,
+      side: transactions.side,
       transactionId: transactions.id,
       addressLine1: transactions.addressLine1,
       city: transactions.city,
     })
     .from(transactionEvents)
     .innerJoin(transactions, eq(transactionEvents.transactionId, transactions.id))
-    .where(visibleTo(ctx.actor))
+    .where(and(visibleTo(ctx.actor), or(ne(transactions.side, "gc"), eq(transactionEvents.eventType, "transaction_created"))))
     .orderBy(desc(transactionEvents.createdAt))
     .limit(limit);
 
   const items: ActivityItem[] = [];
   for (const row of rows) {
     const address = addressOf(row);
-    const described = describeEvent(row.eventType, address);
+    const described = row.side === "gc" ? { kind: "transaction_created" as const, summary: `GC file opened on ${address}` } : describeEvent(row.eventType, address);
     if (!described) continue;
     const closed = row.eventType === "transaction_stage_changed" && row.safeMetadata?.to === "closed";
     items.push({
@@ -308,7 +311,7 @@ export async function transactionLeaderboard(ctx: Ctx, now: Date): Promise<Leade
       activeCount: sql<number>`count(*) filter (where ${inArray(transactions.stage, ACTIVE as TransactionStage[])})`,
     })
     .from(transactions)
-    .where(visibleTo(ctx.actor))
+    .where(salesScope(ctx))
     .groupBy(transactions.agentUserId);
 
   if (rows.length === 0) return [];

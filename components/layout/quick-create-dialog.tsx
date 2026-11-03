@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { useUiStore, QuickCreateKind } from "@/lib/stores/ui";
 import { createListing } from "@/lib/data/adapters/listings";
-import { createTransaction } from "@/lib/data/adapters/transactions";
+import { createTransaction,type QuickCreateTransactionInput } from "@/lib/data/adapters/transactions";
 import { createLead, LeadsError } from "@/lib/data/adapters/leads";
 import { createEvent } from "@/lib/data/adapters/calendar";
 import { addDocument } from "@/lib/data/adapters/documents";
@@ -78,8 +78,8 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
   const setKind = useUiStore((s) => s.setQuickCreate);
   const fromContact = useUiStore((s) => s.quickCreateContact);
   // A side is suggested only when the chosen contact's active need states one explicitly.
-  const [side, setSide] = React.useState<"listing" | "buyer">("listing");
-  const suggestSide = React.useCallback((s: "listing" | "buyer" | null) => setSide(s ?? "listing"), []);
+  const [side, setSide] = React.useState<"listing" | "buyer" | "gc">("listing");
+  const suggestSide = React.useCallback((s: "listing" | "buyer" | null) => setSide(current=>current==="gc"?current:s??"listing"), []);
   const router = useRouter();
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -116,16 +116,12 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
           sqft: Number(get("sqft")) || 0,
         });
       } else if (kind === "transaction") {
-        const input = {
-          address: get("address"),
-          city: get("city") || "Fort Lauderdale",
-          clientName: get("client"),
-          contactId: get("contactId") || undefined,
-          side: (get("side") || "listing") as "listing" | "buyer",
-          contractPrice: Number(get("price")) || 0,
-          // Blank stays unset: no invented closing date, so no invented
-          // "Closing" deadline. An entered day becomes the real one.
-          closeDate: closeDateFromInput(get("closeDate")),
+        const chosenSide=(get("side")||side) as "listing"|"buyer"|"gc";
+        const clientName=get("client")||fromContact?.name||"";
+        const input:QuickCreateTransactionInput=chosenSide==="gc"?{
+          address:get("address"),clientName,contactId:get("contactId")||undefined,side:"gc"
+        }:{
+          address:get("address"),city:get("city")||"Fort Lauderdale",clientName,contactId:get("contactId")||undefined,side:chosenSide,contractPrice:Number(get("price"))||0,closeDate:closeDateFromInput(get("closeDate"))
         };
         const attempt = transactionCreateAttempt(transactionRequest.current, input, transactionUncertain);
         transactionRequest.current = attempt;
@@ -206,12 +202,12 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
   return (
     <Dialog open={kind !== null} onOpenChange={(open) => !open && !busy && close()}>
       {/* Opened from the New menu, whose item is gone by the time this closes: focus goes back to the menu's button. */}
-      <DialogContent focusFallback={() => document.querySelector<HTMLElement>("[data-new-trigger]")}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto" focusFallback={() => document.querySelector<HTMLElement>("[data-new-trigger]")}>
         {meta && kind && (
           <form onSubmit={submit} className="grid gap-4">
             <DialogHeader>
               <DialogTitle>{meta.title}</DialogTitle>
-              <DialogDescription>{meta.description}</DialogDescription>
+              <DialogDescription>{kind==="transaction"&&side==="gc"?"Open a general contractor file with only the property address and client.":meta.description}</DialogDescription>
             </DialogHeader>
 
             {kind === "listing" && (
@@ -241,27 +237,9 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
               </div>
             )}
 
-            {kind === "transaction" && transactionUncertain && transactionRequest.current && <div role="status" className="space-y-2 rounded-panel border border-border bg-tint p-4"><p className="text-sm font-semibold">Check the submitted file</p><p className="break-words text-sm">{transactionRequest.current.input.address}, {transactionRequest.current.input.city}</p><p className="text-xs leading-relaxed text-muted-foreground">The submitted values are kept unchanged. Checking the result uses the same request and will not create a duplicate. If you close this popup, the pending check remains available when you reopen New transaction.</p></div>}
+            {kind === "transaction" && transactionUncertain && transactionRequest.current && <div role="status" className="space-y-2 rounded-panel border border-border bg-tint p-4"><p className="text-sm font-semibold">Check the submitted file</p><p className="break-words text-sm">{[transactionRequest.current.input.address,transactionRequest.current.input.city].filter(Boolean).join(", ")}</p><p className="break-words text-xs text-muted-foreground">Client: {transactionRequest.current.input.clientName||"Linked contact"}</p><p className="text-xs leading-relaxed text-muted-foreground">The submitted values are kept unchanged. Checking the result uses the same request and will not create a duplicate. If you close this popup, the pending check remains available when you reopen New transaction.</p></div>}
             {kind === "transaction" && !transactionUncertain && (
-              <fieldset disabled={busy} className="grid gap-3">
-                <Field label="Property address" name="address" required placeholder="2416 NE 26th St" />
-                <Field label="City" name="city" placeholder="Fort Lauderdale" />
-                <ContactPicker preselected={fromContact} onSuggestSide={suggestSide} />
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Contract price" name="price" type="number" required placeholder="1185000" />
-                  <Field label="Close date (optional)" name="closeDate" type="date" />
-                </div>
-                <SelectField
-                  key={side}
-                  label="Side"
-                  name="side"
-                  defaultValue={side}
-                  options={[
-                    ["listing", "Listing side"],
-                    ["buyer", "Buyer side"],
-                  ]}
-                />
-              </fieldset>
+              <TransactionCreateFields side={side} onSideChange={setSide} preselected={fromContact} onSuggestSide={suggestSide} disabled={busy}/>
             )}
 
             {kind === "lead" && (
@@ -336,6 +314,12 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
     </Dialog>
   );
 }
+
+export function TransactionCreateFields({side,onSideChange,preselected,onSuggestSide,disabled}:{side:"listing"|"buyer"|"gc";onSideChange:(side:"listing"|"buyer"|"gc")=>void;preselected?:{id:string;name:string}|null;onSuggestSide?:(side:"listing"|"buyer"|null)=>void;disabled?:boolean}){return <fieldset disabled={disabled} className="grid gap-3">
+                <div className="grid gap-1.5"><Label htmlFor="qc-side">Side</Label><Select name="side" value={side} onValueChange={value=>{if(value==="listing"||value==="buyer"||value==="gc")onSideChange(value);}}><SelectTrigger id="qc-side"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="listing">Listing side</SelectItem><SelectItem value="buyer">Buyer side</SelectItem><SelectItem value="gc">GC / General contractor</SelectItem></SelectContent></Select></div>
+                <Field label="Property address" name="address" required placeholder="2416 NE 26th St" />
+                {side==="gc"?<>{preselected?<div className="space-y-2"><Label>Client</Label><input type="hidden" name="contactId" value={preselected.id}/><p className="break-words text-sm">{preselected.name}</p></div>:<Field label="Client" name="client" required placeholder="Client name"/>}<p className="text-xs leading-relaxed text-muted-foreground">Open a GC file with its property and client. The project checklist starts empty.</p></>:<><Field label="City" name="city" placeholder="Fort Lauderdale"/><ContactPicker preselected={preselected} onSuggestSide={onSuggestSide}/><div className="grid grid-cols-2 gap-3"><Field label="Contract price" name="price" type="number" required placeholder="1185000"/><Field label="Close date (optional)" name="closeDate" type="date"/></div></>}
+              </fieldset>;}
 
 function Field({
   label,

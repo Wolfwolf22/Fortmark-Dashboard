@@ -112,11 +112,11 @@ export function transactionSummary(deal: Transaction): TransactionSummaryDto {
     city: deal.city,
     client: deal.clientName,
     side: deal.side,
-    stage: deal.stage,
+    stage: deal.side === "gc" ? "not_configured" : deal.stage,
     status: deal.statusLabel,
-    closeDate: day(deal.closeDate),
+    closeDate: deal.side === "gc" ? undefined : day(deal.closeDate),
     // 0 means "no price entered", which is not a price of zero.
-    contractPriceUsd: deal.contractPrice > 0 ? deal.contractPrice : undefined,
+    contractPriceUsd: deal.side !== "gc" && deal.contractPrice > 0 ? deal.contractPrice : undefined,
     agent: deal.agentName,
   };
 }
@@ -126,10 +126,10 @@ export function transactionDetail(deal: Transaction): TransactionDto {
     ...transactionSummary(deal),
     transactionType: deal.transactionType,
     commissionRatePercent:
-      deal.commissionRate > 0 ? Number((deal.commissionRate * 100).toFixed(4)) : undefined,
-    projectedCommissionUsd: deal.projectedCommission > 0 ? deal.projectedCommission : undefined,
-    contractDate: day(deal.contractDate) ?? deal.contractDate,
-    milestones: deal.milestones.map((m) => ({
+      deal.side !== "gc" && deal.commissionRate > 0 ? Number((deal.commissionRate * 100).toFixed(4)) : undefined,
+    projectedCommissionUsd: deal.side !== "gc" && deal.projectedCommission > 0 ? deal.projectedCommission : undefined,
+    contractDate: deal.side === "gc" ? undefined : day(deal.contractDate) ?? deal.contractDate,
+    milestones: (deal.side === "gc" ? [] : deal.milestones).map((m) => ({
       label: m.label,
       dueDate: day(m.date) ?? m.date,
       state: m.state,

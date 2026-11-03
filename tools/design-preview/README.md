@@ -542,7 +542,7 @@ The real setup/workspace adapters exercise 15 additional groups:
 node --experimental-strip-types --no-warnings tools/design-preview/test-transaction-operations-session.mjs
 ```
 
-Total isolated preview groups: 195. Live private-file storage configuration is
+Total isolated preview groups: 205. Live private-file storage configuration is
 documented in [TRANSACTION_FILES_AND_VENDORS.md](../../docs/TRANSACTION_FILES_AND_VENDORS.md).
 
 
@@ -580,3 +580,21 @@ These verify reviewed MLS identity/imports, tax/photo projection, a fresh price
 without changed deal money or Home volume, exact receipts/CAS, linked identity
 protection, private reciprocal tours, replacement matches and safe history.
 See [MLS and tour behavior](../../docs/TRANSACTION_MLS_AND_TOURS.md).
+
+
+## GC transaction foundation
+
+Choose New transaction → Side → GC / General contractor. Only the property
+address and client are requested. The full GC file contains property/client
+information and an intentionally empty project checklist. Its sales workflow
+is not configured. GC remains available in side filters and its own board
+section, while sales metrics exclude it. No synthetic GC address is pre-seeded;
+create one in Interactive samples. Refresh file retains it; reloading resets.
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-gc-transaction-session.mjs
+```
+
+The 10 additional groups exercise the actual adapter's minimal request, blank
+workspace, receipt/lost-reply recovery, client scope, side filters, refused
+sales writes and unchanged Home figures. See [GC behavior](../../docs/GC_TRANSACTIONS.md).

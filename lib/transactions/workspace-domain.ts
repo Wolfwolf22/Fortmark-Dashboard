@@ -10,7 +10,7 @@ const cents = z.number().int().min(0).max(999_999_999_999).nullable(), bps = z.n
 const calendarDay = deadlineInputSchema.shape.dueDate.nullable();
 const revision = z.string().datetime({ offset: true });
 export const transactionDetailsSchema = z.object({
-  transactionType: z.enum(["residential_sale", "residential_lease", "commercial_sale", "commercial_lease", "land"]),
+  transactionType: z.enum(["residential_sale", "residential_lease", "commercial_sale", "commercial_lease", "land", "general_contractor"]),
   addressLine1: text(200).trim().min(1), addressLine2: optionalText(200), city: text(200).trim().min(1), state: text(2).trim().length(2), postalCode: optionalText(12), listingKey: optionalText(256), mlsNumber: optionalText(40),
   contractPriceCents: cents, listPriceCents: cents, commissionRateBps: bps, commissionFlatCents: cents, agentSplitBps: bps, transactionFeeCents: cents, referralFeeBps: bps,
   contractExecutionDate: calendarDay, closingDate: calendarDay, notes: text(5000),

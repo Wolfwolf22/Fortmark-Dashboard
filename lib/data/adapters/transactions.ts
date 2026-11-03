@@ -142,27 +142,20 @@ export async function updateTransactionStage(
   } finally { bumpDataVersion(); }
 }
 
-export interface QuickCreateTransactionInput {
-  requestId?: string;
-  address: string;
-  city: string;
-  clientName: string;
-  side: Transaction["side"];
-  /** Dollars, as typed. Converted to integer cents before it leaves the browser. */
-  contractPrice: number;
-  /** ISO. */
-  closeDate?: string;
-  /**
-   * A contact at Representation this deal is for. The server reloads it and builds
-   * the client party from the stored contact; `clientName` is then ignored.
-   */
-  contactId?: string;
-}
+interface TransactionCreateBase { requestId?:string; address:string; clientName:string; contactId?:string }
+export type QuickCreateTransactionInput=TransactionCreateBase & (
+ | {side:"gc";city?:never;contractPrice?:never;closeDate?:never}
+ | {side:Exclude<Transaction["side"],"gc">;city:string;contractPrice:number;closeDate?:string}
+);
 
 export async function createTransaction(input: QuickCreateTransactionInput): Promise<Transaction> {
   if ((await getTransactionSource()) === "sample") {
     await delay(220);
     return createSampleTransaction(input);
+  }
+  if(input.side === "gc") {
+    try { return (await request<{transaction:Transaction}>("/api/transactions", {method:"POST",body:JSON.stringify({requestId:input.requestId??crypto.randomUUID(),side:"gc",transactionType:"general_contractor",addressLine1:input.address,...(input.contactId?{contactId:input.contactId}:{clientName:input.clientName})})})).transaction; }
+    finally { bumpDataVersion(); }
   }
   const closingDate = input.closeDate ? input.closeDate.slice(0, 10) : undefined;
   const clientRole =

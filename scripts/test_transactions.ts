@@ -240,8 +240,8 @@ check("a member may not open a deal", !canCreateFor(MEMBER, "u-member"));
   check("a rate above 100% is refused", !createTransactionSchema.safeParse({ transactionType: "land", side: "listing", addressLine1: "x", city: "y", commissionRateBps: 10_001 }).success);
   check("a date must be yyyy-mm-dd", !createTransactionSchema.safeParse({ transactionType: "land", side: "listing", addressLine1: "x", city: "y", closingDate: "10/30/2026" }).success);
   check("an unknown side is refused", !createTransactionSchema.safeParse({ transactionType: "land", side: "list", addressLine1: "x", city: "y" }).success);
-  check("the brokerage cannot be supplied", !("brokerageKey" in createTransactionSchema.shape));
-  check("the stage cannot be supplied on create", !("stage" in createTransactionSchema.shape));
+  check("the brokerage cannot be supplied", createTransactionSchema.options.every(schema => !("brokerageKey" in schema.shape)));
+  check("the stage cannot be supplied on create", createTransactionSchema.options.every(schema => !("stage" in schema.shape)));
   check("a stage change takes only a known stage", stageChangeSchema.safeParse({ stage: "closed" }).success && !stageChangeSchema.safeParse({ stage: "done" }).success);
 }
 
@@ -359,7 +359,7 @@ check("every stage has a screen label", ALL_STAGES.every((s) => TRANSACTION_STAG
   check("the drawer labels sample rows", /txn.source\s*===\s*"sample"/.test(readFileSync("components/transactions/transaction-drawer.tsx", "utf8")));
   // A cancelled or on-hold deal is a real row that is not a pipeline column.
   check("the board tolerates a deal outside the pipeline columns",
-    /filter\(item\s*=>\s*item.stage\s*===\s*stage\)/.test(board));
+    /filter\(item\s*=>\s*item.side\s*!==\s*"gc"\s*&&\s*item.stage\s*===\s*stage\)/.test(board));
 }
 
 // --- Search text never travels in a URL --------------------------------------

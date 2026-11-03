@@ -41,7 +41,7 @@ function cents(dollars: number): number {
 
 export function sampleBrokerageMetrics(at: Date = sampleNow()): BrokerageMetrics {
   const month = monthWindow(at);
-  const transactions = listSampleTransactions();
+  const transactions = listSampleTransactions().filter((t) => t.side !== "gc");
   const leads = listSampleLeads();
 
   const active = transactions.filter((t) => ACTIVE.includes(t.stage));

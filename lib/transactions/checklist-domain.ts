@@ -67,3 +67,6 @@ export function checklistProgress(items: readonly { required: boolean; completed
   const required = items.filter(item => item.required);
   return { completed: required.filter(checklistItemSatisfied).length, required: required.length };
 }
+
+/** Intentionally empty until a GC-specific workflow is agreed. */
+export const GC_CHECKLIST_TEMPLATE_VERSION = "gc-blank-v1";

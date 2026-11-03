@@ -39,6 +39,9 @@ import { requireSubsystem } from "./subsystems";
 import { inRange, previousRange } from "@/lib/dates";
 import { delay } from "./latency";
 
+/** GC setup files are operational records, outside sales production and reporting. */
+const salesTransactions = () => transactions.filter((t) => t.side !== "gc");
+
 export class MetricsError extends Error {
   readonly status: number;
   constructor(status: number) {
@@ -121,7 +124,7 @@ function bucketsFor(preset: DateRangePreset): Bucket[] {
 
 function gciInBucket(bucket: Bucket): number {
   const range: DateRange = { from: bucket.from, to: bucket.to };
-  return transactions
+  return salesTransactions()
     .filter(
       (t) =>
         (t.stage === "closed" && (t.closeDate ? inRange(t.closeDate, range) : false)) ||
@@ -141,18 +144,19 @@ export async function getDashboardMetrics(
   await requireSubsystem("reports");
   await delay(220);
 
-  const enteredContract = transactions.filter((t) => (t.contractDate ? inRange(t.contractDate, range) : false));
+  const sales = salesTransactions();
+  const enteredContract = sales.filter((t) => (t.contractDate ? inRange(t.contractDate, range) : false));
   const underContractCount = enteredContract.filter((t) => t.stage !== "closed").length;
 
-  const closedInRange = transactions.filter(
+  const closedInRange = sales.filter(
     (t) => t.stage === "closed" && (t.closeDate ? inRange(t.closeDate, range) : false)
   );
   const prev = previousRange(range);
-  const closedPrev = transactions.filter(
+  const closedPrev = sales.filter(
     (t) => t.stage === "closed" && (t.closeDate ? inRange(t.closeDate, prev) : false)
   );
 
-  const pipeline = transactions.filter(
+  const pipeline = sales.filter(
     (t) =>
       t.stage !== "closed" &&
       ((t.contractDate ? inRange(t.contractDate, range) : false) || (t.closeDate ? inRange(t.closeDate, range) : false))
@@ -172,7 +176,7 @@ export async function getDashboardMetrics(
   const closedVolumeSpark: PeriodPoint[] = Array.from({ length: 12 }, (_, i) => {
     const from = new Date(range.from.getTime() + i * slice);
     const to = new Date(range.from.getTime() + (i + 1) * slice);
-    const value = transactions
+    const value = sales
       .filter(
         (t) =>
           t.stage === "closed" &&
@@ -225,11 +229,12 @@ export interface ReportSeries {
 export async function getClosedVolumeSeries(preset: DateRangePreset): Promise<ReportSeries> {
   await requireSubsystem("reports");
   await delay();
+  const sales = salesTransactions();
   const points = bucketsFor(preset).map((b) => ({
     label: b.label,
     date: b.from.toISOString(),
     active: b.active,
-    value: transactions
+    value: sales
       .filter(
         (t) => t.stage === "closed" && (t.closeDate ? inRange(t.closeDate, { from: b.from, to: b.to }) : false)
       )
@@ -289,9 +294,10 @@ export async function getLeadSourceRoi(range: DateRange): Promise<LeadSourceRoi[
   await requireSubsystem("reports");
   await delay();
   const sources = Object.keys(SOURCE_SPEND) as LeadSource[];
+  const sales = salesTransactions();
   const avgGci =
-    transactions.reduce((sum, t) => sum + t.contractPrice * t.commissionRate, 0) /
-    Math.max(1, transactions.length);
+    sales.reduce((sum, t) => sum + t.contractPrice * t.commissionRate, 0) /
+    Math.max(1, sales.length);
   return sources
     .map((source) => {
       const pool = leads.filter(

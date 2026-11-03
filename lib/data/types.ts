@@ -246,14 +246,15 @@ export const TRANSACTION_STAGE_LABELS: Record<TransactionStage, string> = {
 };
 
 /** Which side FortMark represents. */
-export type TransactionSide = "listing" | "buyer" | "dual" | "landlord" | "tenant";
+export type TransactionSide = "listing" | "buyer" | "dual" | "landlord" | "tenant" | "gc";
 
 export type TransactionType =
   | "residential_sale"
   | "residential_lease"
   | "commercial_sale"
   | "commercial_lease"
-  | "land";
+  | "land"
+  | "general_contractor";
 
 /** A milestone is an entered deadline of one of these kinds. */
 export type MilestoneKey =

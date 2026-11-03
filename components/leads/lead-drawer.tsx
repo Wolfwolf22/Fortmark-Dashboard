@@ -715,7 +715,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
                           <span className="min-w-0 break-words font-medium">
                             {t.address}
                             <span className="mt-1 block text-xs font-normal text-muted-foreground">{t.city}</span>
-                            <span className="mt-2 inline-block text-xs text-muted-foreground">{TRANSACTION_STAGE_LABELS[t.stage as TransactionStage] ?? t.stage}</span>
+                            <span className="mt-2 inline-block text-xs text-muted-foreground">{t.workflowLabel ?? (TRANSACTION_STAGE_LABELS[t.stage as TransactionStage] ?? t.stage)}</span>
                           </span>
                           <ArrowRight aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
                         </Link>

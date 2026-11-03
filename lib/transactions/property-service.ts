@@ -19,6 +19,7 @@ async function load(ctx: TransactionContext, id: string, write = false): Promise
   const [row] = await ctx.db.select().from(transactions).where(and(eq(transactions.id, id), visibleTo(ctx.actor), actorGuard(ctx))).limit(1);
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (write && !canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
+  if (write && row.side === "gc") return { ok: false, reason: "gc_not_configured" };
   if (write && isTerminalStage(row.stage)) return { ok: false, reason: "invalid_transition" };
   return { ok: true, value: row };
 }
@@ -27,12 +28,12 @@ function valid(result: PropertyResolution): boolean { return result.ok && isProp
 function resolutionFailure(result: Exclude<PropertyResolution, { ok: true }>): ServiceResult<never> { return { ok: false, reason: result.reason === "ambiguous" ? "property_ambiguous" : result.reason === "not_found" ? "property_not_found" : result.reason === "not_configured" ? "property_not_configured" : "property_unavailable" }; }
 export function transactionPropertyImportFingerprint(ref: TransactionPropertyReference, listing: Parameters<typeof transactionPropertyImportValues>[1]) { return createPayloadHash(transactionPropertyImportValues(ref, listing)); }
 export async function getTransactionProperty(ctx: TransactionContext, id: string, provider: PropertyMlsProvider, now = new Date()): Promise<ServiceResult<TransactionPropertyView>> {
-  const loaded = await load(ctx, id); if (!loaded.ok) return loaded; const row = loaded.value, ref = reference(row), canEdit = canWrite(ctx.actor, row) && !isTerminalStage(row.stage);
+  const loaded = await load(ctx, id); if (!loaded.ok) return loaded; const row = loaded.value, ref = reference(row), canEdit = row.side !== "gc" && canWrite(ctx.actor, row) && !isTerminalStage(row.stage);
   if (!ref) return { ok: true, value: { transactionId: id, reference: null, listing: null, syncStatus: "unlinked", checkedAt: null, canEdit, updatedAt: row.updatedAt.toISOString() } };
   let result: PropertyResolution; try { result = await provider.get(ref.dataset, ref.listingId, ref.mlsNumber); } catch { result = { ok: false, reason: "unavailable" }; }
   const current = await load(ctx, id); if (!current.ok) return current; if (!revisionMatches(current.value.updatedAt, row.updatedAt.toISOString()) || JSON.stringify(reference(current.value)) !== JSON.stringify(ref)) return { ok: false, reason: "conflict" };
   const available = result.ok && valid(result) && result.value.dataset === ref.dataset && result.value.listing.id === ref.listingId && normalizePropertyMlsNumber(result.value.listing.mlsNumber) === ref.mlsNumber;
-  return { ok: true, value: { transactionId: id, reference: ref, listing: available && result.ok ? result.value.listing : null, syncStatus: available ? "available" : !result.ok && result.reason !== "ambiguous" ? result.reason : "unavailable", checkedAt: now.toISOString(), canEdit: canWrite(ctx.actor, current.value) && !isTerminalStage(current.value.stage), updatedAt: row.updatedAt.toISOString() } };
+  return { ok: true, value: { transactionId: id, reference: ref, listing: available && result.ok ? result.value.listing : null, syncStatus: available ? "available" : !result.ok && result.reason !== "ambiguous" ? result.reason : "unavailable", checkedAt: now.toISOString(), canEdit: current.value.side !== "gc" && canWrite(ctx.actor, current.value) && !isTerminalStage(current.value.stage), updatedAt: row.updatedAt.toISOString() } };
 }
 export async function lookupTransactionProperty(ctx: TransactionContext, id: string, input: unknown, provider: PropertyMlsProvider, now = new Date()): Promise<ServiceResult<TransactionPropertyLookup>> {
   const parsed = transactionPropertyLookupSchema.safeParse(input); if (!parsed.success) return { ok: false, reason: "invalid_property" };

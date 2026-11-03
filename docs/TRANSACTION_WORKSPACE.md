@@ -117,3 +117,8 @@ historical vendor records. Migration 0027 remains local and unapplied live.
 The [MLS and tour update](TRANSACTION_MLS_AND_TOURS.md) adds reviewed property
 linking, fresh MLS photos/prices/published taxes and reciprocal private tour
 associations. Current MLS asking prices stay separate from agreed deal terms.
+
+
+[GC transactions](GC_TRANSACTIONS.md) now have a separate address/client-only
+creation path and blank project workspace. Their workflow and checklist remain
+unconfigured until general-contractor requirements are defined.

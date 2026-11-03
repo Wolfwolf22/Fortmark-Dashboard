@@ -47,6 +47,7 @@ import {
 } from "./domain.ts";
 import { canTransition, isTerminalStage, isStage } from "./stages.ts";
 import { checklistRequiredStages, checklistBlockers, checklistMissingStages } from "./checklist-domain.ts";
+import { createGeneralContractorTransaction } from "./gc-service.ts";
 
 /** Keys that must never appear in event metadata. Same rule as audit. */
 const FORBIDDEN_META = /token|secret|cookie|authorization|password|clerk_?user_?id|session/i;
@@ -73,7 +74,7 @@ export type ServiceFailure =
   | "invalid_contact"
   | "conflict" | "request_conflict" | "invalid_transaction" | "closing_deadline_conflict" | "invalid_deadline_transition" | "checklist_incomplete" | "checklist_not_ready" | "invalid_checklist_transition"
   | "invalid_attachment" | "file_too_large" | "attachment_required" | "attachment_requires_reopen" | "attachment_not_configured" | "attachment_unavailable" | "attachment_limit" | "vendor_unavailable" | "invalid_vendor_details" | "vendor_detail_not_current"
-  | "invalid_property" | "property_changed" | "property_linked" | "property_import_unavailable" | "property_not_found" | "property_ambiguous" | "property_not_configured" | "property_unavailable" | "invalid_tour_link" | "tour_link_contact_conflict";
+  | "invalid_property" | "property_changed" | "property_linked" | "property_import_unavailable" | "property_not_found" | "property_ambiguous" | "property_not_configured" | "property_unavailable" | "invalid_tour_link" | "tour_link_contact_conflict" | "gc_not_configured";
 
 /** The role a contact takes on the deal, by which side FortMark represents. */
 const CLIENT_PARTY_ROLE: Record<TransactionSideKey, "seller" | "buyer" | "landlord" | "tenant"> = {
@@ -207,7 +208,7 @@ export async function getTransaction(
 export type TransactionContext = { actor: Actor; db: Db };
 type TransactionWrite = Parameters<Db["batch"]>[0][number];
 export function transactionRevisionGuard(ctx: TransactionContext, row: TransactionRow, expected: string) {
-  return and(eq(transactions.id, row.id), visibleTo(ctx.actor), eq(transactions.agentUserId, row.agentUserId), eq(transactions.brokerageKey, row.brokerageKey), eq(transactions.stage, row.stage), sql`date_trunc('milliseconds',${transactions.updatedAt})=${expected}::timestamptz`);
+  return and(eq(transactions.id, row.id), sql`${transactions.side}<>'gc'`, visibleTo(ctx.actor), eq(transactions.agentUserId, row.agentUserId), eq(transactions.brokerageKey, row.brokerageKey), eq(transactions.stage, row.stage), sql`date_trunc('milliseconds',${transactions.updatedAt})=${expected}::timestamptz`);
 }
 export function transactionWriteLocks(ctx: TransactionContext, id?: string): TransactionWrite[] {
   const locks: TransactionWrite[] = [ctx.db.select({ id: dashboardUsers.id }).from(dashboardUsers).where(eq(dashboardUsers.id, ctx.actor.userId)).for("no key update")];
@@ -249,6 +250,7 @@ function checklistGateSql(id: string, from: TransactionStage, to: TransactionSta
 export async function createTransaction(ctx: TransactionContext, input: CreateTransactionInput, now = new Date()): Promise<ServiceResult<Transaction>> {
   const parsed = createTransactionSchema.safeParse(input); if (!parsed.success) return { ok: false, reason: "invalid_transaction" };
   input = parsed.data;
+  if (input.side === "gc") return createGeneralContractorTransaction(ctx, input, now);
   const requestId = input.requestId ?? randomUUID(), hash = createPayloadHash({ ...input }), replay = () => transactionWriteReplay(ctx, requestId, hash, "create", now);
   const previous = await replay(); if (previous) return previous;
   let contact: Awaited<ReturnType<typeof loadContact>> & { ok: true } | undefined;
@@ -342,6 +344,7 @@ export async function planStageChange(
   const row = rows[0];
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
+  if (row.side === "gc") return { ok: false, reason: "gc_not_configured" };
   const from = row.stage as TransactionStage;
   if (!isStage(to)) return { ok: false, reason: "invalid_transition" };
   if (!canTransition(from, to)) return { ok: false, reason: "invalid_transition" };

@@ -13,6 +13,7 @@ const CLIENT_ROLE_FOR_SIDE: Record<TransactionSide, readonly TransactionPartyRow
   dual: ["buyer", "seller"],
   landlord: ["landlord"],
   tenant: ["tenant"],
+  gc: ["other"],
 };
 
 export function primaryClient(
@@ -75,11 +76,12 @@ export interface RowBundle {
  */
 export function toTransaction(bundle: RowBundle, now: Date = new Date()): Transaction {
   const { row, parties, deadlines } = bundle;
+  const isGc = row.side === "gc";
   const client = primaryClient(row.side as TransactionSide, parties);
-  const milestones = [...deadlines].filter(deadline => !deadline.removedAt)
+  const milestones = (isGc ? [] : [...deadlines]).filter(deadline => !deadline.removedAt)
     .sort((a, b) => a.sortOrder - b.sortOrder || a.dueDate.localeCompare(b.dueDate))
     .map((d) => toMilestone(d, now));
-  const projection = projectCommission({
+  const projection = isGc ? null : projectCommission({
     contractPriceCents: row.contractPriceCents,
     commissionRateBps: row.commissionRateBps,
     commissionFlatCents: row.commissionFlatCents,
@@ -102,16 +104,16 @@ export function toTransaction(bundle: RowBundle, now: Date = new Date()): Transa
     side: row.side as TransactionSide,
     transactionType: row.transactionType as TransactionType,
     stage,
-    contractPrice: centsToDollars(row.contractPriceCents ?? 0),
-    commissionRate: (row.commissionRateBps ?? 0) / 10_000,
-    projectedCommission: centsToDollars(projection.grossCents),
-    contractDate: dateToIso(row.contractExecutionDate),
+    contractPrice: isGc ? 0 : centsToDollars(row.contractPriceCents ?? 0),
+    commissionRate: isGc ? 0 : (row.commissionRateBps ?? 0) / 10_000,
+    projectedCommission: centsToDollars(projection?.grossCents ?? 0),
+    contractDate: isGc ? undefined : dateToIso(row.contractExecutionDate),
     updatedAt: row.updatedAt.toISOString(),
-    closeDate: dateToIso(row.closedDate) ?? dateToIso(row.closingDate),
+    closeDate: isGc ? undefined : dateToIso(row.closedDate) ?? dateToIso(row.closingDate),
     agentId: row.agentUserId,
     agentName: bundle.agentName,
     milestones,
-    ...rollupStatus(stage, milestones, now),
+    ...(isGc ? { status: "neutral" as const, statusLabel: "Setup pending" } : rollupStatus(stage, milestones, now)),
     source: "db",
   };
 }

@@ -75,8 +75,12 @@ export function updateSampleTransactionStage(
 }
 
 export function createSampleTransaction(
-  input: Pick<Transaction, "address" | "city" | "clientName" | "side" | "contractPrice" | "closeDate">
+  input: Pick<Transaction,"address"|"clientName"|"side"> & Partial<Pick<Transaction,"city"|"contractPrice"|"closeDate">>
 ): Transaction {
+  if(input.side === "gc") {
+    const created:Transaction={id:`txn-${transactions.length+1}-new`,address:input.address,city:"",clientId:"client-new",clientName:input.clientName,side:"gc",transactionType:"general_contractor",stage:"opportunity",contractPrice:0,commissionRate:0,projectedCommission:0,agentId:"agent-1",milestones:[],status:"neutral",statusLabel:"Setup pending",source:"sample"};
+    transactions.unshift(created);bumpDataVersion();return created;
+  }
   const commissionRate = 0;
   const created: Transaction = {
     id: `txn-${transactions.length + 1}-new`,
@@ -84,13 +88,15 @@ export function createSampleTransaction(
     transactionType: "residential_sale",
     stage: "opportunity",
     commissionRate,
-    projectedCommission: Math.round(input.contractPrice * commissionRate),
+    projectedCommission: Math.round((input.contractPrice??0) * commissionRate),
     agentId: "agent-1",
     milestones: input.closeDate ? [{ id: "closing", key: "closing", label: "Closing", date: input.closeDate, state: calendarDayDistance(transactionDay(input.closeDate)!, calendarDayKey(now())) < 0 ? "overdue" : "upcoming" }] : [],
     status: "good",
     statusLabel: "On track",
     source: "sample",
     ...input,
+    city:input.city??"",
+    contractPrice:input.contractPrice??0,
   };
   transactions.unshift(created);
   bumpDataVersion();

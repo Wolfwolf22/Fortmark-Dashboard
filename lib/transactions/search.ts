@@ -48,6 +48,7 @@ const SIDE_LABELS: Record<string, string> = {
   dual: "Dual",
   landlord: "Landlord",
   tenant: "Tenant",
+  gc: "GC",
 };
 
 const ADDRESS = sql`lower(trim(coalesce(${transactions.addressLine1}, '') || ' ' || coalesce(${transactions.addressLine2}, '')))`;
@@ -130,8 +131,8 @@ export async function searchTransactions(
       id: row.id,
       entity: "transaction" as const,
       title: row.city ? `${address}, ${row.city}` : address,
-      subtitle: `${SIDE_LABELS[row.side] ?? row.side} · ${STAGE_LABELS[stage]}`,
-      meta: dateNote(stage, row.closingDate, row.closedDate),
+      subtitle: row.side === "gc" ? "GC · Setup pending" : `${SIDE_LABELS[row.side] ?? row.side} · ${STAGE_LABELS[stage]}`,
+      meta: row.side === "gc" ? undefined : dateNote(stage, row.closingDate, row.closedDate),
       href: `/transactions?open=${encodeURIComponent(row.id)}`,
       match: row.match as MatchKind,
     };

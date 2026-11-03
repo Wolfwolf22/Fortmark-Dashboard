@@ -88,6 +88,7 @@ export async function mutateTransactionVendor(ctx: TransactionContext, id: strin
   const previous = await replay(); if (previous) return previous;
   const [row] = await ctx.db.select().from(transactions).where(and(eq(transactions.id, id), visibleTo(ctx.actor))).limit(1); if (!row) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
+  if (row.side === "gc") return { ok: false, reason: "gc_not_configured" };
   if (isTerminalStage(row.stage)) return { ok: false, reason: "invalid_transition" };
   if (!revisionMatches(row.updatedAt, d.expectedUpdatedAt)) return { ok: false, reason: "conflict" };
   const [current] = await ctx.db.select().from(transactionVendorSelections).where(and(eq(transactionVendorSelections.transactionId, id), eq(transactionVendorSelections.role, d.role))).limit(1);

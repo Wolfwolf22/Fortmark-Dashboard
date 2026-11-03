@@ -6,7 +6,7 @@ import { SAMPLE_ACTOR,readSampleContact,readSampleListPropertyRows,nextSampleRev
 import { previewTransactionPublicId } from "./transaction-fixtures.mjs";
 import { isTerminalStage } from "../../lib/transactions/stages.ts";
 const links=new Map(),fail=(code,status=400)=>{throw new PreviewTransactionError(code,status);};
-const writable=b=>SAMPLE_ACTOR.role!=="member"&&!isTerminalStage(b.row.stage);
+const writable=b=>b.row.side!=="gc"&&SAMPLE_ACTOR.role!=="member"&&!isTerminalStage(b.row.stage);
 function sameContact(bundle,tour){return bundle.parties.some(p=>p.contactId&&readSampleContact(p.contactId)?.id===readSampleContact(tour.contactId)?.id);}
 function match(bundle,tour){if(!bundle.row.listingDataset||!bundle.row.listingKey||!tour.sourceList)return"unknown";const members=readSampleListPropertyRows(tour.sourceListId).filter(p=>tour.stops.some(s=>s.propertyId===p.id)&&!p.removedAt);return members.some(p=>p.dataset===bundle.row.listingDataset&&p.listingId===bundle.row.listingKey)?"matched":members.length===tour.stops.length&&members.length>0?"different":"unknown";}
 const summary=(bundle,tour)=>({id:tour.id,name:tour.name,startsAt:tour.startsAt,stopCount:tour.stops.length,archivedAt:tour.archivedAt,lastScheduledAt:tour.lastScheduledAt,updatedAt:tour.updatedAt,propertyMatch:match(bundle,tour)});

@@ -36,7 +36,7 @@ export const deadlineInputSchema = z.object({
  * accepted here: `agentUserId` is optional and only a privileged actor's
  * value is honoured, the brokerage is always the server's.
  */
-export const createTransactionSchema = z.object({
+export const realEstateCreateTransactionSchema = z.object({
   requestId: z.string().uuid().optional(),
   transactionType: z.enum(TYPES),
   side: z.enum(SIDES),
@@ -67,7 +67,16 @@ export const createTransactionSchema = z.object({
   deadlines: z.array(deadlineInputSchema).max(30).optional(),
 });
 
+/** GC starts with only the entered property address and client identity. */
+export const gcCreateTransactionSchema = z.object({
+ requestId: z.string().uuid().optional(), side: z.literal("gc"),
+ transactionType: z.literal("general_contractor").default("general_contractor"),
+ addressLine1: shortText,
+ clientName: shortText.optional(), contactId: z.string().uuid().optional(),
+}).strict().refine(value => Boolean(value.contactId || value.clientName), { message: "Enter a client.", path: ["clientName"] });
+export const createTransactionSchema = z.union([realEstateCreateTransactionSchema, gcCreateTransactionSchema]);
 export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;
+export type CreateGcTransactionInput = z.infer<typeof gcCreateTransactionSchema>;
 
 /**
  * The deadlines a new transaction starts with. A scheduled closing is a
@@ -75,8 +84,8 @@ export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;
  * actually entered. No closing date, no Closing deadline.
  */
 export function initialDeadlines(
-  input: Pick<CreateTransactionInput, "closingDate" | "deadlines">
-): NonNullable<CreateTransactionInput["deadlines"]> {
+  input: { closingDate?: string; deadlines?: z.infer<typeof deadlineInputSchema>[] }
+): z.infer<typeof deadlineInputSchema>[] {
   const deadlines = [...(input.deadlines ?? [])];
   if (input.closingDate && !deadlines.some((d) => d.kind === "closing")) {
     deadlines.push({ kind: "closing", label: "Closing", dueDate: input.closingDate });

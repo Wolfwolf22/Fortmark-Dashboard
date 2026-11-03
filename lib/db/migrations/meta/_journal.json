@@ -204,6 +204,13 @@
       "when": 1794024000000,
       "tag": "0028_transaction_mls_and_tours",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794027600000,
+      "tag": "0029_gc_transactions",
+      "breakpoints": true
     }
   ]
 }

@@ -25,6 +25,7 @@ async function load(ctx: TransactionContext, id: string, itemId?: string, write 
   const [row] = await ctx.db.select().from(transactions).where(and(eq(transactions.id, id), visibleTo(ctx.actor), actorGuard(ctx))).limit(1);
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (write && !canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
+  if (write && row.side === "gc") return { ok: false, reason: "gc_not_configured" };
   if (write && isTerminalStage(row.stage)) return { ok: false, reason: "invalid_transition" };
   if (!itemId) return { ok: true, value: { row } };
   const [item] = await ctx.db.select().from(transactionChecklistItems).where(and(eq(transactionChecklistItems.id, itemId), eq(transactionChecklistItems.transactionId, id))).limit(1);

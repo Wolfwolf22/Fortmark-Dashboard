@@ -40,7 +40,7 @@ export async function getTransactionTours(ctx: TransactionContext, id: string): 
   const latest = await loadTransaction(ctx, id); if (!latest) return { ok: false, reason: "not_found" }; if (!revisionMatches(latest.updatedAt, tx.updatedAt.toISOString())) return { ok: false, reason: "conflict" };
   const currentTours = tours.length ? await ctx.db.select({ id: savedShowingTours.id, updatedAt: savedShowingTours.updatedAt }).from(savedShowingTours).where(and(inArray(savedShowingTours.id, tours.map(tour => tour.id)), scope)) : [];
   if (currentTours.length !== tours.length || tours.some(tour => !currentTours.some(current => current.id === tour.id && revisionMatches(current.updatedAt, tour.updatedAt.toISOString())))) return { ok: false, reason: "conflict" };
-  const canEdit = canWrite(ctx.actor, tx) && !isTerminalStage(tx.stage);
+  const canEdit = tx.side !== "gc" && canWrite(ctx.actor, tx) && !isTerminalStage(tx.stage);
   return { ok: true, value: { transactionId: id, items: links.map(({ link }) => ({ id: link.id, tour: byId.get(link.tourId)!, updatedAt: link.updatedAt.toISOString(), canUnlink: canEdit })), candidates: visibleCandidates.map(tour => byId.get(tour.id)!), canEdit, updatedAt: tx.updatedAt.toISOString(), limit: 100, linksTruncated: linkedRows.length > 100, candidatesTruncated: candidates.length > 100 } };
 }
 export async function getSavedTourTransactions(ctx: TransactionContext, tourId: string): Promise<ServiceResult<SavedTourTransactions>> {
@@ -60,6 +60,7 @@ export async function mutateTransactionTour(ctx: TransactionContext, id: string,
   const previous = await replay(); if (previous) return previous;
   const tx = await loadTransaction(ctx, id), tour = await loadTour(ctx, d.tourId); if (!tx || !tour) return { ok: false, reason: "not_found" };
   if (!canWrite(ctx.actor, tx) || ctx.actor.role === "member") return { ok: false, reason: "forbidden" };
+  if (tx.side === "gc") return { ok: false, reason: "gc_not_configured" };
   if (isTerminalStage(tx.stage) || d.action === "link" && tour.archivedAt) return { ok: false, reason: "invalid_transition" };
   if (!revisionMatches(tx.updatedAt, d.expectedUpdatedAt) || !revisionMatches(tour.updatedAt, d.expectedTourUpdatedAt)) return { ok: false, reason: "conflict" };
   const [party] = await ctx.db.select({ id: transactionParties.id }).from(transactionParties).where(and(eq(transactionParties.transactionId, id), eq(transactionParties.contactId, tour.contactId))).limit(1); if (!party) return { ok: false, reason: "tour_link_contact_conflict" };

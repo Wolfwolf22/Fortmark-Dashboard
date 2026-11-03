@@ -355,6 +355,7 @@ export const transactionType = pgEnum("transaction_type", [
   "commercial_sale",
   "commercial_lease",
   "land",
+  "general_contractor",
 ]);
 
 /** Which side FortMark represents. `dual` is both sides of one deal. */
@@ -364,6 +365,7 @@ export const transactionSide = pgEnum("transaction_side", [
   "dual",
   "landlord",
   "tenant",
+  "gc",
 ]);
 
 export const transactionPartyRole = pgEnum("transaction_party_role", [

@@ -22,6 +22,7 @@ async function load(ctx: TransactionContext, id: string, write = false): Promise
   const [row] = await ctx.db.select().from(transactions).where(and(eq(transactions.id, id), visibleTo(ctx.actor))).limit(1);
   if (!row || !canSee(ctx.actor, row)) return { ok: false, reason: "not_found" };
   if (write && !canWrite(ctx.actor, row)) return { ok: false, reason: "forbidden" };
+  if (write && row.side === "gc") return { ok: false, reason: "gc_not_configured" };
   if (write && isTerminalStage(row.stage)) return { ok: false, reason: "invalid_transition" };
   return { ok: true, value: row };
 }
@@ -54,7 +55,7 @@ export async function getTransactionWorkspace(ctx: TransactionContext, id: strin
   const current = await load(ctx, id); if (!current.ok) return current; if (!revisionMatches(current.value.updatedAt, row.updatedAt.toISOString())) return { ok: false, reason: "conflict" };
   return { ok: true, value: { transaction, details: details(row), deadlines: deadlines.map(d => ({ id: d.id, kind: d.kind, label: d.label, dueDate: d.dueDate, note: d.note ?? "", completedAt: d.completedAt?.toISOString() ?? null, updatedAt: d.updatedAt.toISOString(), state: transactionDeadlineState(d.dueDate, d.completedAt, now) })),
     parties: parties.map(p => ({ id: p.id, role: p.role, displayName: p.displayName, company: p.company, email: p.email, phone: p.phoneE164, isPrimary: p.isPrimary, contactId: p.contactId && canOpen.has(p.contactId) ? p.contactId : null, canOpenContact: Boolean(p.contactId && canOpen.has(p.contactId)) })),
-    checklist: { templateVersion: row.checklistTemplateVersion, items: checklistItems, progress: checklistProgress(checklistItems) }, attachmentUploadsEnabled: transactionFilesEnabled(), canManageTransactionSetup: ctx.actor.role === "admin", vendors, history: { items: history, total, page, pageSize: 20 }, canEdit: canWrite(ctx.actor, row) && !isTerminalStage(row.stage), updatedAt: row.updatedAt.toISOString() } };
+    checklist: { templateVersion: row.checklistTemplateVersion, items: checklistItems, progress: checklistProgress(checklistItems) }, attachmentUploadsEnabled: row.side !== "gc" && transactionFilesEnabled(), canManageTransactionSetup: row.side !== "gc" && ctx.actor.role === "admin", vendors, history: { items: history, total, page, pageSize: 20 }, canEdit: row.side !== "gc" && canWrite(ctx.actor, row) && !isTerminalStage(row.stage), updatedAt: row.updatedAt.toISOString() } };
 }
 function deadlineGuard(rows: TransactionDeadlineRow[], id: string) {
   return sql`(select count(*) from ${transactionDeadlines} where ${transactionDeadlines.transactionId}=${id}::uuid and ${transactionDeadlines.removedAt} is null)=${rows.length}
@@ -87,6 +88,7 @@ export async function updateTransactionWorkspace(ctx: TransactionContext, id: st
   const parsed = updateTransactionWorkspaceSchema.safeParse(input); if (!parsed.success) return { ok: false, reason: "invalid_transaction" };
   const d = parsed.data, hash = createPayloadHash({ id, ...d }), previous = await replayWorkspace(ctx, d.requestId, hash, "edit", now); if (previous) return previous;
   const loaded = await load(ctx, id, true); if (!loaded.ok) return loaded; const row = loaded.value;
+  if (d.details.transactionType === "general_contractor") return { ok: false, reason: "gc_not_configured" };
   if (!revisionMatches(row.updatedAt, d.expectedUpdatedAt)) return { ok: false, reason: "conflict" };
   if (row.listingDataset && (d.details.listingKey !== row.listingKey || d.details.mlsNumber !== row.mlsNumber)) return { ok: false, reason: "property_linked" };
   const rows = await ctx.db.select().from(transactionDeadlines).where(and(eq(transactionDeadlines.transactionId, id), isNull(transactionDeadlines.removedAt))), next = nextTransactionRevision(row, now);

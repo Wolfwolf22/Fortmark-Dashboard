@@ -551,7 +551,7 @@ async function touch(actor: Actor, follow: Date | null, input: Record<string, un
   check("service: the caller's name is fetched lazily, and only from the identity provider", /ctx\.viewerName\(\)/.test(service) && /currentUser\(\)/.test(http) && !/primaryEmailAddress|emailAddresses/.test(http));
 
   // Quick-create closing date.
-  check("quick-create: no invented 45-day closing", !/45 \* 86400000/.test(quick) && quick.includes('closeDate: closeDateFromInput(get("closeDate"))'));
+  check("quick-create: no invented 45-day closing", !/45 \* 86400000/.test(quick) && /closeDate:\s*closeDateFromInput\(get\("closeDate"\)\)/.test(quick));
   check("quick-create: the field says optional", quick.includes('label="Close date (optional)"'));
 }
 

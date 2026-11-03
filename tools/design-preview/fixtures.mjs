@@ -43,7 +43,7 @@ export const metrics = {
 
 // All business projections read the same ephemeral raw transaction book.
 function setTransactionGroups(target, at) {
-  const rows = readPreviewTransactionBundles().map(bundle => bundle.row), active = rows.filter(row => isActiveStage(row.stage)), closed = rows.filter(row => row.stage === "closed"), month = businessDayKey(at).slice(0, 7);
+  const rows = readPreviewTransactionBundles().map(bundle => bundle.row).filter(row => row.side !== "gc"), active = rows.filter(row => isActiveStage(row.stage)), closed = rows.filter(row => row.stage === "closed"), month = businessDayKey(at).slice(0, 7);
   const closedMonth = closed.filter(row => row.closedDate?.startsWith(month)), cents = items => items.reduce((sum, row) => sum + (row.contractPriceCents || 0), 0), commission = items => items.reduce((sum, row) => sum + projectCommission(row).grossCents, 0);
   const monthly = Array.from({ length: 12 }, (_, index) => { const value = new Date(`${month}-01T12:00:00Z`); value.setUTCMonth(value.getUTCMonth() - 11 + index); const key = value.toISOString().slice(0, 10), items = closed.filter(row => row.closedDate?.startsWith(key.slice(0, 7))); return { month: key, closedCount: items.length, closedVolumeCents: cents(items), commissionCents: commission(items) }; });
   Object.assign(target.transactions.data, { activeCount: active.length, onHoldCount: rows.filter(row => row.stage === "on_hold").length, activeVolumeCents: cents(active), activeVolumeUnpricedCount: active.filter(row => row.contractPriceCents === null).length, projectedCommissionCents: commission(active), projectedCommissionUntermedCount: active.filter(row => projectCommission(row).basis === "none").length, scheduledClosingsThisMonth: active.filter(row => row.closingDate?.startsWith(month)).length, closedThisMonthCount: closedMonth.length, closedThisMonthVolumeCents: cents(closedMonth), monthly });
@@ -74,7 +74,7 @@ function contactFigures(contacts, at, month) {
   };
 }
 function transactionAttentionAt(at) {
-  return readPreviewTransactionBundles().filter(bundle => isActiveStage(bundle.row.stage)).flatMap(bundle => bundle.deadlines.flatMap(deadline => {
+  return readPreviewTransactionBundles().filter(bundle => bundle.row.side !== "gc" && isActiveStage(bundle.row.stage)).flatMap(bundle => bundle.deadlines.flatMap(deadline => {
     if (deadline.completedAt || deadline.removedAt) return [];
     const dueDate = deadline.dueDate;
     const daysAway = dayDiff(dueDate, businessDayKey(at));

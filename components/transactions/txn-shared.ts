@@ -3,7 +3,7 @@
  * Lives here (not lib/) so the transactions feature stays self-contained.
  */
 import { daysUntilTransactionDay } from "@/lib/transactions/calendar-days";
-import type { Transaction, TransactionStage } from "@/lib/data/types";
+import { TRANSACTION_STAGE_LABELS, type Transaction, type TransactionStage } from "@/lib/data/types";
 import { nextStage as lifecycleNext } from "@/lib/transactions/stages";
 
 export const SIDE_LABELS: Record<Transaction["side"], string> = {
@@ -12,6 +12,7 @@ export const SIDE_LABELS: Record<Transaction["side"], string> = {
   dual: "Both sides",
   landlord: "Landlord side",
   tenant: "Tenant side",
+  gc: "GC / General contractor",
 };
 
 export const SIDE_SHORT: Record<Transaction["side"], string> = {
@@ -20,6 +21,7 @@ export const SIDE_SHORT: Record<Transaction["side"], string> = {
   dual: "Dual",
   landlord: "Landlord",
   tenant: "Tenant",
+  gc: "GC",
 };
 
 /**
@@ -31,6 +33,7 @@ export function daysToClose(closeDateIso: string | undefined): number | null {
 
 /** "16d to close" / "closes today" / "3d past close" / "closed" / "no close date" */
 export function closeCountdown(t: Transaction): string {
+  if(t.side==="gc")return "Setup pending";
   if (t.stage === "closed") return "closed";
   const d = daysToClose(t.closeDate);
   if (d === null) return "no close date";
@@ -46,3 +49,5 @@ export function closeCountdown(t: Transaction): string {
 export function nextStage(stage: TransactionStage): TransactionStage | undefined {
   return lifecycleNext(stage) ?? undefined;
 }
+
+export function transactionWorkflowLabel(transaction:Pick<Transaction,"side"|"stage">):string{return transaction.side==="gc"?"Setup pending":TRANSACTION_STAGE_LABELS[transaction.stage];}
