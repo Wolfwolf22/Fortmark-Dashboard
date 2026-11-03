@@ -112,3 +112,8 @@ Selected transaction vendors now open a role-specific Full detail dialog.
 See [TRANSACTION_VENDOR_DETAILS.md](TRANSACTION_VENDOR_DETAILS.md) for service
 costs/dates, preapproval documents, recorded lender figures and preserved
 historical vendor records. Migration 0027 remains local and unapplied live.
+
+
+The [MLS and tour update](TRANSACTION_MLS_AND_TOURS.md) adds reviewed property
+linking, fresh MLS photos/prices/published taxes and reciprocal private tour
+associations. Current MLS asking prices stay separate from agreed deal terms.

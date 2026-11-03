@@ -1,0 +1,31 @@
+/** Provider contract tests use injected requests only. No MLS credentials or network. */
+import assert from "node:assert/strict";
+import { transactionPropertyMlsProvider } from "../lib/transactions/property-mls.ts";
+import { toListing } from "../lib/mls/normalize.ts";
+import { PROPERTY_FIELDS } from "../lib/mls/fields.ts";
+import type { PropertyMlsProvider, PropertyResolution } from "../lib/contacts/properties.ts";
+let passed=0;function check(name:string,value:unknown):asserts value{assert.ok(value,name);passed++;}
+const raw={ListingKey:'key-001',ListingId:'A00123',InternetEntireListingDisplayYN:true,InternetAddressDisplayYN:true,UnparsedAddress:'42 Ocean Ave',City:'Sample',StateOrProvince:'FL',CountyOrParish:'Sample County',PostalCode:'33308',PropertyType:'Residential',PropertySubType:'Condominium',StandardStatus:'Active',ListPrice:795000,TaxAnnualAmount:7800,TaxYear:2025,AssociationFee:450,AssociationFeeFrequency:'Monthly',Latitude:26,Longitude:-80,ModificationTimestamp:'2026-11-01T13:00:00Z'},listing=toListing(raw,['https://example.test/photo.jpg'])!;
+let baseCalls=0,requests=0,contexts=0,record:unknown=raw,throwRequest=false;const sent:{resource:string;params:unknown}[]=[];
+let result:PropertyResolution={ok:true,value:{dataset:'miamire',listing}};
+const base:PropertyMlsProvider={lookup:async()=>{baseCalls++;return result;},get:async()=>{baseCalls++;return result;}};
+const config={baseUrl:'https://synthetic.invalid',dataset:'miamire',token:'never-read-network'};
+const provider=transactionPropertyMlsProvider(config,async()=>{contexts++;return {};},undefined,{baseProvider:base,request:(async(_config:unknown,resource:string,params:unknown)=>{requests++;sent.push({resource,params});if(throwRequest)throw Error('Private provider response');return {value:Array.isArray(record)?record:[record],count:null,nextLink:null};})as never});
+check('constructorisinert',baseCalls===0&&requests===0&&contexts===0);
+const first=await provider.lookup('A00123');check('financialreadwithoutunverifiedselect',first.ok&&first.value.listing.annualTaxAmount===7800&&first.value.listing.taxYear===2025&&first.value.listing.associationFee===450&&first.value.listing.financialsStatus==='available'&&Number(requests)===1&&!('$select'in(sent[0].params as object)));
+check('financialqueryboundedexactdisplayableidentity',JSON.stringify(sent[0].params).includes('InternetEntireListingDisplayYN eq true')&&JSON.stringify(sent[0].params).includes("ListingKey eq 'key-001'")&&JSON.stringify(sent[0].params).includes("ListingId eq 'A00123'")&&(sent[0].params as {$top:number}).$top===2);
+check('photosandattributionretained',first.ok&&first.value.listing.photos[0]==='https://example.test/photo.jpg'&&first.value.listing.state==='FL');
+check('globalverifiedfieldsunchanged',!PROPERTY_FIELDS.includes('TaxAnnualAmount')&&!PROPERTY_FIELDS.includes('AssociationFee'));
+throwRequest=true;const partial=await provider.get('miamire','key-001','A00123');check('financialoutageindependentofbaseproperty',partial.ok&&partial.value.listing.id===listing.id&&partial.value.listing.financialsStatus==='unavailable');throwRequest=false;
+record={...raw,TaxAnnualAmount:undefined,TaxYear:undefined,AssociationFee:undefined,AssociationFeeFrequency:undefined};const absent=await provider.lookup('A00123');check('unpublishedfinancialsnotinventedzero',absent.ok&&absent.value.listing.financialsStatus==='not_published'&&absent.value.listing.annualTaxAmount===undefined);
+record={...raw,TaxAnnualAmount:0,AssociationFee:0};const zero=await provider.lookup('A00123');check('publishedzerofinancialvaluespreserved',zero.ok&&zero.value.listing.annualTaxAmount===0&&zero.value.listing.associationFee===0);
+record={...raw,ListingKey:'wrong-key'};const wrongKey=await provider.lookup('A00123');check('upstreamignoredkeyfiltercannotenrichanotherproperty',!wrongKey.ok&&wrongKey.reason==='unavailable');
+record={...raw,ListingId:'A99999'};check('upstreamignorednumberfilterrefused',!(await provider.lookup('A00123')).ok);
+record={...raw,InternetEntireListingDisplayYN:false};const hidden=await provider.lookup('A00123');check('listingwithdrawndisplaypermissionrefused',!hidden.ok&&hidden.reason==='not_found');
+record={...raw,InternetEntireListingDisplayYN:undefined};check('unknownpermissioncannotexposefullrecord',!(await provider.lookup('A00123')).ok);
+record={...raw,InternetAddressDisplayYN:false};const withheld=await provider.lookup('A00123');check('withheldaddresscoordinatesremainprotected',withheld.ok&&withheld.value.listing.addressWithheld&&withheld.value.listing.coordinates===undefined&&!withheld.value.listing.address.includes('Ocean'));
+record=[];const missing=await provider.lookup('A00123');check('disappearedrecorddoesnotreturnstaleenrichment',!missing.ok&&missing.reason==='not_found');
+record=[raw,raw];const ambiguous=await provider.lookup('A00123');check('multipleexactrecordsrefused',!ambiguous.ok&&ambiguous.reason==='ambiguous');
+result={ok:false,reason:'not_found'};const before=requests;check('missingbaseavoidsfinancialrequest',!(await provider.lookup('A00123')).ok&&requests===before);
+result={ok:true,value:{dataset:'other-source',listing}};const rotated=await provider.lookup('A00123');check('rotateddatasetneverenriched',!rotated.ok&&rotated.reason==='not_configured'&&requests===before);
+console.log(`${passed}/${passed} transaction property provider checks passed (injected responses; no network)`);

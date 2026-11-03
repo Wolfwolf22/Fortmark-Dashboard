@@ -91,6 +91,10 @@ export function toTransaction(bundle: RowBundle, now: Date = new Date()): Transa
   return {
     id: row.id,
     listingId: row.listingKey ?? undefined,
+    mlsNumber: row.mlsNumber ?? undefined,
+    listingDataset: row.listingDataset ?? undefined,
+    listingLinkedAt: row.listingLinkedAt?.toISOString(),
+    listPrice: row.listPriceCents === null ? undefined : centsToDollars(row.listPriceCents),
     address: row.addressLine2 ? `${row.addressLine1} ${row.addressLine2}` : row.addressLine1,
     city: row.city,
     clientId: client?.id ?? "",

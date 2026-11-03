@@ -32,11 +32,12 @@ export function failure(reason: ServiceFailure): NextResponse {
       return NextResponse.json({ error: "no_identity" }, { status: 403, headers: NO_STORE });
     case "invalid_transition":
       return NextResponse.json({ error: "invalid_transition" }, { status: 409, headers: NO_STORE });
-    case "conflict": case "request_conflict": case "closing_deadline_conflict": case "invalid_deadline_transition": case "checklist_incomplete": case "checklist_not_ready": case "invalid_checklist_transition": case "attachment_required": case "attachment_requires_reopen": case "attachment_limit": case "vendor_unavailable": case "vendor_detail_not_current":
+    case "conflict": case "request_conflict": case "closing_deadline_conflict": case "invalid_deadline_transition": case "checklist_incomplete": case "checklist_not_ready": case "invalid_checklist_transition": case "attachment_required": case "attachment_requires_reopen": case "attachment_limit": case "vendor_unavailable": case "vendor_detail_not_current": case "property_changed": case "property_linked": case "property_import_unavailable": case "property_ambiguous": case "tour_link_contact_conflict":
       return NextResponse.json({ error: reason }, { status: 409, headers: NO_STORE });
-    case "invalid_attachment": case "invalid_vendor_details": return NextResponse.json({ error: reason }, { status: 400, headers: NO_STORE });
+    case "invalid_attachment": case "invalid_vendor_details": case "invalid_property": case "invalid_tour_link": return NextResponse.json({ error: reason }, { status: 400, headers: NO_STORE });
+    case "property_not_found": return NextResponse.json({ error: reason }, { status: 404, headers: NO_STORE });
     case "file_too_large": return NextResponse.json({ error: reason }, { status: 413, headers: NO_STORE });
-    case "attachment_not_configured": case "attachment_unavailable": return NextResponse.json({ error: reason }, { status: 503, headers: NO_STORE });
+    case "attachment_not_configured": case "attachment_unavailable": case "property_not_configured": case "property_unavailable": return NextResponse.json({ error: reason }, { status: 503, headers: NO_STORE });
     case "invalid_transaction":
       return NextResponse.json({ error: "invalid", fields: ["transaction"] }, { status: 400, headers: NO_STORE });
     case "invalid_contact":

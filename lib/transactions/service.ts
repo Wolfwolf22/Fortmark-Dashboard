@@ -72,7 +72,8 @@ export type ServiceFailure =
   | "invalid_assignee"
   | "invalid_contact"
   | "conflict" | "request_conflict" | "invalid_transaction" | "closing_deadline_conflict" | "invalid_deadline_transition" | "checklist_incomplete" | "checklist_not_ready" | "invalid_checklist_transition"
-  | "invalid_attachment" | "file_too_large" | "attachment_required" | "attachment_requires_reopen" | "attachment_not_configured" | "attachment_unavailable" | "attachment_limit" | "vendor_unavailable" | "invalid_vendor_details" | "vendor_detail_not_current";
+  | "invalid_attachment" | "file_too_large" | "attachment_required" | "attachment_requires_reopen" | "attachment_not_configured" | "attachment_unavailable" | "attachment_limit" | "vendor_unavailable" | "invalid_vendor_details" | "vendor_detail_not_current"
+  | "invalid_property" | "property_changed" | "property_linked" | "property_import_unavailable" | "property_not_found" | "property_ambiguous" | "property_not_configured" | "property_unavailable" | "invalid_tour_link" | "tour_link_contact_conflict";
 
 /** The role a contact takes on the deal, by which side FortMark represents. */
 const CLIENT_PARTY_ROLE: Record<TransactionSideKey, "seller" | "buyer" | "landlord" | "tenant"> = {
@@ -173,6 +174,7 @@ export async function listTransactions(
       or(
         sql`lower(${transactions.addressLine1}) like ${q}`,
         sql`lower(${transactions.city}) like ${q}`,
+        sql`lower(${transactions.mlsNumber}) like ${q}`,
         sql`exists (select 1 from ${transactionParties} p where p.transaction_id = ${transactions.id} and lower(p.display_name) like ${q})`
       )!
     );

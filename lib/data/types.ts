@@ -81,6 +81,15 @@ export interface Listing {
   address: string;
   city: string;
   zip: string;
+  state?: string;
+  county?: string;
+  /** Published MLS amounts, never a forecast of a buyer's future bill. */
+  annualTaxAmount?: number;
+  taxYear?: number;
+  associationFee?: number;
+  associationFeeFrequency?: string;
+  mlsModifiedAt?: string;
+  financialsStatus?: "available" | "not_published" | "unavailable";
   /** Subdivision or area. Absent until the feed field is verified. */
   neighborhood?: string;
   status: ListingStatus;
@@ -284,6 +293,10 @@ export interface Transaction {
   id: string;
   /** MLS ListingKey when the deal is linked to a listing FortMark can see. */
   listingId?: string;
+  mlsNumber?: string;
+  listingDataset?: string;
+  listingLinkedAt?: string;
+  listPrice?: number;
   address: string;
   city: string;
   /** The primary client party's id; empty when none is recorded yet. */

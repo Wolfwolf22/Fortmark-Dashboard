@@ -32,7 +32,7 @@ function parse(schema, input) { const parsed = schema.safeParse(input); if (!par
 function revision(actual, expected) { if (Date.parse(actual) !== Date.parse(expected)) fail("conflict", 409); }
 const asDate = value => value ? new Date(value) : null;
 function project(bundle, now = new Date()) {
-  const row = { ...bundle.row, createdAt: new Date(bundle.row.createdAt), updatedAt: new Date(bundle.row.updatedAt) };
+  const row = { ...bundle.row, createdAt: new Date(bundle.row.createdAt), updatedAt: new Date(bundle.row.updatedAt), listingLinkedAt: asDate(bundle.row.listingLinkedAt) };
   const deadlines = bundle.deadlines.map(item => ({ ...item, createdAt: new Date(item.createdAt), updatedAt: new Date(item.updatedAt), completedAt: asDate(item.completedAt), removedAt: asDate(item.removedAt) }));
   const agentName = contactAgents.find(agent => agent.id === row.agentUserId)?.name || "Sample Agent";
   return { ...toTransaction({ row, parties: bundle.parties, deadlines, agentName }, now), id: previewTransactionPublicId(row.id) };
@@ -44,7 +44,7 @@ export function listPreviewTransactions(filters = {}, range, now = new Date()) {
   return all().filter(visible).filter(bundle => {
     const row = bundle.row;
     if (filters.stage?.length && !filters.stage.includes(row.stage) || filters.side?.length && !filters.side.includes(row.side) || filters.agentId && filters.agentId !== row.agentUserId) return false;
-    if (filters.query && !`${row.addressLine1} ${row.city} ${bundle.parties.map(party => party.displayName).join(" ")}`.toLowerCase().includes(filters.query.toLowerCase().trim())) return false;
+    if (filters.query && !`${row.addressLine1} ${row.city} ${row.mlsNumber || ""} ${bundle.parties.map(party => party.displayName).join(" ")}`.toLowerCase().includes(filters.query.toLowerCase().trim())) return false;
     return !range || [row.contractExecutionDate, row.closingDate].some(day => day && day >= range.from.toISOString().slice(0, 10) && day <= range.to.toISOString().slice(0, 10));
   }).sort((a, b) => (a.row.closingDate || "9999").localeCompare(b.row.closingDate || "9999") || b.row.createdAt.localeCompare(a.row.createdAt)).slice(0, 200).map(bundle => project(bundle, now));
 }
@@ -82,6 +82,7 @@ function closingMetadata(bundle, day, next) {
 export function updatePreviewTransactionWorkspace(id, input, now = new Date()) {
   writeMode(id); const value = parse(updateTransactionWorkspaceSchema, input);
   return serialized(async () => { const started = await begin(id, value, "edit"); if (started.repeated) return workspace(started.repeated, 1, now); const bundle = load(id); writable(bundle); revision(bundle.row.updatedAt, value.expectedUpdatedAt);
+    if(bundle.row.listingDataset&&(value.details.listingKey!==bundle.row.listingKey||value.details.mlsNumber!==bundle.row.mlsNumber))fail("property_linked",409);
     const next = nextSampleRevision(bundle.row.updatedAt), fields = detailKeys.filter(key => (bundle.row[key] ?? (key === "notes" ? "" : null)) !== value.details[key]);
     closingMetadata(bundle, value.details.closingDate, next); Object.assign(bundle.row, value.details, { state: value.details.state.toUpperCase(), updatedAt: next, updatedByUserId: SAMPLE_ACTOR.userId }); event(bundle, "edit", fields, now); save(bundle, started, "edit"); return workspace(bundle, 1, now); });
 }
@@ -152,7 +153,7 @@ export function readPreviewTransactionExtra(id, read) { return read(load(id)); }
 /** Extensions share the file lock, exact receipts and safe history with core writes. */
 export function mutatePreviewTransactionExtra(id, input, action, work, now = new Date()) {
   writeMode(id);
-  return serialized(async()=>{const started=await begin(id,input,action);if(started.repeated)return workspace(started.repeated,1,now);const bundle=load(id);writable(bundle);revision(bundle.row.updatedAt,input.expectedUpdatedAt);const next=nextSampleRevision(bundle.row.updatedAt);work(bundle,next);Object.assign(bundle.row,{updatedAt:next,updatedByUserId:SAMPLE_ACTOR.userId});event(bundle,action,action==="set_vendor"?["vendorId","vendorStatus"]:action==="edit_vendor_details"?["vendorDetails"]:action==="upload_vendor_attachment"||action==="remove_vendor_attachment"?["vendorAttachments"]:action==="set_attachment_requirement"?["attachmentRequired"]:["attachments"],now);save(bundle,started,action);return workspace(bundle,1,now);});
+  return serialized(async()=>{const started=await begin(id,input,action);if(started.repeated)return workspace(started.repeated,1,now);const bundle=load(id);writable(bundle);revision(bundle.row.updatedAt,input.expectedUpdatedAt);const next=nextSampleRevision(bundle.row.updatedAt);await work(bundle,next);writable(load(id));revision(load(id).row.updatedAt,input.expectedUpdatedAt);Object.assign(bundle.row,{updatedAt:next,updatedByUserId:SAMPLE_ACTOR.userId});event(bundle,action,action==="link_property"||action==="unlink_property"?["listingDataset","listingKey","mlsNumber"]:action==="link_tour"||action==="unlink_tour"?["tourId"]:action==="set_vendor"?["vendorId","vendorStatus"]:action==="edit_vendor_details"?["vendorDetails"]:action==="upload_vendor_attachment"||action==="remove_vendor_attachment"?["vendorAttachments"]:action==="set_attachment_requirement"?["attachmentRequired"]:["attachments"],now);save(bundle,started,action);return workspace(bundle,1,now);});
 }
 export function reparentPreviewTransactionParties(from, to) { for (const bundle of records.values()) bundle.parties = bundle.parties.map(party => party.contactId === from ? { ...party, contactId: to } : party); }
 export function previewContactTransactionParties(id) { return copy(all().flatMap(bundle => bundle.parties.filter(party => party.contactId === previewRecordId(id)))); }

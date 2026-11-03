@@ -542,7 +542,7 @@ The real setup/workspace adapters exercise 15 additional groups:
 node --experimental-strip-types --no-warnings tools/design-preview/test-transaction-operations-session.mjs
 ```
 
-Total isolated preview groups: 179. Live private-file storage configuration is
+Total isolated preview groups: 195. Live private-file storage configuration is
 documented in [TRANSACTION_FILES_AND_VENDORS.md](../../docs/TRANSACTION_FILES_AND_VENDORS.md).
 
 
@@ -558,3 +558,25 @@ node --experimental-strip-types --no-warnings tools/design-preview/test-vendor-d
 These cover exact cents/rates and optional monthly figures, actual multipart
 PDF bytes, current/historical generations, interrupted replies and scope checks.
 See [vendor detail behavior](../../docs/TRANSACTION_VENDOR_DETAILS.md).
+
+
+## Connected transaction properties and tours
+
+In an interactive transaction file, use **Link MLS property**, then enter
+`SAMPLE-001`, `SAMPLE-002` or `SAMPLE-003`. These fictional listings include
+explicit tax/fee examples; `SAMPLE-004` has no photographs. Current provider
+fields display separately from stored file terms. `sample-offer` has a real
+synthetic contact relation eligible for the Personal research visits tour;
+`SAMPLE-TOUR-1` matches one of that tour's saved properties. Link a tour, open
+it, then use Related transactions to return. Reload resets all changes.
+
+The real property/tour adapters exercise 16 additional groups:
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-transaction-property-session.mjs
+```
+
+These verify reviewed MLS identity/imports, tax/photo projection, a fresh price
+without changed deal money or Home volume, exact receipts/CAS, linked identity
+protection, private reciprocal tours, replacement matches and safe history.
+See [MLS and tour behavior](../../docs/TRANSACTION_MLS_AND_TOURS.md).

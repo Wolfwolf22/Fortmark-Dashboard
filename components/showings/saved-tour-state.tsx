@@ -38,6 +38,7 @@ export function savedTourSlotDisposition(slot: SavedTourSlot): "new" | "locked" 
 export function moveSavedTourStop(stops: SavedTourDraftStop[], id: string, direction: -1 | 1): SavedTourDraftStop[] { const index = stops.findIndex((stop) => stop.propertyId === id), next = index + direction; if (index < 0 || next < 0 || next >= stops.length) return stops; const result = [...stops]; [result[index], result[next]] = [result[next], result[index]]; return result; }
 export function savedTourStopLabel(stop: Pick<SavedTourStopView, "propertyId" | "mlsNumber">): string { return stop.mlsNumber ? `MLS ${stop.mlsNumber}` : `Unavailable saved property · ${stop.propertyId.slice(-6)}`; }
 export function savedTourFailure(error: unknown): string {
+  if ((error as { code?: string } | null)?.code === "tour_link_contact_conflict") return "This tour is linked to a transaction for its current client. Unlink it from the transaction before choosing a different client.";
   const status = error && typeof error === "object" && "status" in error ? error.status : null, code = error && typeof error === "object" && "code" in error ? error.code : null;
   if (code === "sample_read_only") return "Saved tours need the contact database connection. Production sample mode does not store private plans.";
   if (code === "review_expired") return "The schedule review expired. Your plan is kept. Calculate a fresh review before confirming.";

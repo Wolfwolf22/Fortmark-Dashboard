@@ -17,7 +17,7 @@ export async function readSavedTourBody(request: Request): Promise<{ ok: true; b
 export function savedTourFailure(reason: SavedTourFailure): NextResponse {
   switch (reason) {
     case "invalid_saved_tour": case "invalid_saved_tour_query": case "invalid_route": return NextResponse.json({ error: reason }, { status: 400, headers: NO_STORE });
-    case "source_unavailable": case "stale_review": case "review_expired": case "unresolved_stops": case "time_conflict": return NextResponse.json({ error: reason }, { status: 409, headers: NO_STORE });
+    case "source_unavailable": case "stale_review": case "review_expired": case "unresolved_stops": case "time_conflict": case "tour_link_contact_conflict": return NextResponse.json({ error: reason }, { status: 409, headers: NO_STORE });
     case "unresolved_endpoint": case "unreachable": case "infeasible": return NextResponse.json({ error: reason }, { status: 422, headers: NO_STORE });
     case "not_configured": return NextResponse.json({ error: reason }, { status: 503, headers: NO_STORE });
     default: return failure(reason);

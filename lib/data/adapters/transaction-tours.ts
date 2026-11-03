@@ -1,0 +1,9 @@
+import { apiPath } from "@/lib/routes";
+import { bumpDataVersion } from "../store";
+import { getTransactionSource, TransactionsError } from "./transactions";
+import type { TransactionToursWorkspace, SavedTourTransactions, TransactionTourMutation } from "../../transactions/tour-link-domain";
+import type { TransactionWorkspace } from "../../transactions/workspace-domain";
+async function request<T>(path: string, input?: TransactionTourMutation): Promise<T> { if (await getTransactionSource() !== "db") throw new TransactionsError("sample_read_only", 403); const send = () => fetch(apiPath(path), { ...(input ? { method: "POST", body: JSON.stringify(input) } : {}), headers: { Accept: "application/json", ...(input ? { "Content-Type": "application/json" } : {}) } }); let response: Response; if (!input) { let first: Response | null = null; try { first = await send(); } catch { /* One safe read retry. */ } response = !first || first.status === 502 || first.status === 504 ? await send() : first; } else response = await send(); if (!response.ok) { let code = "unknown"; try { const body = await response.json(); if (typeof body.error === "string") code = body.error; } catch { /* Keep status. */ } throw new TransactionsError(code, response.status); } return response.json() as Promise<T>; }
+export async function getTransactionTours(id: string): Promise<TransactionToursWorkspace> { return request(`/api/transactions/${encodeURIComponent(id)}/tours`); }
+export async function getSavedTourTransactions(id: string): Promise<SavedTourTransactions> { return request(`/api/showing-tours/${encodeURIComponent(id)}/transactions`); }
+export async function updateTransactionTour(id: string, input: TransactionTourMutation): Promise<TransactionWorkspace> { if (await getTransactionSource() !== "db") throw new TransactionsError("sample_read_only", 403); try { return await request(`/api/transactions/${encodeURIComponent(id)}/tours`, input); } finally { bumpDataVersion(); } }

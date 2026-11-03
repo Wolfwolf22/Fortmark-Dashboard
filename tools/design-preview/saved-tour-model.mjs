@@ -11,6 +11,7 @@ import { samplePropertyCatalog, samplePropertyProviderStates, SAMPLE_PROPERTY_DA
 import { sampleRoadMatrix, sampleTourPoints, sampleEndpointOptions } from "./tour-fixtures.mjs";
 import { previewPublicRecordId, previewRecordId } from "./import-merge-fixtures.mjs";
 
+import { previewTourHasContactLinks } from "./transaction-tour-model.mjs";
 const copy = value => structuredClone(value);
 const rows = new Map(sampleSavedTours.map(row => [row.id, copy(row)])), receipts = new Map();
 let pending = Promise.resolve();
@@ -68,7 +69,7 @@ function settingsRow(data, current) {
     stops: value.stops.map((stop, position) => ({ ...stop, id: current?.stops.find(item => item.propertyId === stop.propertyId)?.id || crypto.randomUUID(), linkedShowingId: stop.linkedShowingId || null, position, updatedAt: stamp })) };
 }
 export function createSampleSavedTour(input) { writable(); const value = parse(createSavedShowingTourInputSchema, input); return serialized(async () => { const repeated = await replay(value, "create"); if (repeated) return repeated; const payloadHash = await hash(value), valid = validateSettings(value), row = settingsRow(valid); remember(value, "create", row, payloadHash); rows.set(row.id, row); return dto(row); }); }
-export function updateSampleSavedTour(id, input) { writable(); const value = parse(updateSavedShowingTourInputSchema, input); return serialized(async () => { const repeated = await replay(value, `update:${id}`); if (repeated) return repeated; const payloadHash = await hash(value), row = own(id); if (row.archivedAt) fail("invalid_transition", 409); revision(row, value.expectedUpdatedAt); const next = settingsRow(validateSettings(value), row); remember(value, `update:${id}`, next, payloadHash); rows.set(id, next); return dto(next); }); }
+export function updateSampleSavedTour(id, input) { writable(); const value = parse(updateSavedShowingTourInputSchema, input); return serialized(async () => { const repeated = await replay(value, `update:${id}`); if (repeated) return repeated; const payloadHash = await hash(value), row = own(id); if (row.archivedAt) fail("invalid_transition", 409); revision(row, value.expectedUpdatedAt); if(previewTourHasContactLinks(id,value.contactId))fail("tour_link_contact_conflict",409); const next = settingsRow(validateSettings(value), row); remember(value, `update:${id}`, next, payloadHash); rows.set(id, next); return dto(next); }); }
 export function archiveSampleSavedTour(id, input) { writable(); const value = parse(archiveSavedShowingTourInputSchema, input); return serialized(async () => { const repeated = await replay(value, `archive:${id}`); if (repeated) return repeated; const payloadHash = await hash(value), row = own(id); if (row.archivedAt) fail("conflict", 409); revision(row, value.expectedUpdatedAt); const next = { ...row, archivedAt: new Date().toISOString(), updatedAt: nextSampleRevision(row.updatedAt) }; remember(value, `archive:${id}`, next, payloadHash); rows.set(id, next); return dto(next); }); }
 function snapshot(row) { const binding = source(row, true), contact = person(row.contactId); return canonicalTourFingerprint({ row, contact: { id: contact.id, updatedAt: contact.updatedAt }, list: binding.list, members: binding.members, appointments: row.stops.map(stop => linked(row, stop) || null) }); }
 const bytes = value => new TextEncoder().encode(value);
@@ -141,3 +142,6 @@ export function scheduleSampleSavedTour(id, input, now = new Date()) {
 }
 export function readSampleContactSavedTours(id) { return copy(all().filter(row => row.contactId === id)); }
 export function reparentSampleSavedTours(from, to) { for (const row of rows.values()) if (row.contactId === from) rows.set(row.id, { ...row, contactId: to, updatedAt: nextSampleRevision(row.updatedAt) }); }
+
+export function readSampleSavedTourExtra(id,read){return read(copy(own(id)));}
+export function applySampleSavedTourLinkRevision(id,expected,next){const row=own(id);revision(row,expected);rows.set(id,{...row,updatedAt:next});}

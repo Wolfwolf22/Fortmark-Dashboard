@@ -45,7 +45,9 @@ try {
   const again = await createSavedShowingTour(ctx, draftInput, now); check("createretryrecoverssamedraftwithoutduplicates", again.ok && again.value.id === draft.id && await counts() === beforeReview);
   const changedCreate = await createSavedShowingTour(ctx, { ...draftInput, name: "Changed" }, now); check("createkeycannotrebindpayload", !changedCreate.ok && changedCreate.reason === "request_conflict");
   check("admincannotreadanotherownerstour", !(await getSavedShowingTour({ actor: admin, db }, draft.id)).ok);
+  await db.update(dashboardUsers).set({ role: "member" }).where(eq(dashboardUsers.id, actor.userId));
   check("memberreadallowedbutallwritesandreviewsrefused", (await getSavedShowingTour(member, draft.id)).ok && !(await createSavedShowingTour(member, input(), now)).ok && !(await reviewSavedShowingTour(member, draft.id, { expectedUpdatedAt: draft.updatedAt }, mls, routing, now)).ok);
+  await db.update(dashboardUsers).set({ role: "agent" }).where(eq(dashboardUsers.id, actor.userId));
   check("foreignlistdraftrefusedwithoutMLScalls", !(await createSavedShowingTour(ctx, { ...input(), sourceListId: otherListId }, now)).ok && mlsCalls === 0);
   for (const invalid of [{ ...input(), stops: [input().stops[0]] }, { ...input(), stops: [input().stops[0], input().stops[0]] }, { ...input(), endMode: "address", endAddress: " " }, { ...input(), notes: "x".repeat(4001) }, { ...input(), stops: input().stops.map(stop => ({ ...stop, lockTime: true })) }, { ...input(), coordinates: { lat: 26, lng: -80 } }]) check("invaliddraftauthorityandtextrefused", !createSavedShowingTourInputSchema.safeParse(invalid).success);
   const listed = await getSavedShowingTours(ctx, { contactId, pageSize: 1 }); check("pageddraftcountfiltersowncontact", listed.ok && listed.value.total === 1 && listed.value.items.length === 1);

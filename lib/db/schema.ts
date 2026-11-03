@@ -431,6 +431,9 @@ export const transactions = pgTable(
     /** Link to the MLS record when this deal is a listing FortMark can see. */
     listingKey: text("listing_key"),
     mlsNumber: text("mls_number"),
+    /** Verified feed identity. Free-form legacy keys do not imply a live link. */
+    listingDataset: text("listing_dataset"),
+    listingLinkedAt: timestamp("listing_linked_at", { withTimezone: true }),
 
     // --- Money: integer cents and basis points only ---------------------
     listPriceCents: bigint("list_price_cents", { mode: "number" }),
@@ -573,7 +576,7 @@ export const transactionWriteRequests = pgTable("transaction_write_requests", {
   primaryKey({ name: "transaction_write_requests_pkey", columns: [t.actorUserId, t.requestId] }),
   index("transaction_write_requests_transaction_idx").on(t.transactionId),
   check("transaction_write_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`),
-  check("transaction_write_requests_action_check", sql`${t.action} in ('create','edit','stage','add_deadline','edit_deadline','complete_deadline','reopen_deadline','remove_deadline','complete_checklist','reopen_checklist','upload_attachment','remove_attachment','set_attachment_requirement','set_vendor','edit_vendor_details','upload_vendor_attachment','remove_vendor_attachment')`),
+  check("transaction_write_requests_action_check", sql`${t.action} in ('create','edit','stage','add_deadline','edit_deadline','complete_deadline','reopen_deadline','remove_deadline','complete_checklist','reopen_checklist','upload_attachment','remove_attachment','set_attachment_requirement','set_vendor','edit_vendor_details','upload_vendor_attachment','remove_vendor_attachment','link_property','unlink_property','link_tour','unlink_tour')`),
 ]);
 export type TransactionWriteRequestRow = typeof transactionWriteRequests.$inferSelect;
 
@@ -1417,3 +1420,15 @@ export const savedTourRequests = pgTable("saved_tour_requests", {
   check("saved_tour_requests_action_check", sql`${t.action} in ('edit','archive','schedule')`),
   check("saved_tour_requests_hash_check", sql`${t.payloadHash} ~ '^[0-9a-f]{64}$'`),
 ]);
+
+/** Explicit associations. Readers must independently satisfy both parent scopes. */
+export const transactionShowingTours = pgTable("transaction_showing_tours", {
+ id: uuid("id").primaryKey().defaultRandom(),
+ transactionId: uuid("transaction_id").notNull().references(() => transactions.id, { onDelete: "restrict" }),
+ tourId: uuid("tour_id").notNull().references(() => savedShowingTours.id, { onDelete: "restrict" }),
+ createdByUserId: uuid("created_by_user_id").references(() => dashboardUsers.id, { onDelete: "set null" }),
+ createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+ updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+ removedAt: timestamp("removed_at", { withTimezone: true }),
+}, t => [uniqueIndex("transaction_showing_tours_pair_idx").on(t.transactionId,t.tourId), index("transaction_showing_tours_tour_idx").on(t.tourId,t.removedAt)]);
+export type TransactionShowingTourRow = typeof transactionShowingTours.$inferSelect;

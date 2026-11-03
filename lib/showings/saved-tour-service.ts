@@ -8,6 +8,7 @@ import { loadContact } from "../contacts/access.ts";
 import { displayName } from "../contacts/domain.ts";
 import { visibleTo } from "../contacts/visibility.ts";
 import { createPayloadHash, revisionMatches } from "../contacts/reliability.ts";
+import { tourTransactionContactGuard } from "../transactions/tour-link-service.ts";
 import { loadPropertyList, propertyListMutationGuard, type PropertyListScope } from "../contacts/property-lists-service.ts";
 import type { Ctx, ServiceFailure } from "../contacts/service.ts";
 import type { PropertyMlsProvider } from "../contacts/properties.ts";
@@ -20,7 +21,7 @@ import { createSavedShowingTourInputSchema, updateSavedShowingTourInputSchema, a
   scheduleSavedShowingTourInputSchema, readSavedShowingToursQuery, SAVED_TOUR_REVIEW_TTL_MS,
   type SavedTourSettings, type SavedShowingTourView, type SavedShowingToursQuery, type SavedShowingToursPage, type SavedTourSlot, type SavedTourReview, type SavedTourScheduleResult } from "./saved-tour-domain.ts";
 
-export type SavedTourFailure = ServiceFailure | "invalid_saved_tour" | "invalid_saved_tour_query" | "source_unavailable" | "stale_review" | "review_expired" | "unresolved_stops" | "unresolved_endpoint" | "time_conflict" | "invalid_route" | "unreachable" | "infeasible" | "not_configured";
+export type SavedTourFailure = ServiceFailure | "invalid_saved_tour" | "invalid_saved_tour_query" | "source_unavailable" | "stale_review" | "review_expired" | "unresolved_stops" | "unresolved_endpoint" | "time_conflict" | "invalid_route" | "unreachable" | "infeasible" | "not_configured" | "tour_link_contact_conflict";
 export type SavedTourResult<T> = { ok: true; value: T } | { ok: false; reason: SavedTourFailure };
 type BatchInput = Parameters<Ctx["db"]["batch"]>[0];
 type Write = BatchInput[number];
@@ -28,9 +29,10 @@ type Access = { row: SavedShowingTourRow; stops: SavedTourStopRow[]; contactName
 type Source = { scope: PropertyListScope; properties: ContactPropertyRow[]; appointments: ShowingRow[] };
 
 /** Lists and appointments do not inherit an administrator's wider contact access. */
+function activeSavedTourActor(ctx: Ctx) { return sql`exists(select 1 from ${dashboardUsers} where ${dashboardUsers.id}=${ctx.actor.userId}::uuid and ${dashboardUsers.role}=${ctx.actor.role} and ${dashboardUsers.status}='active')`; }
 export function savedTourVisibility(ctx: Ctx) {
   return and(eq(savedShowingTours.ownerUserId, ctx.actor.userId), eq(savedShowingTours.brokerageKey, ctx.actor.brokerageKey),
-    sql`exists(select 1 from ${contacts} where ${contacts.id}=${savedShowingTours.contactId} and ${visibleTo(ctx.actor)})`);
+    activeSavedTourActor(ctx), sql`exists(select 1 from ${contacts} where ${contacts.id}=${savedShowingTours.contactId} and ${visibleTo(ctx.actor)})`);
 }
 async function loadTour(ctx: Ctx, id: string): Promise<SavedTourResult<Access>> {
   if (!isRecordId(id)) return { ok: false, reason: "not_found" };
@@ -80,12 +82,12 @@ async function sourceFor(ctx: Ctx, settings: SavedTourSettings): Promise<SavedTo
   return { ok: true, value: { scope: source.value, properties, appointments } };
 }
 function settingsFrom(access: Access): SavedTourSettings { const r = access.row; return { name: r.name, notes: r.notes, contactId: r.contactId, sourceListId: r.sourceListId, startsAt: r.startsAt.toISOString(), bufferMinutes: r.bufferMinutes, firstPropertyId: r.firstPropertyId, originAddress: r.originAddress, endMode: r.endMode as SavedTourSettings["endMode"], endAddress: r.endAddress, stops: access.stops.map(stop => ({ propertyId: stop.propertyId, visitMinutes: stop.visitMinutes, lockTime: stop.lockTime, linkedShowingId: stop.linkedShowingId })) }; }
-function contactGuard(ctx: Ctx, id: string) { return sql`exists(select 1 from ${contacts} where ${and(eq(contacts.id, id), visibleTo(ctx.actor))})`; }
+function contactGuard(ctx: Ctx, id: string) { return sql`${activeSavedTourActor(ctx)} and exists(select 1 from ${contacts} where ${and(eq(contacts.id, id), visibleTo(ctx.actor))})`; }
 function sourceGuard(ctx: Ctx, source: Source) {
   return sql`exists(select 1 from ${propertyLists} where ${propertyListMutationGuard(ctx, source.scope)} and date_trunc('milliseconds',${propertyLists.updatedAt})=${source.scope.row.updatedAt.toISOString()}::timestamptz) and ${sql.join(source.properties.map(p => sql`exists(select 1 from ${contactProperties} where ${contactProperties.id}=${p.id}::uuid and ${contactProperties.listId}=${p.listId}::uuid and ${contactProperties.removedAt} is null and date_trunc('milliseconds',${contactProperties.updatedAt})=${p.updatedAt.toISOString()}::timestamptz and ${contactProperties.dataset}=${p.dataset} and ${contactProperties.listingId}=${p.listingId} and ${contactProperties.mlsNumber}=${p.mlsNumber})`), sql` and `)}
     ${source.appointments.length ? sql`and ${sql.join(source.appointments.map(a => sql`exists(select 1 from ${showings} where ${showings.id}=${a.id}::uuid and ${showingVisibility(ctx)} and ${showings.contactId}=${a.contactId}::uuid and ${showings.sourcePropertyId}=${a.sourcePropertyId}::uuid and ${showings.dataset}=${a.dataset} and ${showings.listingId}=${a.listingId} and ${showings.mlsNumber}=${a.mlsNumber} and ${showings.startsAt}=${a.startsAt.toISOString()}::timestamptz and ${showings.endsAt}=${a.endsAt.toISOString()}::timestamptz and date_trunc('milliseconds',${showings.updatedAt})=${a.updatedAt.toISOString()}::timestamptz and ${showings.status}=${a.status})`), sql` and `)}` : sql``}`;
 }
-function locks(ctx: Ctx, contactIds: string[], sources: Source[], tourId?: string, actorLock = false): Write[] {
+function locks(ctx: Ctx, contactIds: string[], sources: Source[], tourId?: string, actorLock = true): Write[] {
   const writes: Write[] = [], parents = [...new Set([...contactIds, ...sources.flatMap(source => source.scope.row.contactId ? [source.scope.row.contactId] : [])])].sort();
   if (actorLock) writes.push(ctx.db.select({ id: dashboardUsers.id }).from(dashboardUsers).where(eq(dashboardUsers.id, ctx.actor.userId)).for("no key update"));
   if (parents.length) writes.push(ctx.db.select({ id: contacts.id }).from(contacts).where(and(inArray(contacts.id, parents), visibleTo(ctx.actor))).orderBy(contacts.id).for("update"));
@@ -131,9 +133,10 @@ export async function updateSavedShowingTour(ctx: Ctx, id: string, input: unknow
   const previous = await requestReplay(ctx, requestId, hash, "edit"); if (previous) return previous.ok ? { ok: true, value: previous.value.tour } : previous;
   const loaded = await loadTour(ctx, id); if (!loaded.ok) return loaded; const access = loaded.value;
   if (!access.writable) return { ok: false, reason: "forbidden" }; if (access.row.archivedAt) return { ok: false, reason: "invalid_transition" }; if (!revisionMatches(access.row.updatedAt, expectedUpdatedAt)) return { ok: false, reason: "conflict" };
+  if (settings.contactId !== access.row.contactId) { const [association] = await ctx.db.select({ allowed: sql<boolean>`${tourTransactionContactGuard(id, settings.contactId)}` }).from(savedShowingTours).where(eq(savedShowingTours.id, id)).limit(1); if (!association?.allowed) return { ok: false, reason: "tour_link_contact_conflict" }; }
   const source = await sourceFor(ctx, settings); if (!source.ok) return source;
   const oldSource = access.source ? await sourceFor(ctx, settingsFrom(access)) : null, sources = [source.value, ...(oldSource?.ok ? [oldSource.value] : [])];
-  const next = nextRevision(access.row, now), guard = sql`exists(select 1 from ${savedShowingTours} where ${guardedTour(ctx, access, expectedUpdatedAt)}) and ${snapshotGuard(ctx, access)} and ${contactGuard(ctx, settings.contactId)} and ${sourceGuard(ctx, source.value)}`;
+  const next = nextRevision(access.row, now), guard = sql`exists(select 1 from ${savedShowingTours} where ${guardedTour(ctx, access, expectedUpdatedAt)}) and ${snapshotGuard(ctx, access)} and ${contactGuard(ctx, settings.contactId)} and ${sourceGuard(ctx, source.value)} and ${tourTransactionContactGuard(id, settings.contactId)}`;
   const { stops, ...fields } = settings;
   const writes: Write[] = [...locks(ctx, [access.row.contactId, settings.contactId], sources, id), ctx.db.insert(savedTourRequests).values({ actorUserId: ctx.actor.userId, requestId, tourId: id, action: "edit", payloadHash: sql`case when ${guard} then ${hash}::text else null end`, result: { tourId: id }, createdAt: now }),
     ctx.db.update(savedShowingTours).set({ ...fields, startsAt: new Date(settings.startsAt), updatedAt: next }).where(eq(savedShowingTours.id, id)), ctx.db.delete(savedTourStops).where(eq(savedTourStops.tourId, id)),
