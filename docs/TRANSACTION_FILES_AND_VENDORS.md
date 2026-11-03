@@ -88,3 +88,9 @@ review, actual synthetic PDF upload, authorized download with identical bytes,
 and proof-backed completion. Reload resets preview records and files. Signed-in
 live certification, live storage activation, database migration and deployment
 remain release steps.
+
+
+The subsequent [vendor detail update](TRANSACTION_VENDOR_DETAILS.md) adds
+service records, lender-provided financing figures and per-engagement files.
+Migration 0027 preserves existing vendor identity snapshots and creates blank
+detail records without inventing historical costs, dates or documents.

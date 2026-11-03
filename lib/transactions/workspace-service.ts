@@ -13,6 +13,7 @@ import { updateTransactionWorkspaceSchema, transactionDeadlineMutationSchema, ty
 import { transactionChecklistMutationSchema, checklistProgress, type TransactionChecklistItem } from "./checklist-domain.ts";
 import { transactionFilesEnabled } from "./transaction-file-storage.ts";
 import { readTransactionVendorSelections } from "./vendor-service.ts";
+import { DEFAULT_VENDOR_DETAIL_FIELDS } from "./vendor-detail-domain.ts";
 
 type Write = Parameters<TransactionContext["db"]["batch"]>[0][number];
 type Batch = Parameters<TransactionContext["db"]["batch"]>[0];
@@ -27,8 +28,8 @@ async function load(ctx: TransactionContext, id: string, write = false): Promise
 function details(row: TransactionRow): TransactionDetails { return { transactionType: row.transactionType, addressLine1: row.addressLine1, addressLine2: row.addressLine2, city: row.city, state: row.state, postalCode: row.postalCode, listingKey: row.listingKey, mlsNumber: row.mlsNumber,
   contractPriceCents: row.contractPriceCents, listPriceCents: row.listPriceCents, commissionRateBps: row.commissionRateBps, commissionFlatCents: row.commissionFlatCents, agentSplitBps: row.agentSplitBps, transactionFeeCents: row.transactionFeeCents, referralFeeBps: row.referralFeeBps,
   contractExecutionDate: row.contractExecutionDate, closingDate: row.closingDate, notes: row.notes ?? "" }; }
-const SAFE_FIELDS = ["transactionType", "addressLine1", "addressLine2", "city", "state", "postalCode", "listingKey", "mlsNumber", "contractPriceCents", "listPriceCents", "commissionRateBps", "commissionFlatCents", "agentSplitBps", "transactionFeeCents", "referralFeeBps", "contractExecutionDate", "closingDate", "notes", "kind", "label", "dueDate", "note", "completedAt", "removedAt", "attachments", "attachmentRequired", "vendorId", "vendorStatus"];
-const SAFE_ACTIONS = ["create", "edit", "stage", "add_deadline", "edit_deadline", "complete_deadline", "reopen_deadline", "remove_deadline", "complete_checklist", "reopen_checklist", "upload_attachment", "remove_attachment", "set_attachment_requirement", "set_vendor"];
+const SAFE_FIELDS = ["transactionType", "addressLine1", "addressLine2", "city", "state", "postalCode", "listingKey", "mlsNumber", "contractPriceCents", "listPriceCents", "commissionRateBps", "commissionFlatCents", "agentSplitBps", "transactionFeeCents", "referralFeeBps", "contractExecutionDate", "closingDate", "notes", "kind", "label", "dueDate", "note", "completedAt", "removedAt", "attachments", "attachmentRequired", "vendorId", "vendorStatus", "vendorDetails", "vendorAttachments", ...Object.keys(DEFAULT_VENDOR_DETAIL_FIELDS)];
+const SAFE_ACTIONS = ["create", "edit", "stage", "add_deadline", "edit_deadline", "complete_deadline", "reopen_deadline", "remove_deadline", "complete_checklist", "reopen_checklist", "upload_attachment", "remove_attachment", "set_attachment_requirement", "set_vendor", "edit_vendor_details", "upload_vendor_attachment", "remove_vendor_attachment"];
 export async function getTransactionWorkspace(ctx: TransactionContext, id: string, options: { historyPage?: number } = {}, now = new Date()): Promise<ServiceResult<TransactionWorkspace>> {
   const loaded = await load(ctx, id); if (!loaded.ok) return loaded; const row = loaded.value;
   const historyPage = options.historyPage ?? 1; if (!Number.isInteger(historyPage) || historyPage < 1 || historyPage > 1000000) return { ok: false, reason: "invalid_transaction" };

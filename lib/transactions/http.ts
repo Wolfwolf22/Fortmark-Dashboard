@@ -32,9 +32,9 @@ export function failure(reason: ServiceFailure): NextResponse {
       return NextResponse.json({ error: "no_identity" }, { status: 403, headers: NO_STORE });
     case "invalid_transition":
       return NextResponse.json({ error: "invalid_transition" }, { status: 409, headers: NO_STORE });
-    case "conflict": case "request_conflict": case "closing_deadline_conflict": case "invalid_deadline_transition": case "checklist_incomplete": case "checklist_not_ready": case "invalid_checklist_transition": case "attachment_required": case "attachment_requires_reopen": case "attachment_limit": case "vendor_unavailable":
+    case "conflict": case "request_conflict": case "closing_deadline_conflict": case "invalid_deadline_transition": case "checklist_incomplete": case "checklist_not_ready": case "invalid_checklist_transition": case "attachment_required": case "attachment_requires_reopen": case "attachment_limit": case "vendor_unavailable": case "vendor_detail_not_current":
       return NextResponse.json({ error: reason }, { status: 409, headers: NO_STORE });
-    case "invalid_attachment": return NextResponse.json({ error: reason }, { status: 400, headers: NO_STORE });
+    case "invalid_attachment": case "invalid_vendor_details": return NextResponse.json({ error: reason }, { status: 400, headers: NO_STORE });
     case "file_too_large": return NextResponse.json({ error: reason }, { status: 413, headers: NO_STORE });
     case "attachment_not_configured": case "attachment_unavailable": return NextResponse.json({ error: reason }, { status: 503, headers: NO_STORE });
     case "invalid_transaction":

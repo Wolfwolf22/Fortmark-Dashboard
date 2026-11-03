@@ -542,5 +542,19 @@ The real setup/workspace adapters exercise 15 additional groups:
 node --experimental-strip-types --no-warnings tools/design-preview/test-transaction-operations-session.mjs
 ```
 
-Total isolated preview groups: 165. Live private-file storage configuration is
+Total isolated preview groups: 179. Live private-file storage configuration is
 documented in [TRANSACTION_FILES_AND_VENDORS.md](../../docs/TRANSACTION_FILES_AND_VENDORS.md).
+
+
+Selected vendors now expose **Full detail** with service/financing records and
+private document types. Previous vendor records preserves replaced selections
+read-only. Public fixture aliases and new UUID files both use matching detail
+ownership IDs. The real vendor-detail adapter exercises 14 further groups:
+
+```sh
+node --experimental-strip-types --no-warnings tools/design-preview/test-vendor-detail-session.mjs
+```
+
+These cover exact cents/rates and optional monthly figures, actual multipart
+PDF bytes, current/historical generations, interrupted replies and scope checks.
+See [vendor detail behavior](../../docs/TRANSACTION_VENDOR_DETAILS.md).

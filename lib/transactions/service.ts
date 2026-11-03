@@ -72,7 +72,7 @@ export type ServiceFailure =
   | "invalid_assignee"
   | "invalid_contact"
   | "conflict" | "request_conflict" | "invalid_transaction" | "closing_deadline_conflict" | "invalid_deadline_transition" | "checklist_incomplete" | "checklist_not_ready" | "invalid_checklist_transition"
-  | "invalid_attachment" | "file_too_large" | "attachment_required" | "attachment_requires_reopen" | "attachment_not_configured" | "attachment_unavailable" | "attachment_limit" | "vendor_unavailable";
+  | "invalid_attachment" | "file_too_large" | "attachment_required" | "attachment_requires_reopen" | "attachment_not_configured" | "attachment_unavailable" | "attachment_limit" | "vendor_unavailable" | "invalid_vendor_details" | "vendor_detail_not_current";
 
 /** The role a contact takes on the deal, by which side FortMark represents. */
 const CLIENT_PARTY_ROLE: Record<TransactionSideKey, "seller" | "buyer" | "landlord" | "tenant"> = {

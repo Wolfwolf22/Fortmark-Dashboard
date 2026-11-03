@@ -106,3 +106,9 @@ deadline dialog were inspected at 320 and 390 pixel phone widths.
 The existing bounded pipeline read remains limited to 200 matching files; this
 release labels that scope rather than treating it as a complete brokerage
 count. Server-paged work-list aggregation is a follow-up improvement.
+
+
+Selected transaction vendors now open a role-specific Full detail dialog.
+See [TRANSACTION_VENDOR_DETAILS.md](TRANSACTION_VENDOR_DETAILS.md) for service
+costs/dates, preapproval documents, recorded lender figures and preserved
+historical vendor records. Migration 0027 remains local and unapplied live.

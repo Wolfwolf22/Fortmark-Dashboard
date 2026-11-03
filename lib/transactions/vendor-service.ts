@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
-import { auditEvents, brokerageVendors, brokerageVendorWriteRequests, dashboardUsers, transactionEvents, transactionVendorSelections, transactionWriteRequests, transactions } from "../db/schema.ts";
+import { auditEvents, brokerageVendors, brokerageVendorWriteRequests, dashboardUsers, transactionEvents, transactionVendorEngagements, transactionVendorSelections, transactionWriteRequests, transactions } from "../db/schema.ts";
 import { isRecordId } from "../db/ids.ts";
 import { createPayloadHash, revisionMatches } from "../contacts/reliability.ts";
 import { canWrite } from "./domain.ts";
@@ -9,6 +9,7 @@ import { isTerminalStage } from "./stages.ts";
 import { getTransactionWorkspace } from "./workspace-service.ts";
 import type { TransactionWorkspace } from "./workspace-domain.ts";
 import { createBrokerageVendorSchema, updateBrokerageVendorSchema, transactionVendorMutationSchema, VENDOR_ROLES, type BrokerageVendorDirectory, type BrokerageVendorView, type TransactionVendorSelectionView, type VendorRole } from "./vendor-domain.ts";
+import { DEFAULT_VENDOR_DETAIL_FIELDS } from "./vendor-detail-domain.ts";
 import { visibleTo, transactionWriteLocks, transactionRevisionGuard, nextTransactionRevision, transactionWriteReplay, isTransactionGuardConflict, type TransactionContext, type ServiceFailure } from "./service.ts";
 
 export type VendorFailure = ServiceFailure | "vendor_unavailable";
@@ -71,11 +72,12 @@ export async function updateBrokerageVendor(ctx: TransactionContext, id: string,
 /** Historical snapshots are file data. A retired vendor does not rewrite them. */
 export async function readTransactionVendorSelections(ctx: TransactionContext, id: string): Promise<TransactionVendorSelectionView[]> {
   if (!isRecordId(id)) return [];
-  const rows = await ctx.db.select({ selection: transactionVendorSelections, current: brokerageVendors }).from(transactionVendorSelections)
+  const rows = await ctx.db.select({ selection: transactionVendorSelections, current: brokerageVendors, detailId: transactionVendorEngagements.id }).from(transactionVendorSelections)
     .innerJoin(transactions, eq(transactions.id, transactionVendorSelections.transactionId))
     .leftJoin(brokerageVendors, and(eq(brokerageVendors.id, transactionVendorSelections.vendorId), eq(brokerageVendors.brokerageKey, ctx.actor.brokerageKey)))
+    .leftJoin(transactionVendorEngagements, and(eq(transactionVendorEngagements.id, transactionVendorSelections.detailId), eq(transactionVendorEngagements.transactionId, transactionVendorSelections.transactionId), eq(transactionVendorEngagements.role, transactionVendorSelections.role), eq(transactionVendorEngagements.vendorId, transactionVendorSelections.vendorId)))
     .where(and(eq(transactionVendorSelections.transactionId, id), visibleTo(ctx.actor))).orderBy(transactionVendorSelections.role);
-  return rows.map(({ selection: s, current }) => ({ id: s.id, role: s.role as VendorRole, status: s.status as TransactionVendorSelectionView["status"], vendorId: s.vendorId, vendorName: s.vendorName, company: s.company, email: s.email, phone: s.phone, approved: Boolean(s.status === "selected" && current?.approved && current.categories.includes(s.role)), updatedAt: s.updatedAt.toISOString() }));
+  return rows.map(({ selection: s, current, detailId }) => ({ id: s.id, role: s.role as VendorRole, status: s.status as TransactionVendorSelectionView["status"], vendorId: s.vendorId, vendorName: s.vendorName, company: s.company, email: s.email, phone: s.phone, detailId: s.status === "selected" ? detailId : null, approved: Boolean(s.status === "selected" && current?.approved && current.categories.includes(s.role)), updatedAt: s.updatedAt.toISOString() }));
 }
 /** One reviewed role assignment. No client can submit vendor identity snapshots or approval. */
 export async function mutateTransactionVendor(ctx: TransactionContext, id: string, input: unknown, now = new Date()): Promise<VendorResult<TransactionWorkspace>> {
@@ -93,15 +95,26 @@ export async function mutateTransactionVendor(ctx: TransactionContext, id: strin
   const [vendor] = d.status === "selected" && d.vendorId ? await ctx.db.select().from(brokerageVendors).where(vendorScope(ctx, d.vendorId)).limit(1) : [];
   if (d.status === "selected" && (!vendor || !vendor.approved || !vendor.categories.includes(d.role))) return { ok: false, reason: "vendor_unavailable" };
   if (vendor && (!d.expectedVendorUpdatedAt || !revisionMatches(vendor.updatedAt, d.expectedVendorUpdatedAt))) return { ok: false, reason: "conflict" };
+  // A generation belongs to the selected provider, including its original identity.
+  // Replacing or detaching a provider never transfers reports or financial terms.
+  const retainDetailId = vendor && current?.status === "selected" && current.vendorId === vendor.id ? current.detailId : null;
+  if (retainDetailId) {
+    const [detail] = await ctx.db.select({ id: transactionVendorEngagements.id }).from(transactionVendorEngagements).where(and(eq(transactionVendorEngagements.id, retainDetailId), eq(transactionVendorEngagements.transactionId, id), eq(transactionVendorEngagements.role, d.role), eq(transactionVendorEngagements.vendorId, vendor!.id))).limit(1);
+    if (!detail) return { ok: false, reason: "conflict" };
+  }
+  const detailId = vendor ? retainDetailId ?? randomUUID() : null;
   const next = nextTransactionRevision(row, now), selectionId = current?.id ?? randomUUID();
-  const selectionGuard = current ? sql`exists(select 1 from ${transactionVendorSelections} where ${transactionVendorSelections.id}=${current.id}::uuid and ${transactionVendorSelections.transactionId}=${id}::uuid and ${transactionVendorSelections.role}=${d.role} and date_trunc('milliseconds',${transactionVendorSelections.updatedAt})=${d.expectedSelectionUpdatedAt}::timestamptz)` : sql`not exists(select 1 from ${transactionVendorSelections} where ${transactionVendorSelections.transactionId}=${id}::uuid and ${transactionVendorSelections.role}=${d.role})`;
+  const selectionGuard = current ? sql`exists(select 1 from ${transactionVendorSelections} where ${transactionVendorSelections.id}=${current.id}::uuid and ${transactionVendorSelections.transactionId}=${id}::uuid and ${transactionVendorSelections.role}=${d.role} and ${transactionVendorSelections.status}=${current.status} and ${transactionVendorSelections.vendorId} is not distinct from ${current.vendorId}::uuid and ${transactionVendorSelections.detailId} is not distinct from ${current.detailId}::uuid and date_trunc('milliseconds',${transactionVendorSelections.updatedAt})=${d.expectedSelectionUpdatedAt}::timestamptz)` : sql`not exists(select 1 from ${transactionVendorSelections} where ${transactionVendorSelections.transactionId}=${id}::uuid and ${transactionVendorSelections.role}=${d.role})`;
   const vendorGuard = vendor ? sql`exists(select 1 from ${brokerageVendors} where ${vendorScope(ctx, vendor.id)} and ${brokerageVendors.approved}=true and ${d.role}=any(${brokerageVendors.categories}) and date_trunc('milliseconds',${brokerageVendors.updatedAt})=${d.expectedVendorUpdatedAt}::timestamptz)` : sql`true`;
-  const guard = sql`${actorGuard(ctx)} and exists(select 1 from ${transactions} where ${transactionRevisionGuard(ctx, row, d.expectedUpdatedAt)}) and ${selectionGuard} and ${vendorGuard}`;
-  const snapshot = { status: d.status, vendorId: vendor?.id ?? null, vendorName: vendor?.name ?? null, company: vendor?.company ?? null, email: vendor?.email ?? null, phone: vendor?.phone ?? null, updatedAt: current ? new Date(Math.max(next.getTime(), current.updatedAt.getTime() + 1)) : next };
-  const safe = { action, fields: ["vendorId", "vendorStatus"], role: d.role, selectionId, ...(vendor ? { vendorId: vendor.id } : {}) };
+  const detailGuard = retainDetailId ? sql`exists(select 1 from ${transactionVendorEngagements} where ${transactionVendorEngagements.id}=${retainDetailId}::uuid and ${transactionVendorEngagements.transactionId}=${id}::uuid and ${transactionVendorEngagements.role}=${d.role} and ${transactionVendorEngagements.vendorId}=${vendor!.id}::uuid)` : sql`true`;
+  const guard = sql`${actorGuard(ctx)} and exists(select 1 from ${transactions} where ${transactionRevisionGuard(ctx, row, d.expectedUpdatedAt)}) and ${selectionGuard} and ${vendorGuard} and ${detailGuard}`;
+  const snapshot = { status: d.status, vendorId: vendor?.id ?? null, vendorName: retainDetailId ? current!.vendorName : vendor?.name ?? null, company: retainDetailId ? current!.company : vendor?.company ?? null, email: retainDetailId ? current!.email : vendor?.email ?? null, phone: retainDetailId ? current!.phone : vendor?.phone ?? null, detailId, updatedAt: current ? new Date(Math.max(next.getTime(), current.updatedAt.getTime() + 1)) : next };
+  const safe = { action, fields: ["vendorId", "vendorStatus"], role: d.role, selectionId, ...(vendor ? { vendorId: vendor.id, detailId } : {}) };
   const writes: Write[] = [...transactionWriteLocks(ctx, id), ...(vendor ? [ctx.db.select({ id: brokerageVendors.id }).from(brokerageVendors).where(vendorScope(ctx, vendor.id)).for("share")] : []), ctx.db.select({ id: transactionVendorSelections.id }).from(transactionVendorSelections).where(eq(transactionVendorSelections.transactionId, id)).orderBy(transactionVendorSelections.id).for("update"),
+    ctx.db.select({ id: transactionVendorEngagements.id }).from(transactionVendorEngagements).where(eq(transactionVendorEngagements.transactionId, id)).orderBy(transactionVendorEngagements.id).for("update"),
     ctx.db.insert(transactionWriteRequests).values({ actorUserId: ctx.actor.userId, requestId: d.requestId, transactionId: id, action, payloadHash: sql`case when ${guard} then ${hash}::text else null end`, result: { transactionId: id, updatedAt: next.toISOString() }, createdAt: now }),
     ctx.db.update(transactions).set({ updatedAt: next, updatedByUserId: ctx.actor.userId }).where(transactionRevisionGuard(ctx, row, d.expectedUpdatedAt)),
+    ...(vendor && !retainDetailId ? [ctx.db.insert(transactionVendorEngagements).values({ id: detailId!, transactionId: id, role: d.role, vendorId: vendor.id, vendorName: vendor.name, company: vendor.company, email: vendor.email, phone: vendor.phone, details: structuredClone(DEFAULT_VENDOR_DETAIL_FIELDS), createdByUserId: ctx.actor.userId, updatedByUserId: ctx.actor.userId, createdAt: now, updatedAt: next })] : []),
     ctx.db.insert(transactionVendorSelections).values({ id: selectionId, transactionId: id, role: d.role, ...snapshot, createdAt: now }).onConflictDoUpdate({ target: [transactionVendorSelections.transactionId, transactionVendorSelections.role], set: snapshot }),
     ctx.db.insert(transactionEvents).values({ transactionId: id, actorUserId: ctx.actor.userId, eventType: "transaction_updated", safeMetadata: safe, createdAt: now }),
     ctx.db.insert(auditEvents).values({ actorUserId: ctx.actor.userId, eventType: "transaction_updated", safeMetadata: { transactionId: id, ...safe }, createdAt: now })];

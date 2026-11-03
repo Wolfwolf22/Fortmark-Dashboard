@@ -23,5 +23,5 @@ export const transactionVendorMutationSchema = z.object({
 export type TransactionVendorMutation = z.infer<typeof transactionVendorMutationSchema>;
 export interface TransactionVendorSelectionView {
   id: string; role: VendorRole; status: "selected" | "not_needed" | "unset"; vendorId: string | null; vendorName: string | null;
-  company: string | null; email: string | null; phone: string | null; approved: boolean; updatedAt: string;
+  company: string | null; email: string | null; phone: string | null; approved: boolean; updatedAt: string; detailId: string | null;
 }
