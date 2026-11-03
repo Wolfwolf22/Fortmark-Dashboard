@@ -33,7 +33,7 @@ serves the sign-in/account shell and routes `/dashboard` to the dashboard zone.
 | Dashboard latest Preview | READY deployment `dpl_GMURJBzZp1o6kEKBkdW1DBhrP1GT`, commit `ab24bcde07dc8869b8b3aad84be66c2d184fec89` | Deploy and verify the exact reviewed overhaul only after isolation |
 | Portal | Existing project `fortmark-app`, `prj_zTxYdq9NBt9UMKy3ICOaCaV54Q9o`; Production commit `63b519b4ae71a8854137ad677aadfb88c112e2b1` on `main`; Preview metadata readable | Verify a compatible nonproduction portal and development identity flow |
 | Neon integration | Store `store_xGLbAY6ruochCguv`, external project `misty-cherry-08153356`, attached to both Preview and Production | Independently verify actual branch/endpoint mappings and Production's manual URL override; attachment alone proves neither sharing nor isolation |
-| Direct Neon connection | Connected, but project listing returns no projects; known FortMark project/endpoint requests return `UNAVAILABLE`. The user supplied organization `org-old-breeze-73124071`; an exact organization-scoped API request reports that the connected account is not a member. The console link opens a sign-in screen in the available browser | Sign in with the intended organization account and reconnect Neon, or grant the connected account access to the existing project |
+| Direct Neon connection | The browser now has signed-in access to organization `org-old-breeze-73124071` and confirms `fortmark-dashboard-db` / `misty-cherry-08153356`. The separate plugin connection still reports that its account is not an organization member | Reconnect Neon with the account that has access; browser sign-in did not switch the plugin account |
 | Calendar | No `CALENDAR_DB_ENABLED` environment entry found | Explicit Preview configuration after migrations and resource verification |
 | Transaction files | No `TRANSACTION_FILES_ENABLED` or dedicated `TRANSACTION_FILES_BLOB_READ_WRITE_TOKEN` entry found; only a profile-image Blob store is connected to Preview | Dedicated private transaction store/token scoped to the verified nonproduction target |
 | MLS | No Preview `BRIDGE_API_TOKEN` entry found; provider flag values were not read | Confirm an authorized Preview MLS read configuration |
@@ -41,8 +41,35 @@ serves the sign-in/account shell and routes `/dashboard` to the dashboard zone.
 
 The direct Neon account's empty listing is an access gap, not evidence that the
 Vercel-managed database was deleted. Do not create a replacement or deploy to a
-possibly shared database to work around it. Old aliases and branch IDs remain
-historical evidence only.
+possibly shared database to work around it. Any old aliases and branch IDs not
+reverified below remain historical evidence only.
+
+### Signed-in Neon console observations
+
+The following identities were read from the console on 2026-11-02 without opening
+connection strings, querying tables, unarchiving branches or changing settings:
+
+| Branch | ID | Parent | Compute |
+|---|---|---|---|
+| `main` (default) | `br-lucky-boat-avuciz2l` | None shown | Not inspected |
+| `production/fortmark-professional-profiles` | `br-bitter-cake-av7pmzth` | `main` | One Primary, `ep-delicate-morning-avh7x6vk`, suspended |
+| `preview/claude/dashboard-status-yir55p` | `br-crimson-smoke-avlj2rmp` | `main` | One Primary, `ep-blue-river-avha0z9g`, suspended; branch archived 2026-10-04 |
+
+The project has ten branches and displays **Branch limit reached**. Eight are
+archived, including three older Preview branches and five historical safety
+branches. No branch was removed, reset or unarchived, and no upgrade was made.
+The observed old Preview branch's linked Vercel deployment is an older deployment;
+its existence does not bind the current candidate's effective Preview variables.
+
+The Neon native integration's **Production branch** selector currently shows
+`main`. Vercel's manual Production database variables therefore remain a distinct
+binding to verify rather than assuming that selector describes the application.
+The two manual Vercel Production variable rows were last updated on 2026-08-04.
+The current Production deployment's existing build log reports host fingerprint
+`23deffc7e4e5`, matching the historical audited Production branch fingerprint.
+Together these support continuity with `br-bitter-cake-av7pmzth`; this is metadata
+and existing-log evidence, not a fresh runtime database query. The effective
+Preview integration-secret binding still requires independent verification.
 
 ## Fixes included
 
