@@ -91,15 +91,22 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
   const [contactUncertain,setContactUncertain]=React.useState(false),[creationDenied,setCreationDenied]=React.useState(false);
   const transactionRequest = React.useRef<TransactionCreateAttempt | null>(null);
   const [transactionUncertain, setTransactionUncertain] = React.useState(false);
+  const [discardTransaction, setDiscardTransaction] = React.useState(false);
 
   const meta = kind ? TITLES[kind] : null;
   const capabilities=useCreationCapabilities(),role=useSessionUser().role,allowed=Boolean(kind&&canQuickCreate(kind,capabilities,role)),recovering=kind==="transaction"&&transactionUncertain&&Boolean(transactionRequest.current)||kind==="lead"&&contactUncertain&&Boolean(contactRequest.current),privateVisible=!creationDenied&&role!=="Member";
 
   const close = () => {
+    setDiscardTransaction(false);
     setKind(null);
     setError(null);
     contactRequest.current=contactCreateAttemptAfterClose(contactRequest.current,contactUncertain);
     if (!transactionUncertain) transactionRequest.current = null;
+  };
+  const requestClose = () => {
+    if (busy) return;
+    if (kind === "transaction" && !transactionUncertain && allowed && !creationDenied) { setDiscardTransaction(true); return; }
+    close();
   };
 
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -192,9 +199,9 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
   };
 
   return (
-    <Dialog open={kind !== null} onOpenChange={(open) => !open && !busy && close()}>
+    <><Dialog open={kind !== null} onOpenChange={(open) => !open && requestClose()}>
       {/* Opened from the New menu, whose item is gone by the time this closes: focus goes back to the menu's button. */}
-      <DialogContent className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto" focusFallback={() => document.querySelector<HTMLElement>("[data-new-trigger]")}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto" onInteractOutside={(event) => { if (kind === "transaction" || busy) event.preventDefault(); }} onEscapeKeyDown={(event) => { if (kind === "transaction" || busy) event.preventDefault(); }} focusFallback={() => document.querySelector<HTMLElement>("[data-new-trigger]")}>
         {meta && kind && ((!allowed||creationDenied)&&!recovering?<QuickCreateUnavailable kind={kind} role={role} accessDenied={creationDenied} onClose={close}/>:<form onSubmit={submit} className="grid gap-4">
             <DialogHeader>
               <DialogTitle>{meta.title}</DialogTitle>
@@ -278,7 +285,7 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
             {error && <p className="text-sm text-status-bad">{error}</p>}
 
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={close} disabled={busy}>
+              <Button type="button" variant="ghost" onClick={requestClose} disabled={busy}>
                 Cancel
               </Button>
               <Button type="submit" disabled={busy||role==="Member"}>
@@ -288,7 +295,7 @@ export function QuickCreateDialog({ allowedKinds }: { allowedKinds?: readonly Qu
           </form>
         )}
       </DialogContent>
-    </Dialog>
+    </Dialog><Dialog open={discardTransaction && kind === "transaction"} onOpenChange={(open) => !open && setDiscardTransaction(false)}><DialogContent className="w-[calc(100%-2rem)] max-w-md" onInteractOutside={(event) => event.preventDefault()}><DialogHeader><DialogTitle>Discard this transaction draft?</DialogTitle><DialogDescription>Unsaved transaction details will be cleared. The contact&apos;s saved stage and engagement PDF stay unchanged.</DialogDescription></DialogHeader><DialogFooter><Button type="button" variant="outline" onClick={() => setDiscardTransaction(false)}>Keep editing</Button><Button type="button" variant="destructive" onClick={close}>Discard draft</Button></DialogFooter></DialogContent></Dialog></>
   );
 }
 

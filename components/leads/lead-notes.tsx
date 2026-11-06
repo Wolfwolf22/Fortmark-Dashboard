@@ -10,8 +10,8 @@
  *
  * Note text is drawn as a plain text node — never as markup — so anything typed
  * here, including something that looks like HTML or script, is shown as itself
- * and cannot run. The old free-form "notes" field on a contact, when it holds
- * anything, is shown once and read-only as a "Legacy note", with no invented date.
+ * and cannot run. The old free-form database field is retained unchanged but
+ * is not presented as a separate note in this interface.
  */
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { StickyNote, Trash2 } from "lucide-react";
@@ -29,14 +29,11 @@ import { initials } from "@/lib/utils";
 
 export function LeadNotes({
   leadId,
-  legacyNote,
   canWrite,
   available,
   refreshKey = 0,
 }: {
   leadId: string;
-  /** The contact's old free-form notes field, if it holds anything. */
-  legacyNote: string;
   canWrite: boolean;
   /** False for the labelled sample set, which has no notes store. */
   available: boolean;
@@ -230,13 +227,6 @@ export function LeadNotes({
           {olderError && <p role="alert" className="mt-3 text-sm text-muted-foreground">Older notes could not be loaded. Your loaded notes are kept.</p>}
           {(page?.hasMore || olderLoaded) && <Button type="button" size="sm" variant="outline" className="mt-3 aria-disabled:cursor-default aria-disabled:opacity-60" aria-disabled={loading || loadingOlder || !page?.hasMore} onClick={() => void loadOlder()}>{!page?.hasMore ? "All notes loaded" : loadingOlder ? "Loading older notes…" : olderError ? "Retry older notes" : "Load older notes"}</Button>}
         </>
-      )}
-
-      {legacyNote.trim() && (
-        <div className="mt-4 rounded-panel border border-border bg-tint p-4" data-testid="legacy-note">
-          <p className="text-micro">Legacy note</p>
-          <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]">{legacyNote}</p>
-        </div>
       )}
 
       <Dialog open={pendingDelete !== null} onOpenChange={(open) => !open && !deleting && setPendingDelete(null)}>

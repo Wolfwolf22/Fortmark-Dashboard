@@ -46,6 +46,8 @@ export function EngagementNotice({
   return (
     <Dialog open={target !== null} onOpenChange={(open) => !open && !busy && onCancel()}>
       <DialogContent
+        onInteractOutside={(event) => event.preventDefault()}
+        onEscapeKeyDown={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => {
           if(skipReturnFocus){event.preventDefault();return;}
           const el = returnFocusTo ? document.getElementById(returnFocusTo) : null;

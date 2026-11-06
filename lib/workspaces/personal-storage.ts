@@ -10,6 +10,7 @@ export class PersonalStorage implements Storage {
   private savedGeneration=0;
   private busy=false;
   private disposed=false;
+  private loadEpoch=0;
   private timer:ReturnType<typeof setTimeout>|undefined;
   private state:SaveState={phase:'loading',message:'Loading your workspace…'};
   private listeners=new Set<()=>void>();
@@ -32,18 +33,21 @@ export class PersonalStorage implements Storage {
   removeItem(key:string){if(!(key in this.data))return;this.setItem(key,this.data[key]);delete this.data[key];}
   clear(){for(const key of Object.keys(this.data))this.removeItem(key);}
   async load(){
+    if(this.disposed||this.dirty)return;
+    const epoch=++this.loadEpoch,openingGeneration=this.generation;
+    const current=()=>!this.disposed&&epoch===this.loadEpoch&&openingGeneration===this.generation&&!this.dirty;
     try {
       const response=await this.transport(`${this.endpoint}?namespace=${encodeURIComponent(this.namespace)}`,{cache:'no-store',credentials:'same-origin'});
-      if(this.disposed)return;
+      if(!current())return;
       if(response.status===401||response.status===403){this.invalidate();return;}
       if(!response.ok)throw new Error('Your personal workspace could not be loaded. Retry to continue.');
-      const result=await response.json();if(this.disposed)return;
+      const result=await response.json();if(!current())return;
       if(result.userId!==this.accountId){this.invalidate();return;}
       if(!Number.isSafeInteger(result.revision)||result.revision<0||!result.data||typeof result.data!=='object'||Array.isArray(result.data))throw new Error('Unsupported workspace response');
       const entries=Object.entries(result.data);if(entries.some(([key,value])=>!this.allowedKeys.includes(key)||typeof value!=='string'))throw new Error('Unsupported workspace settings');
       this.data=Object.fromEntries(entries) as Record<string,string>;this.revision=result.revision;this.generation=0;this.savedGeneration=0;
       this.publish('ready','Saved to your account');
-    }catch(error){if(!this.disposed)this.publish('error',error instanceof Error?error.message:'Workspace unavailable');}
+    }catch(error){if(current())this.publish('error',error instanceof Error?error.message:'Workspace unavailable');}
   }
   async flush(){
     if(this.disposed||this.busy||!this.dirty||this.state.phase==='conflict'||this.state.phase==='signed-out')return;

@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
-import { auditEvents, brokerageVendors, brokerageVendorWriteRequests, dashboardUsers, transactionEvents, transactionVendorEngagements, transactionVendorSelections, transactionWriteRequests, transactions } from "../db/schema.ts";
+import { auditEvents, brokerageVendors, brokerageVendorWriteRequests, dashboardUsers, transactionEvents, transactionVendorEngagements, transactionVendorAttachments, transactionVendorSelections, transactionWriteRequests, transactions } from "../db/schema.ts";
 import { isRecordId } from "../db/ids.ts";
 import { createPayloadHash, revisionMatches } from "../contacts/reliability.ts";
 import { canWrite } from "./domain.ts";
@@ -75,12 +75,12 @@ export async function updateBrokerageVendor(ctx: TransactionContext, id: string,
 /** Historical snapshots are file data. A retired vendor does not rewrite them. */
 export async function readTransactionVendorSelections(ctx: TransactionContext, id: string): Promise<TransactionVendorSelectionView[]> {
   if (!isRecordId(id)) return [];
-  const rows = await ctx.db.select({ selection: transactionVendorSelections, current: brokerageVendors, detailId: transactionVendorEngagements.id }).from(transactionVendorSelections)
+  const rows = await ctx.db.select({ selection: transactionVendorSelections, current: brokerageVendors, detailId: transactionVendorEngagements.id, detailFields: transactionVendorEngagements.details, detailUpdatedAt: transactionVendorEngagements.updatedAt, attachmentCount: sql<number>`(select count(*)::int from ${transactionVendorAttachments} a where a.transaction_id=${transactionVendorSelections.transactionId} and a.detail_id=${transactionVendorEngagements.id} and a.removed_at is null)` }).from(transactionVendorSelections)
     .innerJoin(transactions, eq(transactions.id, transactionVendorSelections.transactionId))
     .leftJoin(brokerageVendors, and(eq(brokerageVendors.id, transactionVendorSelections.vendorId), eq(brokerageVendors.brokerageKey, ctx.actor.brokerageKey)))
     .leftJoin(transactionVendorEngagements, and(eq(transactionVendorEngagements.id, transactionVendorSelections.detailId), eq(transactionVendorEngagements.transactionId, transactionVendorSelections.transactionId), eq(transactionVendorEngagements.role, transactionVendorSelections.role), eq(transactionVendorEngagements.vendorId, transactionVendorSelections.vendorId)))
     .where(and(eq(transactionVendorSelections.transactionId, id), visibleTo(ctx.actor), actorGuard(ctx))).orderBy(transactionVendorSelections.role);
-  return rows.map(({ selection: s, current, detailId }) => ({ id: s.id, role: s.role as VendorRole, status: s.status as TransactionVendorSelectionView["status"], vendorId: s.vendorId, vendorName: s.vendorName, company: s.company, email: s.email, phone: s.phone, detailId: s.status === "selected" ? detailId : null, approved: Boolean(s.status === "selected" && current?.approved && current.categories.includes(s.role)), updatedAt: s.updatedAt.toISOString() }));
+  return rows.map(({ selection: s, current, detailId, detailFields, detailUpdatedAt, attachmentCount }) => { const {notes: _notes, ...recorded} = detailFields ?? DEFAULT_VENDOR_DETAIL_FIELDS; return { id: s.id, role: s.role as VendorRole, status: s.status as TransactionVendorSelectionView["status"], vendorId: s.vendorId, vendorName: s.vendorName, company: s.company, email: s.email, phone: s.phone, detailId: s.status === "selected" ? detailId : null, detailSummary: s.status === "selected" && detailId && detailUpdatedAt ? {details: recorded, attachmentCount: Number(attachmentCount), hasNotes: Boolean(_notes?.trim()), updatedAt: detailUpdatedAt.toISOString()} : null, approved: Boolean(s.status === "selected" && current?.approved && current.categories.includes(s.role)), updatedAt: s.updatedAt.toISOString() }; });
 }
 /** One reviewed role assignment. No client can submit vendor identity snapshots or approval. */
 export async function mutateTransactionVendor(ctx: TransactionContext, id: string, input: unknown, now = new Date()): Promise<VendorResult<TransactionWorkspace>> {

@@ -3,6 +3,7 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react
 import { useAuth } from '@clerk/nextjs';
 import { PersonalStorage, activatePersonalStorage } from '@/lib/workspaces/personal-storage';
 import { connectLayoutStorage } from '@/lib/stores/layout';
+import { connectTransactionLayoutStorage } from '@/lib/stores/transaction-layout';
 import { setLocalWorkspaceOwner } from '@/lib/workspaces/account-local';
 import { useAiStore } from '@/lib/ai/store';
 import { useDateRange } from '@/lib/stores/date-range';
@@ -12,19 +13,23 @@ export function PersonalLayout({ownerId,clerkUserId,children}:{ownerId:string|nu
   const {userId,isLoaded,isSignedIn}=useAuth();
   const changed=isLoaded&&(!isSignedIn||clerkUserId!==userId);
   const [storage,setStorage]=useState<PersonalStorage|null>(null);
+  const [transactionStorage,setTransactionStorage]=useState<PersonalStorage|null>(null);
   useEffect(()=>{
     if(!ownerId)return;
     const next=new PersonalStorage(ownerId,'dashboard-layout',['layout','notifications'],apiPath('/api/personal-workspace'));
+    const transactionNext=new PersonalStorage(ownerId,'transaction-layout',['layout'],apiPath('/api/personal-workspace'));
     setStorage(next);activatePersonalStorage(next);setLocalWorkspaceOwner(null);
+    setTransactionStorage(transactionNext);connectTransactionLayoutStorage(transactionNext);
     useAiStore.setState({threads:[],activeId:null});setLocalWorkspaceOwner(ownerId);void useAiStore.persist.rehydrate();
     useDateRange.getState().setPreset('month');
     void next.load().then(()=>{if(next.getSnapshot().phase==='ready')connectLayoutStorage(next);});
-    const guard=(event:BeforeUnloadEvent)=>{if(next.dirty){event.preventDefault();event.returnValue='';}};
+    void transactionNext.load();
+    const guard=(event:BeforeUnloadEvent)=>{if(next.dirty||transactionNext.dirty){event.preventDefault();event.returnValue='';}};
     const resume=(event:PageTransitionEvent)=>{if(event.persisted)location.reload();};
     window.addEventListener('beforeunload',guard);window.addEventListener('pageshow',resume);
-    return()=>{window.removeEventListener('beforeunload',guard);window.removeEventListener('pageshow',resume);next.dispose();connectLayoutStorage(null);activatePersonalStorage(null);setLocalWorkspaceOwner(null);useAiStore.setState({threads:[],activeId:null});};
+    return()=>{window.removeEventListener('beforeunload',guard);window.removeEventListener('pageshow',resume);next.dispose();transactionNext.dispose();connectLayoutStorage(null);connectTransactionLayoutStorage(null);activatePersonalStorage(null);setLocalWorkspaceOwner(null);useAiStore.setState({threads:[],activeId:null});};
   },[ownerId]);
-  useEffect(()=>{if(changed){storage?.invalidate();connectLayoutStorage(null);setLocalWorkspaceOwner(null);useAiStore.setState({threads:[],activeId:null});}},[changed,storage]);
+  useEffect(()=>{if(changed){storage?.invalidate();transactionStorage?.invalidate();connectLayoutStorage(null);connectTransactionLayoutStorage(null);setLocalWorkspaceOwner(null);useAiStore.setState({threads:[],activeId:null});}},[changed,storage,transactionStorage]);
   if(changed)return <div className="p-8"><p>Your sign-in changed.</p><a href="https://app.fortmark.net/dashboard" className="underline">Reload your Dashboard</a></div>;
   if(!isLoaded)return <p className="p-8" role="status">Verifying your FortMark account...</p>;
   if(!ownerId)return <div className="p-8">Your personal workspace is not available yet. Please reload Dashboard to finish setting up your account.</div>;

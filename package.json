@@ -154,7 +154,11 @@
     "test:transaction-workflow": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_transaction_workflow.ts",
     "test:transaction-listing-term-view": "node scripts/test_transaction_listing_term_view.mjs",
     "test:transaction-workflow-preview": "node --experimental-strip-types --no-warnings tools/design-preview/test-transaction-workflow-session.mjs",
-    "test:contact-lifecycle-recovery": "node scripts/test_contact_lifecycle_recovery.mjs"
+    "test:contact-lifecycle-recovery": "node scripts/test_contact_lifecycle_recovery.mjs",
+    "test:contact-touch-draft-view": "node scripts/test_contact_touch_and_draft_view.mjs",
+    "test:transaction-layout": "node --experimental-strip-types --conditions=react-server --no-warnings scripts/test_transaction_layout.ts",
+    "test:transaction-layout-storage": "node scripts/test_transaction_layout_storage.mjs",
+    "test:crm-refinements-browser": "node scripts/test_crm_refinements_browser.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { CalendarClock, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -34,6 +34,8 @@ interface NextActionViewProps {
   onSave: (input: NextActionMutation) => Promise<boolean>;
   onReload?: () => Promise<NextActionContact | undefined>;
   loadAssignees: () => Promise<NextActionAssignee[]>;
+  /** Contact-specific recorded touches, kept with the next-step workspace. */
+  touchHistory?: ReactNode;
 }
 
 /** The action identity and contact revision are copied when an editor opens. */
@@ -143,7 +145,7 @@ export function NextActionView(props: NextActionViewProps) {
   return <NextActionWorkspace key={props.lead.id} {...props} />;
 }
 
-function NextActionWorkspace({ lead, canWrite, available = true, saving = false, onSave, onReload, loadAssignees }: NextActionViewProps) {
+function NextActionWorkspace({ lead, canWrite, available = true, saving = false, onSave, onReload, loadAssignees, touchHistory }: NextActionViewProps) {
   const prefix = useId();
   const [mode, setMode] = useState<NextActionEditorMode | null>(null);
   const [opening, setOpening] = useState(() => nextActionOpening(lead));
@@ -279,6 +281,7 @@ function NextActionWorkspace({ lead, canWrite, available = true, saving = false,
           {lead.nextAction ? <><Button type="button" size="sm" disabled={saving} onClick={() => open("complete")}>Complete action</Button>{canSchedule && <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => open("set")}>Edit action</Button>}<Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => open("cancel")}>Cancel action</Button></> : canSchedule ? <Button type="button" size="sm" disabled={saving} onClick={() => open("set")}>Schedule action</Button> : <p className="text-xs leading-relaxed text-muted-foreground">New actions can be scheduled when this contact is in the open pipeline.</p>}
         </div>
       )}
+      {touchHistory}
       {notice && <p role="status" className="mt-3 text-xs leading-relaxed text-muted-foreground">{notice}</p>}
       {editing && (
         <form onSubmit={(event) => void submit(event)} noValidate className="mt-4 min-w-0 space-y-4 border-t border-border pt-4">

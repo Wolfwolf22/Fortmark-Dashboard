@@ -1,3 +1,4 @@
+import type { VendorDetailFields } from "./vendor-detail-domain.ts";
 import { z } from "zod";
 export const VENDOR_ROLES = ["inspector", "mortgage", "appraiser", "termite", "insurance", "title", "attorney", "other"] as const;
 export type VendorRole = (typeof VENDOR_ROLES)[number];
@@ -21,7 +22,8 @@ export const transactionVendorMutationSchema = z.object({
   expectedVendorUpdatedAt: z.string().datetime({ offset: true }).nullable(), expectedSelectionUpdatedAt: z.string().datetime({ offset: true }).nullable(),
 }).strict().refine(v => v.status === "selected" ? Boolean(v.vendorId && v.expectedVendorUpdatedAt) : v.vendorId === null && v.expectedVendorUpdatedAt === null);
 export type TransactionVendorMutation = z.infer<typeof transactionVendorMutationSchema>;
+export interface TransactionVendorRecordedSummary { details: Omit<VendorDetailFields,"notes">; attachmentCount: number; hasNotes: boolean; updatedAt: string }
 export interface TransactionVendorSelectionView {
   id: string; role: VendorRole; status: "selected" | "not_needed" | "unset"; vendorId: string | null; vendorName: string | null;
-  company: string | null; email: string | null; phone: string | null; approved: boolean; updatedAt: string; detailId: string | null;
+  company: string | null; email: string | null; phone: string | null; approved: boolean; updatedAt: string; detailId: string | null; detailSummary?: TransactionVendorRecordedSummary | null;
 }

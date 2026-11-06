@@ -637,7 +637,7 @@ function readMigrations(): string {
   check("ui notes: a composer that is always there for anyone who can write, with a Save note button", notesUi.includes('aria-label="Add a note"') && notesUi.includes("Save note") && notesUi.includes("canWrite &&"));
   check("ui notes: each note shows author and the Eastern timestamp", notesUi.includes("formatNoteStamp(note.createdAt)") && notesUi.includes('data-testid="note-author"') && notesUi.includes("<time"));
   check("ui notes: delete asks first, with the specified words", notesUi.includes("Delete note?") && notesUi.includes("This will remove the note from the contact&apos;s record.") && notesUi.includes("Cancel"));
-  check("ui notes: a legacy note is shown once, read-only, with no timestamp", notesUi.includes("Legacy note") && !/legacyNote[^\n]*formatNoteStamp/.test(notesUi));
+  check("ui notes: old free-form data is retained outside the contact note interface", !notesUi.includes("Legacy note") && !notesUi.includes("legacyNote") && src("lib/contacts/domain.ts").includes("notes: row.notes"));
   check("ui notes: refusals move focus back to the composer", notesUi.includes("composer.current?.focus()"));
   const drawer = strip(src("components/leads/lead-drawer.tsx"));
   check("ui drawer: notes are in the drawer itself, not behind Edit contact", drawer.includes("<LeadNotes") && !strip(src("components/leads/lead-edit-form.tsx")).includes("notes"));

@@ -15,6 +15,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { PreviewNavigation, usePathname, Link as PreviewLink } from "./next-stubs";
 import { installPreviewTransport } from "./fixtures.mjs";
 import { connectLayoutStorage } from "@/lib/stores/layout";
+import { connectTransactionLayoutStorage } from "@/lib/stores/transaction-layout";
 import { pageTitleFor } from "@/components/layout/nav-items";
 import ListingsPage from "@/app/(app)/listings/page";
 import ListingDetailPage from "@/app/(app)/listings/[id]/page";
@@ -32,6 +33,7 @@ installPreviewTransport();
 // In-memory only: dragging in this review never touches account storage.
 const values = new Map();
 connectLayoutStorage({ getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, value) });
+connectTransactionLayoutStorage({ getItem: key => values.get(`transaction:${key}`) || null, setItem: (key,value) => values.set(`transaction:${key}`,value), getSnapshot: () => ({phase:"ready",message:"Sample layout · memory only"}), subscribe: () => () => {}, load:async()=>{}, flush:async()=>{}, dirty:false });
 const user = { name: "Sample Agent", email: null, imageUrl: null, role: "Admin" };
 const profile = { editable: true, display: { displayName: "Sample Agent", roleLabel: "Admin", licenseLabel: null, imageUrl: null, completion: 100 } };
 

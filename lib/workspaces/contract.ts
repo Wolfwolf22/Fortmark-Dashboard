@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { edgeDefinitions } from "./edge-definitions.ts";
 import { DEFAULT_WIDGET_ORDER } from "../stores/widget-order.ts";
+import { transactionLayoutSchema } from "../transactions/layout-domain.ts";
 
-export const namespaceSchema = z.enum(["dashboard-layout", "competitive-edge"]);
+export const namespaceSchema = z.enum(["dashboard-layout", "transaction-layout", "competitive-edge"]);
 export const MAX_WORKSPACE_BYTES = 3_000_000;
 export const EDGE_KEYS = ["fm-competitive-edge:farms:v1", "fm-competitive-edge:workspaces:v1", "fm-competitive-edge:parcel-campaigns:v1", "fm-competitive-edge:campaign-actions:v1", "fm-competitive-edge:logo-corrections:v1"] as const;
 const period = z.enum(["today", "week", "month", "quarter", "year"]);
@@ -18,7 +19,11 @@ export const workspaceWriteSchema = z.object({
 }).strict().superRefine((value, ctx) => {
   if (new TextEncoder().encode(JSON.stringify(value.data)).length > MAX_WORKSPACE_BYTES) ctx.addIssue({code:"custom",message:"Workspace is too large"});
   for (const [key, raw] of Object.entries(value.data)) {
-    if (value.namespace === "dashboard-layout") {
+    if (value.namespace === "transaction-layout") {
+      if (key !== "layout") { ctx.addIssue({code:"custom",message:"Unsupported transaction setting"}); continue; }
+      try { transactionLayoutSchema.parse(JSON.parse(raw)); }
+      catch { ctx.addIssue({code:"custom",message:"Invalid transaction layout"}); }
+    } else if (value.namespace === "dashboard-layout") {
       if(key==='notifications'){
         try{z.object({dealMilestones:z.boolean(),documentStatus:z.boolean(),newLeads:z.boolean(),marketDigest:z.boolean(),weeklySummary:z.boolean()}).strict().parse(JSON.parse(raw));}catch{ctx.addIssue({code:"custom",message:"Invalid notification preferences"});}
         continue;

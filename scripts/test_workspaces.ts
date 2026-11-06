@@ -14,5 +14,13 @@ assert(workspaceWriteSchema.safeParse(edge).success);
 for(const field of ['ownerName','listings','photos','ownerUserId'])assert(!workspaceWriteSchema.safeParse({...edge,data:{'fm-competitive-edge:farms:v1':JSON.stringify([{...farm,[field]:'private'}])}}).success);
 let query:any,insert:any;const dialect=new PgDialect();
 const fake:any={select:()=>({from:()=>({where:(where:any)=>{query=dialect.sqlToQuery(where);return {limit:async()=>[]};}})}),insert:()=>({values:(value:any)=>{insert=value;return {onConflictDoNothing:()=>({returning:async()=>[{revision:1}]})};}}),update:()=>({set:()=>({where:(where:any)=>{query=dialect.sqlToQuery(where);return {returning:async()=>[]};}})})};
-for(const role of ['agent','admin','broker'] as const){const actor={userId:owner,role,brokerageKey:'fortmark'};assert.deepEqual(await readWorkspace(fake,actor,'competitive-edge'),{data:{},revision:0});assert(query.sql.includes('owner_user_id'));assert.deepEqual(query.params,[owner,'competitive-edge']);await writeWorkspace(fake,actor,'dashboard-layout',0,{});assert.equal(insert.ownerUserId,owner);assert.equal(await writeWorkspace(fake,actor,'dashboard-layout',4,{}),null);assert.deepEqual(query.params,[owner,'dashboard-layout',4]);}
+for(const role of ['agent','admin','broker','member'] as const){
+ const actor={userId:owner,role,brokerageKey:'fortmark'};
+ for(const namespace of ['competitive-edge','dashboard-layout','transaction-layout']){
+  assert.deepEqual(await readWorkspace(fake,actor,namespace),{data:{},revision:0});
+  assert(query.sql.includes('owner_user_id'));assert.deepEqual(query.params,[owner,namespace]);
+  await writeWorkspace(fake,actor,namespace,0,{});assert.equal(insert.ownerUserId,owner);assert.equal(insert.namespace,namespace);
+  assert.equal(await writeWorkspace(fake,actor,namespace,4,{}),null);assert.deepEqual(query.params,[owner,namespace,4]);
+ }
+}
 console.log('Personal workspace contract, ownership and conflict checks passed.');

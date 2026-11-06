@@ -27,7 +27,7 @@
  */
 import Link from "next/link";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, ArrowRightLeft, CalendarClock, Pencil, Phone, ShieldCheck, UserCheck, UserRound, Workflow,History, type LucideIcon } from "lucide-react";
+import { ArrowRight, ArrowRightLeft, CalendarClock, Pencil, Phone, ShieldCheck, UserCheck, UserRound, Workflow, type LucideIcon } from "lucide-react";
 import { useSessionUser } from "@/components/layout/session-user";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -58,7 +58,7 @@ import {
 } from "@/lib/data/adapters/leads";
 import { useQuery } from "@/lib/data/hooks";
 import { Lead, LeadStage, LEAD_SOURCE_LABELS, LEAD_STAGES, LEAD_STAGE_LABELS, TRANSACTION_STAGE_LABELS, type TransactionStage } from "@/lib/data/types";
-import { cn, formatDate, formatRelative, initials } from "@/lib/utils";
+import { cn, formatDate, initials } from "@/lib/utils";
 import { businessDayKey } from "@/lib/metrics/business-day";
 import { effectiveFollowUpStatus, followUpLabel, formatFollowUpDay, isFollowUpDue, noRecentTouch, NO_TOUCH_LABEL } from "@/lib/contacts/follow-up";
 import { formatNextActionDueAt, type NextActionMutation } from "@/lib/contacts/next-action";
@@ -76,9 +76,9 @@ import { LeadNeeds } from "./lead-needs";
 import { ContactProperties } from "./contact-properties";
 import { LeadNotes } from "./lead-notes";
 import { LeadTimeline } from "./lead-timeline";
+import { ContactTouchHistory } from "./contact-touch-history";
 import{ContactEngagement}from"./contact-engagement";
 import{DeleteContactButton}from"./contact-delete";
-import{Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription}from"@/components/ui/dialog";
 import type{ContactEngagementState}from"@/lib/contacts/engagement";
 
 const TOUCH_KINDS: { value: TouchKind; label: string }[] = [
@@ -188,6 +188,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
 
   const abilities = leadAbilities(useSessionUser().role);
   const setQuickCreate = useUiStore((s) => s.setQuickCreate);
+  const creatingForContact = useUiStore((s) => s.quickCreate === "transaction" ? s.quickCreateContact?.id : undefined);
 
   const linked = useQuery(() => (lead && !sample ? getLinkedTransactions(lead.id) : Promise.resolve([])), [leadId, lead?.id, sample, refreshKey]);
 
@@ -199,7 +200,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
   const [confirmArchiveFrom, setConfirmArchiveFrom] = useState<LeadStage | null>(null);
   const [pendingStage, setPendingStage] = useState<LeadStage | null>(null);
   const [pendingStageFrom, setPendingStageFrom] = useState<LeadStage | null>(null);
-  const[engagementState,setEngagementState]=useState<{id:string;value:ContactEngagementState}|null>(null),[touchHistoryOpen,setTouchHistoryOpen]=useState(false),[launchingTransaction,setLaunchingTransaction]=useState(false);
+  const[engagementState,setEngagementState]=useState<{id:string;value:ContactEngagementState}|null>(null),[launchingTransaction,setLaunchingTransaction]=useState(false);
   const engagement=engagementState?.id===lead?.id?engagementState?.value:null;
   const [stageFocusTarget, setStageFocusTarget] = useState<LeadStage | null>(null);
 
@@ -425,6 +426,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
     lead && (stage === lead.stage || allowedStageTransitions(lead.stage).includes(stage)));
   const linkedDeals = linked.data ?? [];
   const engaged = lead?.stage === "representation" || lead?.stage === "active_client"||lead?.stage==="under_contract";
+  const protectedFlow = Boolean(pendingStage) || Boolean(lead && creatingForContact === lead.id);
 
   const actionButton = (id: Exclude<Panel, null>, label: string) => {
     const ActionIcon = ACTION_ICONS[id];
@@ -447,8 +449,8 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
   };
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+    <Sheet open={open} onOpenChange={(next) => { if (!next && protectedFlow) return; onOpenChange(next); }}>
+      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl" onInteractOutside={(event) => { if (protectedFlow) event.preventDefault(); }} onEscapeKeyDown={(event) => { if (protectedFlow) event.preventDefault(); }}>
         {lead ? (
           <>
             <SheetHeader className="max-h-[42dvh] shrink-0 overflow-y-auto border-b border-border px-5 pb-5 pt-6 pr-14 sm:px-6 sm:pr-16">
@@ -505,13 +507,11 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
               </p>
             )}
 
-              {!abilities.canWrite && <Button type="button" variant="outline" className="min-h-10" onClick={()=>setTouchHistoryOpen(true)}><History aria-hidden/>Touch history</Button>}
               {/* --- Quick actions -------------------------------------------- */}
               {abilities.canWrite && (
                 <div role="group" aria-label="Contact actions">
                   <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                     {actionButton("touch", "Log touch")}
-                    <Button type="button" variant="outline" className="min-h-10" onClick={()=>setTouchHistoryOpen(true)}><History aria-hidden/>History</Button>
                     {!hasStructuredAction && actionButton("followUp", "Follow-up")}
                     {actionButton("stage", "Change stage")}
                     {actionButton("edit", "Edit contact")}
@@ -642,7 +642,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
               )}
 
               <div id="lead-next-action-workspace" tabIndex={-1} className="min-w-0">
-                <NextActionView lead={lead} canWrite={abilities.canWrite} available={!sample} saving={saving} onSave={saveNextAction} loadAssignees={() => getNextActionAssignees(lead.id)} onReload={async () => {
+                <NextActionView lead={lead} touchHistory={<ContactTouchHistory contactId={lead.id} name={lead.name} lastTouchDate={lead.lastTouchDate} available={!sample} refreshKey={refreshKey}/>} canWrite={abilities.canWrite} available={!sample} saving={saving} onSave={saveNextAction} loadAssignees={() => getNextActionAssignees(lead.id)} onReload={async () => {
                   const fresh = await getLead(lead.id);
                   refetch();
                   return fresh;
@@ -654,7 +654,6 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
                 <SectionHeading id="lead-details-heading" icon={UserRound}>Details</SectionHeading>
                 <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-5 rounded-panel border border-border bg-tint p-4">
                   <Fact label="Company" value={lead.editable?.company || "—"} />
-                  <Fact label="Last touch" numeric value={lead.lastTouchDate || sample ? formatRelative(lead.lastContactDate) : "Never"} />
                   <div>
                     <p className="text-[11px] leading-4 text-muted-foreground">{hasStructuredAction ? "Next action due" : "Next follow-up"}</p>
                     <p
@@ -689,7 +688,7 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
               <ContactProperties contactId={lead.id} canWrite={abilities.canWrite} available={!sample} refreshKey={refreshKey} />
 
               {/* --- Notes ----------------------------------------------------- */}
-              <LeadNotes key={`notes-${lead.id}`} leadId={lead.id} legacyNote={lead.notes} canWrite={abilities.canWrite} available={!sample} refreshKey={refreshKey} />
+              <LeadNotes key={`notes-${lead.id}`} leadId={lead.id} canWrite={abilities.canWrite} available={!sample} refreshKey={refreshKey} />
 
               {/* --- Activity --------------------------------------------------- */}
               <LeadTimeline key={`timeline-${lead.id}`} leadId={lead.id} refreshKey={refreshKey} />
@@ -740,7 +739,6 @@ export function LeadDrawer({ leadId, open, onOpenChange, onContactRedirect, refr
               </div>
             )}
             <EngagementNotice target={pendingStage} busy={saving} onCancel={() => setPendingStage(null)} onContinue={() => void confirmEngagement()} returnFocusTo="lead-stage-select" engagementReady={Boolean(engagement?.file)} engagementRevision={engagement?.file?`${engagement.file.id}:${engagement.file.updatedAt}`:undefined} skipReturnFocus={launchingTransaction}>{!sample && pendingStage && <ContactEngagement key={"engagement-confirm-"+lead.id} contactId={lead.id} stage={lead.stage} canWrite={abilities.canWrite} refreshKey={refreshKey} compact onState={value=>setEngagementState({id:lead.id,value})} onChanged={refetch}/>}</EngagementNotice>
-            <Dialog open={touchHistoryOpen} onOpenChange={setTouchHistoryOpen}><DialogContent className="max-w-xl"><DialogHeader><DialogTitle>Touch history · {lead.name}</DialogTitle><DialogDescription>Calls, emails, texts, meetings, showings and explicit contacted marks for this contact.</DialogDescription></DialogHeader><div className="max-h-[65dvh] overflow-y-auto pr-1"><LeadTimeline key={"touch-history-"+lead.id} leadId={lead.id} refreshKey={refreshKey} touchesOnly/></div></DialogContent></Dialog>
           </>
         ) : loading && leadId ? (
           <DrawerSkeleton />
